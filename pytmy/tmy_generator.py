@@ -1,0 +1,2117 @@
+# -*- coding: utf-8 -*-
+"""
+==============================================================================
+      COMPLETE SCRIPT FOR TMY GENERATION (VERSION 4.08 - Unified Method)
+==============================================================================
+Methodology: Sandia TMY3, with selectable CDF calculation methods.
+
+v4.08 Changelog:
+- The `plot_smoothing_comparison` method now displays the `hours` and `s_factor`
+  parameters used for smoothing directly in the title of each subplot,
+  improving traceability.
+- The `smoothing_config` is now stored as a class attribute (`self.smoothing_config`)
+  during Step 4 to make it accessible to the plotting function.
+
+Author: Gemini AI & Project Contributor
+Date: November 4, 2025
+"""
+
+# --- LIBRARY IMPORTS ---
+import pandas as pd
+import numpy as np
+from scipy.interpolate import CubicSpline, UnivariateSpline
+import matplotlib.pyplot as plt
+import os
+
+
+# ==============================================================================
+#                MAIN CLASS: TMYGenerator
+# ==============================================================================
+
+class TMYGenerator:
+    """
+    A class to generate a Typical Meteorological Year (TMY) from historical
+    weather data, using one of several selectable methodologies.
+    """
+
+    def __init__(self, file_path, cdf_method='daily', years_to_include=None, weights=None, column_mapping=None, data_frequency='hourly', weighting_method='sandia', save_validation_dfs=True, hourly_file_path=None, missing_data_threshold=0.9):
+        """
+        Initializes the TMYGenerator.
+
+        Args:
+            file_path (str): The path to the input CSV file.
+            cdf_method (str): The method for CDF calculation. Must be one of:
+                'daily' (default): Uses daily aggregated data.
+                'hourly': Uses full hourly data (computationally intensive).
+            years_to_include (iterable, optional): Years to include. If None, all are used.
+            weights (dict, optional): Custom weights for FS statistic calculation.
+            column_mapping (dict, optional): Maps input column names to standard names.
+            data_frequency (str, optional): Frequency of the input data. 'hourly' (default) or 'daily'.
+            weighting_method (str, optional): The weighting scheme to use. 'sandia' (default) or 'tmy3'.
+            save_validation_dfs (bool, optional): Whether to save validation dataframes.
+            hourly_file_path (str, optional): Path to hourly data file. When data_frequency='daily',
+                this allows generating the final TMY from hourly data after selecting months based
+                on daily analysis. Only months available in the daily file will be used.
+        """
+        self.file_path = file_path
+        self.hourly_file_path = hourly_file_path
+        self.missing_data_threshold = missing_data_threshold
+        self.excluded_months = [] # Store months excluded due to insufficient data
+        self.excluded_months_initial = [] # Store months excluded during data loading (Step 1)
+        
+        # Dictionary to store generated figures and their underlying data
+        # Structure: { 'Figure Name': { 'fig': matplotlib.figure.Figure, 'data': pd.DataFrame } }
+        self.figures_data = {}
+
+        # Validate data frequency
+        valid_frequencies = ['hourly', 'daily']
+        if data_frequency not in valid_frequencies:
+            raise ValueError(f"Invalid data_frequency '{data_frequency}'. Must be one of {valid_frequencies}")
+        self.data_frequency = data_frequency
+
+        # Validate and set the CDF calculation method
+        # Validate and set the CDF calculation method
+        valid_methods = ['daily', 'hourly']
+        if cdf_method not in valid_methods:
+            raise ValueError(f"Invalid cdf_method '{cdf_method}'. Must be one of {valid_methods}")
+
+        if self.data_frequency == 'daily' and cdf_method == 'hourly':
+            raise ValueError("Cannot use cdf_method='hourly' with data_frequency='daily'.")
+
+        self.cdf_method = cdf_method
+
+        # Validate weighting method
+        valid_weighting = ['sandia', 'tmy3']
+        if weighting_method not in valid_weighting:
+            raise ValueError(f"Invalid weighting_method '{weighting_method}'. Must be one of {valid_weighting}")
+        self.weighting_method = weighting_method
+
+        self.years_to_include = years_to_include
+
+        # Set default weights based on the chosen method
+        if weights is None:  # Only set defaults if user didn't provide custom weights
+            if self.weighting_method == 'tmy3':
+                # Weights based on NREL TMY3 / User provided Picture1.png
+                default_weights = {
+                    'T_air_max': 1 / 20, 'T_air_min': 1 / 20, 'T_air_mean': 2 / 20,
+                    'T_dew_max': 1 / 20, 'T_dew_min': 1 / 20, 'T_dew_mean': 2 / 20,
+                    'Wind_speed_max': 1 / 20, 'Wind_speed_mean': 1 / 20,
+                    'GHI_sum': 5 / 20, 'DNI_sum': 5 / 20
+                }
+            else:  # 'sandia' default
+                # Detailed Sandia weights from Picture1.png
+                default_weights = {
+                    'T_air_max': 1 / 24, 'T_air_min': 1 / 24, 'T_air_mean': 2 / 24,
+                    'T_dew_max': 1 / 24, 'T_dew_min': 1 / 24, 'T_dew_mean': 2 / 24,
+                    'Wind_speed_max': 2 / 24, 'Wind_speed_mean': 2 / 24,
+                    'GHI_sum': 12 / 24
+                    # DNI is excluded for Sandia
+                }
+            self.weights = default_weights
+        else:
+            self.weights = weights
+
+        default_mapping = {'temp': 'T_air', 'dwpt': 'T_dew', 'wspd': 'Wind_speed'}
+        self.column_mapping = {**default_mapping, **(column_mapping or {})}
+
+        self.df_hourly = None
+        self.df_daily = None
+        self.candidate_months = None
+        self.fs_ranking_results = {}
+        self.selected_months = None
+        self.tmy_raw = None
+        self.tmy_final = None
+        self.persistence_thresholds = None
+        self.min_run_length = None
+
+        self.validation_st2_df_fs_ranking_by_month = {}
+        self.validation_st2_summary_fs_ranking = None
+        self.validation_st3_df_persistence_decision = {}
+        self.validation_st4_df_tmy_composition = None
+        self.smoothing_config = None  # Attribute to store the used smoothing config
+        self.save_validation_dfs = save_validation_dfs
+
+    # --- PRIVATE METHODS (INTERNAL LOGIC) ---
+
+    def _load_and_prepare_real_data(self):
+        """Loads and prepares the raw weather data from the source file."""
+        print(f"Loading and preparing data from '{self.file_path}'...")
+        if self.file_path.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(self.file_path)
+        else:
+            df = pd.read_csv(self.file_path)
+
+        # Apply column mapping immediately to ensure 'time' and other keys are available
+        df = df.rename(columns=self.column_mapping)
+
+        df['time'] = pd.to_datetime(df['time'], errors='coerce', utc=True)
+        df.dropna(subset=['time'], inplace=True)
+        df.set_index('time', inplace=True)
+        assert isinstance(df.index, pd.DatetimeIndex), "ERROR: The 'time' column could not be converted to a DatetimeIndex."
+
+        available_years = sorted(df.index.year.unique())
+        if self.years_to_include is not None:
+            print(f"Filtering data to include only the years: {list(self.years_to_include)}")
+            missing_years = set(self.years_to_include) - set(available_years)
+            if missing_years: raise ValueError(f"Requested years not found: {sorted(list(missing_years))}. Available years: {available_years}")
+            df = df[df.index.year.isin(self.years_to_include)]
+        else:
+            print(f"Using all available years in the file: {available_years}")
+
+        if self.data_frequency == 'hourly':
+            required_internal_cols = ['T_air', 'T_dew', 'Wind_speed']
+            missing_cols = [col for col in required_internal_cols if col not in df.columns]
+            if missing_cols: raise ValueError(f"ERROR: Essential columns are missing after mapping: {missing_cols}")
+
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        if self.data_frequency == 'hourly':
+            print("Resampling data to hourly frequency and interpolating gaps...")
+            df = df.resample('h').mean().interpolate(method='linear')
+
+            if 'GHI' not in df.columns:
+                print("\nWARNING: 'GHI' data not found. A placeholder column of zeros has been created.")
+                df['GHI'] = 0.0
+
+            self.df_hourly = df[['T_air', 'T_dew', 'Wind_speed', 'GHI']]
+            if 'DNI' in df.columns:
+                self.df_hourly = self.df_hourly.assign(DNI=df['DNI'])
+            
+            # --- FIX: Clip negative irradiance and wind values to 0 ---
+            for col in ['GHI', 'DNI', 'Wind_speed']:
+                if col in self.df_hourly.columns:
+                    negative_count = (self.df_hourly[col] < 0).sum()
+                    if negative_count > 0:
+                        print(f"  Note: {negative_count} negative values found in '{col}'. Clipping to 0.")
+                        self.df_hourly[col] = self.df_hourly[col].clip(lower=0)
+
+            # --- Detailed Aggregation Logic for Hourly Data (Sandia & TMY3) ---
+            if self.weighting_method in ['tmy3', 'sandia']:
+                print(f"Calculating daily aggregations for weighting method: {self.weighting_method}...")
+                # Prepare daily dataframe with specific metrics
+                daily_agg = pd.DataFrame(index=df.resample('D').mean().index)
+
+                # Temperature
+                daily_agg['T_air_mean'] = df['T_air'].resample('D').mean()
+                daily_agg['T_air_max'] = df['T_air'].resample('D').max()
+                daily_agg['T_air_min'] = df['T_air'].resample('D').min()
+
+                # Dew Point
+                daily_agg['T_dew_mean'] = df['T_dew'].resample('D').mean()
+                daily_agg['T_dew_max'] = df['T_dew'].resample('D').max()
+                daily_agg['T_dew_min'] = df['T_dew'].resample('D').min()
+
+                # Wind Speed
+                daily_agg['Wind_speed_mean'] = df['Wind_speed'].resample('D').mean()
+                daily_agg['Wind_speed_max'] = df['Wind_speed'].resample('D').max()
+
+                # GHI
+                daily_agg['GHI_sum'] = df['GHI'].resample('D').sum()
+
+                # DNI (Only for TMY3)
+                if self.weighting_method == 'tmy3':
+                    if 'DNI' in df.columns:
+                        daily_agg['DNI_sum'] = df['DNI'].resample('D').sum()
+                    else:
+                        print("\nWARNING: 'DNI' column missing for TMY3 method. Assuming 0.")
+                        daily_agg['DNI_sum'] = 0.0
+
+                self.df_daily = daily_agg
+                print(f"DEBUG: df_daily columns created: {self.df_daily.columns.tolist()}")
+
+        else:
+            print("Processing daily data...")
+            # For daily data, we don't resample to hourly.
+            self.df_hourly = None
+
+            # For daily data with custom weights/variables (like Madrid dataset),
+            # we allow any columns that result from the mapping.
+            # We just verify that we have at least some data.
+            if df.empty:
+                raise ValueError("The input dataframe is empty after loading.")
+
+            self.df_daily = df.copy()
+
+            # Warn if standard columns are missing, but don't error out if using custom method
+            missing_standard = [c for c in ['T_air', 'T_dew', 'Wind_speed'] if c not in df.columns]
+            if missing_standard and self.weighting_method not in ['tmy3', 'sandia']:  # these methods use different columns
+                print(f"Note: Standard columns {missing_standard} not found. Assuming custom variable configuration.")
+
+            if 'GHI' not in df.columns and 'GHI_sum' not in df.columns:
+                # Try to find a GHI-like column or warn
+                print("\nWARNING: No 'GHI' or 'GHI_sum' column found. Ensure your weights align with available columns.")
+
+            if self.weighting_method in ['tmy3', 'sandia']:
+                required_keys = [k for k in self.weights.keys()]
+                missing_keys = [col for col in required_keys if col not in self.df_daily.columns]
+                if missing_keys:
+                    print(f"\nWARNING: {self.weighting_method} method selected but components {missing_keys} are missing in daily data.")
+                    print("Ensure your input file or column mapping provides these.")
+
+        # --- Load hourly data from separate file if provided ---
+        if self.hourly_file_path is not None:
+            print(f"\nLoading hourly data from '{self.hourly_file_path}'...")
+            
+            # Load hourly file
+            if self.hourly_file_path.endswith(('.xlsx', '.xls')):
+                df_hourly_source = pd.read_excel(self.hourly_file_path)
+            else:
+                df_hourly_source = pd.read_csv(self.hourly_file_path)
+            
+            # Apply column mapping
+            df_hourly_source = df_hourly_source.rename(columns=self.column_mapping)
+            
+            # Process datetime index
+            df_hourly_source['time'] = pd.to_datetime(df_hourly_source['time'], errors='coerce', utc=True)
+            df_hourly_source.dropna(subset=['time'], inplace=True)
+            df_hourly_source.set_index('time', inplace=True)
+            
+            # Filter to same years as primary data
+            if self.years_to_include is not None:
+                df_hourly_source = df_hourly_source[df_hourly_source.index.year.isin(self.years_to_include)]
+            
+            # Convert columns to numeric
+            for col in df_hourly_source.columns:
+                df_hourly_source[col] = pd.to_numeric(df_hourly_source[col], errors='coerce')
+            
+            # Resample to hourly and interpolate
+            print("Resampling hourly data and interpolating gaps...")
+            df_hourly_source = df_hourly_source.resample('h').mean().interpolate(method='linear')
+            
+            # Get available months from daily data to filter hourly data
+            if self.df_daily is not None:
+                available_months_in_daily = set(self.df_daily.index.to_period('M'))
+                print(f"Filtering hourly data to only include months available in daily data...")
+                
+                # Filter hourly data to only include months present in daily data
+                hourly_periods = df_hourly_source.index.to_period('M')
+                mask = hourly_periods.isin(available_months_in_daily)
+                
+                excluded_count = (~mask).sum()
+                if excluded_count > 0:
+                    print(f"  Excluded {excluded_count} hourly records from months not in daily file.")
+                    
+                    # Store excluded months for reporting
+                    excluded_data = df_hourly_source[~mask]
+                    excluded_periods = excluded_data.index.to_period('M').unique()
+                    for p in excluded_periods:
+                        self.excluded_months_initial.append((p.year, p.month))
+                    
+                    # Sort uniquely
+                    self.excluded_months_initial = sorted(list(set(self.excluded_months_initial)))
+
+                df_hourly_source = df_hourly_source[mask]
+            
+            # Ensure required columns exist
+            required_hourly_cols = ['T_air', 'T_dew', 'Wind_speed']
+            missing_hourly_cols = [col for col in required_hourly_cols if col not in df_hourly_source.columns]
+            if missing_hourly_cols:
+                raise ValueError(f"ERROR: Essential columns missing in hourly file: {missing_hourly_cols}")
+            
+            if 'GHI' not in df_hourly_source.columns:
+                print("\nWARNING: 'GHI' not found in hourly file. Creating placeholder column of zeros.")
+                df_hourly_source['GHI'] = 0.0
+            
+            # Store hourly data
+            self.df_hourly = df_hourly_source[['T_air', 'T_dew', 'Wind_speed', 'GHI']].copy()
+            if 'DNI' in df_hourly_source.columns:
+                self.df_hourly['DNI'] = df_hourly_source['DNI']
+            
+            # --- FIX: Clip negative irradiance and wind values to 0 ---
+            for col in ['GHI', 'DNI', 'Wind_speed']:
+                if col in self.df_hourly.columns:
+                    negative_count = (self.df_hourly[col] < 0).sum()
+                    if negative_count > 0:
+                        print(f"  Note: {negative_count} negative values found in '{col}' (hourly file). Clipping to 0.")
+                        self.df_hourly[col] = self.df_hourly[col].clip(lower=0)
+            
+            print(f"Hourly data loaded successfully with {len(self.df_hourly)} records.")
+
+        print("Real data loaded and prepared.")
+
+    def _compute_cdf(self, series):
+        """Computes the Cumulative Distribution Function (CDF) of a data series."""
+        return np.sort(series), np.arange(1, len(series) + 1) / len(series)
+
+    def _compute_interpolated_cdf(self, series1, series2, num_points=200):
+        """
+        Computes interpolated CDFs for two series on a common axis.
+        
+        This method is used for visualization to ensure both CDFs are plotted
+        on the same x-axis, making them directly comparable. The interpolation
+        approach matches what is used in the FS statistic calculation.
+        
+        Args:
+            series1: First data series (e.g., long-term data)
+            series2: Second data series (e.g., TMY data)
+            num_points (int): Number of interpolation points (default: 200)
+            
+        Returns:
+            tuple: (common_x, interp_cdf1, interp_cdf2)
+                - common_x: Common x-axis values
+                - interp_cdf1: Interpolated CDF for series1
+                - interp_cdf2: Interpolated CDF for series2
+        """
+        vals1, cdf1 = self._compute_cdf(series1)
+        vals2, cdf2 = self._compute_cdf(series2)
+        
+        common_x = np.linspace(
+            min(series1.min(), series2.min()),
+            max(series1.max(), series2.max()),
+            num=num_points
+        )
+        
+        interp_cdf1 = np.interp(common_x, vals1, cdf1, left=0, right=1)
+        interp_cdf2 = np.interp(common_x, vals2, cdf2, left=0, right=1)
+        
+        return common_x, interp_cdf1, interp_cdf2
+
+    def _calculate_fs_statistic(self, candidate_series, long_term_series, return_details=False):
+        """Calculates the Finkelstein-Schafer (FS) statistic between two series."""
+        cand_vals, cand_cdf = self._compute_cdf(candidate_series)
+        lt_vals, lt_cdf = self._compute_cdf(long_term_series)
+
+        common_x = np.linspace(min(candidate_series.min(), long_term_series.min()), max(candidate_series.max(), long_term_series.max()), num=200)
+
+        interp_cand_cdf = np.interp(common_x, cand_vals, cand_cdf, left=0, right=1)
+        interp_lt_cdf = np.interp(common_x, lt_vals, lt_cdf, left=0, right=1)
+
+        fs = np.sum(np.abs(interp_cand_cdf - interp_lt_cdf))
+
+        if return_details:
+            return fs, common_x, interp_lt_cdf, interp_cand_cdf, (lt_vals, lt_cdf), (cand_vals, cand_cdf)
+        return fs
+
+    def _generate_ranking_table_for_month(self, month, analysis_df):
+        """Helper to generate detailed FS ranking table for a month."""
+        long_term_data_month = analysis_df[analysis_df.index.month == month]
+        all_years = analysis_df.index.year.unique()
+
+        ranking_data = []
+        for year in all_years:
+            candidate_data_year = long_term_data_month[long_term_data_month.index.year == year]
+            if candidate_data_year.empty: continue
+
+            # Basic completeness check (replicated/simplified here for ranking table generation)
+            # If we are calling this from _select_candidate_months, we might have already filtered.
+            # But validation usually shows all available years.
+
+            row = {'Year': year}
+            total_w_fs = 0
+
+            for var, weight in self.weights.items():
+                fs_val = self._calculate_fs_statistic(candidate_data_year[var], long_term_data_month[var])
+                weighted_fs = fs_val * weight
+                row[f'FS_{var}'], row[f'Weight_{var}'], row[f'W_FS_{var}'] = fs_val, weight, weighted_fs
+                total_w_fs += weighted_fs
+            row['Total_W_FS'] = total_w_fs
+            ranking_data.append(row)
+
+        df_ranking = pd.DataFrame(ranking_data).sort_values('Total_W_FS').reset_index(drop=True)
+        df_ranking['Rank'] = df_ranking.index + 1
+
+        ordered_columns = ['Year']
+        for var in self.weights.keys():
+            ordered_columns.extend([f'FS_{var}', f'Weight_{var}', f'W_FS_{var}'])
+        ordered_columns.extend(['Total_W_FS', 'Rank'])
+
+        # Filter only existing columns just in case
+        ordered_columns = [c for c in ordered_columns if c in df_ranking.columns]
+
+        return df_ranking[ordered_columns]
+
+    def _select_candidate_months(self, completeness_threshold=None):
+        """Step 2: Selects candidate months based on the chosen `cdf_method`."""
+        if completeness_threshold is None:
+            completeness_threshold = self.missing_data_threshold
+
+        print(f"Step 2: Calculating FS statistics using '{self.cdf_method}' method...")
+
+        # Determine which dataframe to use for the analysis
+        analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+        if self.cdf_method == 'hourly':
+            print("WARNING: This process is computationally intensive and may take a long time.")
+
+        all_years = analysis_df.index.year.unique()
+        candidate_months = {}
+        self.fs_ranking_results = {}
+        self.excluded_months = list(self.excluded_months_initial)  # Reset excluded months list with those from Step 1
+
+        for month in range(1, 13):
+            # Calculate full ranking details if requested for validation OR if we need them for selection
+            # To optimize, we can generate the full table once per month.
+
+            if self.save_validation_dfs:
+                # Generate detailed table
+                df_full_ranking = self._generate_ranking_table_for_month(month, analysis_df)
+                self.validation_st2_df_fs_ranking_by_month[month] = df_full_ranking
+
+                # Extract the simple list for candidate selection from this detailed table
+                # Filter based on completeness if necessary?
+                # _generate_ranking_table_for_month doesn't strictly enforce completeness check
+                # which is done in the loop below.
+
+                # Actually, to strictly follow the current logic where we skip insufficient data years:
+                # Let's keep the existing loop for 'selection' to ensure consistency with completeness checks,
+                # Unless we move completeness logic into the helper.
+                pass
+
+            monthly_results = []
+            long_term_data_month = analysis_df[analysis_df.index.month == month]
+
+            for year in all_years:
+                candidate_data = long_term_data_month[long_term_data_month.index.year == year]
+                if candidate_data.empty: continue
+
+                # Check for completeness
+                days_in_month = pd.Period(f'{year}-{month}-01').days_in_month
+                expected_points = days_in_month * 24 if self.cdf_method == 'hourly' else days_in_month
+                actual_points = len(candidate_data)
+
+                if actual_points / expected_points < completeness_threshold:
+                    print(f"  Skipping {year}-{month:02d}: Insufficient data ({actual_points}/{expected_points} points)")
+                    self.excluded_months.append((year, month))
+                    continue
+
+                # If we already calculated for validation, we could retrieve from there, but
+                # for now let's just re-calc or rely on the loop for simplicity and robustness.
+                w_fs = sum(weight * self._calculate_fs_statistic(candidate_data[var], long_term_data_month[var]) for var, weight in self.weights.items())
+                monthly_results.append({'year': year, 'Total_W_FS': w_fs})
+
+            top_5 = sorted(monthly_results, key=lambda x: x['Total_W_FS'])[:5]
+            self.fs_ranking_results[month] = top_5
+            candidate_months[month] = [res['year'] for res in top_5]
+            print(f"  Month {month}: Selected candidates -> {candidate_months[month]}")
+
+        self.candidate_months = candidate_months
+
+        if self.excluded_months:
+            print("\n" + "="*50)
+            print(f"WARNING: The following months were excluded due to missing data (Threshold: {completeness_threshold}):")
+            for y, m in self.excluded_months:
+                print(f"  - {y}-{m:02d}")
+            print("="*50 + "\n")
+
+        # Generate summary DF if requested
+        if self.save_validation_dfs:
+            self._generate_summary_fs_ranking()
+
+    def _generate_summary_fs_ranking(self):
+        """Generates the summary dataframe of Top 5 candidates for all months."""
+        all_months_data = []
+        analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+
+        for month in range(1, 13):
+            month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+            top_5_data = self.fs_ranking_results.get(month, [])
+
+            # Retrieve detailed stats for these top 5
+            # We can re-calculate or look up in validation_st2_df_fs_ranking_by_month if it exists
+
+            long_term_data_month = analysis_df[analysis_df.index.month == month]
+
+            for rank, item in enumerate(top_5_data):
+                year = item['year']
+                row = {'Month': month_name, 'Year': year, 'Total_W_FS': item['Total_W_FS'], 'Rank': rank + 1}
+
+                candidate_data_year = long_term_data_month[long_term_data_month.index.year == year]
+                for var, weight in self.weights.items():
+                    fs_val = self._calculate_fs_statistic(candidate_data_year[var], long_term_data_month[var])
+                    weighted_fs = fs_val * weight
+                    row[f'FS_{var}'] = fs_val
+                    row[f'Weight_{var}'] = weight
+                    row[f'W_FS_{var}'] = weighted_fs
+
+                all_months_data.append(row)
+
+        ordered_columns = ['Month', 'Year']
+        for var in self.weights.keys():
+            ordered_columns.extend([f'FS_{var}', f'Weight_{var}', f'W_FS_{var}'])
+        ordered_columns.extend(['Total_W_FS', 'Rank'])
+
+        df_summary = pd.DataFrame(all_months_data)[ordered_columns].set_index(['Month', 'Year'])
+        self.validation_st2_summary_fs_ranking = df_summary
+
+    def _calculate_run_stats(self, series, upper_threshold, lower_threshold, min_run_length):
+        """Calculates the frequency and maximum duration of persistence runs."""
+        is_above = series > upper_threshold
+        is_below = series < lower_threshold
+
+        def get_run_info(condition_series):
+            if not condition_series.any():
+                return 0, 0
+            groups = (condition_series != condition_series.shift()).cumsum()[condition_series]
+            run_lengths = groups.value_counts()
+            valid_run_lengths = run_lengths[run_lengths >= min_run_length]
+            num_runs = len(valid_run_lengths)
+            max_len = valid_run_lengths.max() if num_runs > 0 else 0
+            return num_runs, int(max_len)
+
+        above_freq, above_dur = get_run_info(is_above)
+        below_freq, below_dur = get_run_info(is_below)
+        total_freq = above_freq + below_freq
+        max_dur = max(above_dur, below_dur)
+        return total_freq, max_dur
+
+    def _apply_persistence_scoring(self, persistence_weights):
+        """Applies the persistence criteria using a scoring system."""
+        print("\nApplying persistence criteria based on scoring...")
+        selected_months = {}
+        self.validation_st3_df_persistence_decision = None
+        persistence_decisions_list = []
+        for month in range(1, 13):
+            candidates = self.candidate_months.get(month, [])
+            if not candidates: continue
+
+            long_term_month_data = self.df_daily[self.df_daily.index.month == month]
+            if long_term_month_data.empty: continue
+
+            lower_p, upper_p = self.persistence_thresholds
+
+            # Helper to get column
+            t_col = 'T_air' if 'T_air' in long_term_month_data.columns else 'T_air_mean'
+            ghi_col = 'GHI' if 'GHI' in long_term_month_data.columns else 'GHI_sum'
+
+            if t_col not in long_term_month_data.columns or ghi_col not in long_term_month_data.columns:
+                print(f"  Warning: Persistence analysis requires Temp and GHI. Found {long_term_month_data.columns.tolist()[:5]}... Skipping.")
+                continue
+
+            t_air_upper, t_air_lower = long_term_month_data[t_col].quantile([upper_p, lower_p])
+            ghi_lower = long_term_month_data[ghi_col].quantile(lower_p)
+
+            candidate_scores = []
+            for year in candidates:
+                candidate_data = self.df_daily[(self.df_daily.index.month == month) & (self.df_daily.index.year == year)]
+                if candidate_data.empty: continue
+
+                fs_stats = next((item for item in self.fs_ranking_results.get(month, []) if item['year'] == year), None)
+                if not fs_stats: continue
+                total_w_fs = fs_stats['Total_W_FS']
+
+                t_air_freq, t_air_dur = self._calculate_run_stats(candidate_data[t_col], t_air_upper, t_air_lower, self.min_run_length)
+                ghi_freq, ghi_dur = self._calculate_run_stats(candidate_data[ghi_col], np.inf, ghi_lower, self.min_run_length)
+
+                score = (total_w_fs +
+                         persistence_weights['w_t_longest_run'] * t_air_dur +
+                         persistence_weights['w_t_total_runs'] * t_air_freq +
+                         persistence_weights['w_ghi_longest_run'] * ghi_dur +
+                         persistence_weights['w_ghi_total_runs'] * ghi_freq)
+
+                candidate_scores.append({
+                    'Year': year, 'Total_W_FS': total_w_fs,
+                    'LongestRun_T_air': t_air_dur, 'TotalRuns_T_air': t_air_freq,
+                    'LongestRun_GHI': ghi_dur, 'TotalRuns_GHI': ghi_freq,
+                    'Score': score
+                })
+
+            if not candidate_scores: continue
+
+            df_decision = pd.DataFrame(candidate_scores).sort_values('Score').reset_index(drop=True)
+            df_decision['Rank'] = df_decision.index + 1
+            df_decision['Year'] = df_decision['Year'].astype(int)
+
+            df_decision['W_T_LongestRun'] = persistence_weights['w_t_longest_run']
+            df_decision['W_T_TotalRuns'] = persistence_weights['w_t_total_runs']
+            df_decision['W_GHI_LongestRun'] = persistence_weights['w_ghi_longest_run']
+            df_decision['W_GHI_TotalRuns'] = persistence_weights['w_ghi_total_runs']
+
+            cols_order = ['Year', 'Total_W_FS',
+                          'W_T_LongestRun', 'LongestRun_T_air', 'W_T_TotalRuns', 'TotalRuns_T_air',
+                          'W_GHI_LongestRun', 'LongestRun_GHI', 'W_GHI_TotalRuns', 'TotalRuns_GHI',
+                          'Score', 'Rank']
+            df_decision = df_decision[cols_order]
+
+            if self.save_validation_dfs:
+                df_decision.insert(0, 'Month', month)
+                persistence_decisions_list.append(df_decision)
+
+            best_choice = df_decision.iloc[0]['Year'].astype(int)
+            selected_months[month] = best_choice
+            print(f"  Month {month}: Selected Year -> {int(best_choice)} (Score: {df_decision.iloc[0]['Score']:.4f})")
+
+        if self.save_validation_dfs and persistence_decisions_list:
+            self.validation_st3_df_persistence_decision = pd.concat(persistence_decisions_list, ignore_index=True)
+
+        self.selected_months = selected_months
+
+    def _select_months_by_fs_rank(self):
+        """Selects months based purely on FS rank, skipping persistence criteria."""
+        print("\nSkipping persistence criteria. Selecting the best candidate by FS rank.")
+        if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
+        self.selected_months = {month: candidates[0] for month, candidates in self.candidate_months.items() if candidates}
+
+    def _create_raw_tmy(self):
+        """Assembles the raw TMY by concatenating the selected months."""
+        print("\nCreating raw (un-smoothed) TMY...")
+        TMY_YEAR = 2000
+        tmy_pieces = []
+        for month in range(1, 13):
+            year = int(self.selected_months[month])
+
+            start_date = f"{year}-{month:02d}-01"
+            end_date = pd.Timestamp(start_date) + pd.offsets.MonthEnd(0)
+
+            if self.df_hourly is not None:
+                monthly_data = self.df_hourly.loc[start_date:f"{end_date.date()} 23:00:00"].copy()
+            else:
+                monthly_data = self.df_daily.loc[start_date:f"{end_date.date()}"].copy()
+
+            if month == 2 and len(monthly_data) > 28 * 24:
+                print(f"  Leap year adjustment: Removing Feb 29th from year {year}.")
+                monthly_data = monthly_data[monthly_data.index.day != 29]
+
+            monthly_data.index = monthly_data.index.map(lambda t: t.replace(year=TMY_YEAR))
+            tmy_pieces.append(monthly_data)
+
+        self.tmy_raw = pd.concat(tmy_pieces)
+        if not self.tmy_raw.index.is_unique:
+            self.tmy_raw = self.tmy_raw[~self.tmy_raw.index.duplicated()]
+
+    def _apply_smoothing(self, smoothing_config=None):
+        """
+        Applies a sophisticated smoothing spline at the month junctions, with
+        configurable and potentially asymmetric parameters for each junction.
+        """
+
+        # Check if hourly data is available for smoothing
+        if self.df_hourly is None:
+            print("Smoothing requires hourly data. Skipping smoothing.")
+            print("  Tip: Provide hourly_file_path parameter to enable smoothing with daily data analysis.")
+            self.tmy_final = self.tmy_raw.copy()
+            return
+
+        print("Applying sophisticated smoothing at month junctions...")
+
+        self.smoothing_config = smoothing_config or {}
+
+        default_params = {'hours_before': 6, 'hours_after': 6, 's_factor': None}
+
+        tmy_final = self.tmy_raw.copy()
+
+        for i in range(11):
+            month1 = i + 1
+            month2 = i + 2
+
+            junction_params = self.smoothing_config.get(month1, {}).copy()
+
+            hours = junction_params.get('hours', None)
+            hours_before = junction_params.get('hours_before', hours or default_params['hours_before'])
+            hours_after = junction_params.get('hours_after', hours or default_params['hours_after'])
+            s_factor = junction_params.get('s_factor', default_params['s_factor'])
+
+            print(f"  - Junction {month1}->{month2}: hours_before={hours_before}, hours_after={hours_after}, s_factor={s_factor}")
+
+            year1 = self.selected_months[month1]
+            year2 = self.selected_months[month2]
+
+            month1_data_full = self.df_hourly[
+                (self.df_hourly.index.month == month1) & (self.df_hourly.index.year == year1)
+                ]
+            month2_data_full = self.df_hourly[
+                (self.df_hourly.index.month == month2) & (self.df_hourly.index.year == year2)
+                ]
+
+            fitting_data = pd.concat([month1_data_full, month2_data_full])
+            x_fit = np.arange(len(fitting_data))
+
+            junction_point = self.tmy_raw[self.tmy_raw.index.month == month1].index[-1]
+
+            start_apply_window = junction_point - pd.Timedelta(hours=hours_before - 1)
+            end_apply_window = junction_point + pd.Timedelta(hours=hours_after)
+
+            application_window_range = pd.date_range(start=start_apply_window, end=end_apply_window, freq='h')
+            application_window_timestamps = tmy_final.index.intersection(application_window_range)
+
+            junction_index_in_fit = len(month1_data_full)
+
+            num_hours_before = len(application_window_timestamps[application_window_timestamps <= junction_point])
+            num_hours_after = len(application_window_timestamps[application_window_timestamps > junction_point])
+
+            x_apply = np.arange(
+                junction_index_in_fit - num_hours_before,
+                junction_index_in_fit + num_hours_after
+            )
+
+            for col in tmy_final.columns:
+                if col == 'GHI':
+                    continue
+
+                y_fit = fitting_data[col].values
+
+                if np.var(y_fit) == 0:
+                    continue
+
+                try:
+                    # Fit the spline
+                    spl = UnivariateSpline(x_fit, y_fit, s=s_factor)
+                except Exception as e:
+                    print(f"  - Warning: Could not fit spline for {col} at month {month1}-{month2} junction. Skipping. Error: {e}")
+                    continue
+
+                # --- CORRECCIÓN v4.08: Obtener el valor de 's' y aplicar el suavizado ---
+                # Si s es automático, capturar el valor calculado
+                if s_factor is None:
+                    s_val_auto = spl.get_residual()
+                    if 's_factor_auto' not in junction_params:
+                        junction_params['s_factor_auto'] = {}
+                    junction_params['s_factor_auto'][col] = s_val_auto
+
+                # Aplicar el suavizado
+                smoothed_y = spl(x_apply)
+
+                tmy_final.loc[application_window_timestamps, col] = smoothed_y
+
+            # Actualizar la configuración guardada con los valores automáticos de 's'
+            self.smoothing_config[month1] = junction_params
+
+        # --- FIX: Final Safety Clip after smoothing ---
+        # Spline smoothing can introduce negative values (undershoot) near zero.
+        for col in tmy_final.columns:
+            if col in ['GHI', 'DNI', 'Wind_speed']:
+                neg_count = (tmy_final[col] < 0).sum()
+                if neg_count > 0:
+                   print(f"  - Fixed {neg_count} negative values in '{col}' caused by smoothing undershoot.")
+                   tmy_final[col] = tmy_final[col].clip(lower=0)
+
+
+        self.tmy_final = tmy_final
+        print("Final TMY generated and smoothed.")
+
+    def _plot_single_persistence_subplot(self, ax, year_data, t_thresholds, ghi_threshold, title_info, t_col='T_air', ghi_col='GHI'):
+        """Helper function to plot persistence data for a single year on a subplot."""
+        t_upper, t_lower = t_thresholds
+        lower_p, upper_p = self.persistence_thresholds
+
+        ax.plot(year_data.index.day, year_data[t_col], marker='o', linestyle='-', color='royalblue', markersize=4, label=t_col)
+        ax.axhline(t_upper, color='darkred', linestyle='--', label=f'{t_col} P{int(upper_p * 100)} ({t_upper:.1f})')
+        ax.axhline(t_lower, color='darkblue', linestyle='--', label=f'{t_col} P{int(lower_p * 100)} ({t_lower:.1f})')
+        ax.set_ylabel(f'Daily Mean {t_col}', color='royalblue')
+        ax.tick_params(axis='y', labelcolor='royalblue')
+
+        is_hot_run, is_cold_run = pd.Series(False, index=year_data.index), pd.Series(False, index=year_data.index)
+        # Fix condition logic for dynamic column
+        for condition, run_mask in [(year_data[t_col] > t_upper, is_hot_run), (year_data[t_col] < t_lower, is_cold_run)]:
+            groups = (condition != condition.shift()).cumsum()
+            for _, group in year_data[condition].groupby(groups):
+                if len(group) >= self.min_run_length:
+                    run_mask.loc[group.index] = True
+
+        ax.fill_between(year_data.index.day, t_upper, year_data[t_col], where=is_hot_run, color='red', alpha=0.3, interpolate=True)
+        ax.fill_between(year_data.index.day, year_data[t_col], t_lower, where=is_cold_run, color='blue', alpha=0.3, interpolate=True)
+
+        ax2 = ax.twinx()
+        ax2.plot(year_data.index.day, year_data[ghi_col], marker='.', linestyle=':', color='darkorange', markersize=4, label=ghi_col)
+        ax2.axhline(ghi_threshold, color='orange', linestyle='--', label=f'{ghi_col} P{int(lower_p * 100)} ({ghi_threshold:.0f})')
+        ax2.set_ylabel(f'Daily Sum {ghi_col} (Wh/m²)', color='darkorange')
+        ax2.tick_params(axis='y', labelcolor='darkorange')
+
+        is_low_ghi = pd.Series(False, index=year_data.index)
+        condition = year_data[ghi_col] < ghi_threshold
+        groups = (condition != condition.shift()).cumsum()
+        for _, group in year_data[condition].groupby(groups):
+            if len(group) >= self.min_run_length:
+                is_low_ghi.loc[group.index] = True
+
+        ax2.fill_between(year_data.index.day, year_data[ghi_col], ghi_threshold, where=is_low_ghi, color='orange', alpha=0.3, interpolate=True)
+
+        ax.set_title(title_info, fontsize=12)
+        ax.grid(True, linestyle=':')
+        lines, labels = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines + lines2, labels + labels2, loc='best')
+
+    # --- PUBLIC WORKFLOWS ---
+
+    def step_1_load_and_prepare_data(self):
+        """Public method to run Step 1: Data loading and preparation."""
+        self._load_and_prepare_real_data()
+
+        if self.data_frequency == 'daily':
+            if len(self.df_daily.index.year.unique()) < 5:
+                raise ValueError("The filtered dataset contains fewer than 5 years of data.")
+            return self
+
+    def step_2_select_candidate_months(self, completeness_threshold=None):
+        """Public method to run Step 2: Candidate month selection using FS statistics."""
+        if self.df_hourly is None and self.df_daily is None: raise RuntimeError("Run step_1_load_and_prepare_data() first.")
+        self._select_candidate_months(completeness_threshold=completeness_threshold)
+        return self
+
+    def step_3_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None):
+        """
+        Public method to run Step 3: Apply persistence criteria using a scoring system.
+
+        Args:
+            thresholds (tuple): Lower and upper percentile thresholds to define runs.
+            min_run_length (int): The minimum number of days for a period to be
+                considered a persistence run.
+            persistence_weights (dict, optional): A dictionary to customize the
+                weights for persistence penalties.
+        """
+        if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
+        self.persistence_thresholds = thresholds
+        self.min_run_length = min_run_length
+
+        default_weights = {
+            'w_t_longest_run': 0.002, 'w_t_total_runs': 0.001,
+            'w_ghi_longest_run': 0.001, 'w_ghi_total_runs': 0.0005
+        }
+
+        final_weights = default_weights.copy()
+        if persistence_weights:
+            user_keys = set(persistence_weights.keys())
+            valid_keys = set(final_weights.keys())
+            invalid_keys = user_keys - valid_keys
+
+            if invalid_keys:
+                print(f"\nWARNING: Found invalid keys in `persistence_weights`: {sorted(list(invalid_keys))}.")
+                print(f"These keys will be ignored. Valid keys are: {sorted(list(valid_keys))}")
+
+            valid_user_weights = {k: v for k, v in persistence_weights.items() if k in valid_keys}
+            final_weights.update(valid_user_weights)
+
+        print("\nPersistence weights being used for the Score calculation:")
+        print(final_weights)
+
+        self._apply_persistence_scoring(final_weights)
+        return self
+
+    def _generate_tmy_composition_dataframe(self):
+        """Generates a detailed TMY composition dataframe merging FS and Persistence stats."""
+        if self.selected_months is None: return None
+        
+        composition_rows = []
+        for month in range(1, 13):
+            if month not in self.selected_months: continue
+            selected_year = int(self.selected_months[month])
+            month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+            
+            row_data = {'Month': month_name, 'Month_Num': month, 'Source_Year': selected_year}
+            
+            # 1. Merge FS details (from validation_st2)
+            if self.validation_st2_summary_fs_ranking is not None and not self.validation_st2_summary_fs_ranking.empty:
+                try:
+                    if (month_name, selected_year) in self.validation_st2_summary_fs_ranking.index:
+                        fs_row = self.validation_st2_summary_fs_ranking.loc[(month_name, selected_year)]
+                        if isinstance(fs_row, pd.DataFrame): fs_row = fs_row.iloc[0]
+                        fs_dict = fs_row.to_dict()
+                        fs_dict.pop('Month', None)
+                        fs_dict.pop('Year', None)
+                        row_data.update(fs_dict)
+                except Exception:
+                    pass
+            
+            # 2. Merge Persistence details (from validation_st3)
+            if self.validation_st3_df_persistence_decision is not None:
+                df_pers = self.validation_st3_df_persistence_decision
+                if isinstance(df_pers, pd.DataFrame) and not df_pers.empty:
+                     pers_row = df_pers[
+                        (df_pers['Month'] == month) & 
+                        (df_pers['Year'] == selected_year)
+                     ]
+                     if not pers_row.empty:
+                         pers_data = pers_row.iloc[0].to_dict()
+                         pers_data.pop('Month', None)
+                         pers_data.pop('Year', None)
+                         if 'Rank' in pers_data: pers_data['Persistence_Rank'] = pers_data.pop('Rank')
+                         if 'Total_W_FS' in pers_data: pers_data.pop('Total_W_FS')
+                         row_data.update(pers_data)
+            
+            composition_rows.append(row_data)
+
+        if not composition_rows: return None
+        df_comp = pd.DataFrame(composition_rows)
+        basic_cols = ['Month_Num', 'Month', 'Source_Year']
+        other_cols = [c for c in df_comp.columns if c not in basic_cols]
+        return df_comp[basic_cols + other_cols]
+
+    def step_4_create_and_smooth_tmy(self, smoothing_config=None):
+        """
+        Public method to run Step 4: Create the raw TMY and apply smoothing.
+
+        Args:
+            smoothing_config (dict, optional): A dictionary to configure the
+                smoothing process on a per-junction basis. See the docstring
+                of `_apply_smoothing` for details.
+        """
+        if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
+        if self.selected_months is None:
+            self._select_months_by_fs_rank()
+        self._create_raw_tmy()
+        self._apply_smoothing(smoothing_config)
+        if self.save_validation_dfs:
+            self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
+        return self
+
+    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, completeness_threshold=0.9, save_validation_dfs=True):
+        """
+        Runs the complete TMY generation workflow from start to finish.
+
+        Args:
+            use_persistence (bool): If True, applies the persistence criteria (Step 3).
+            completeness_threshold (float): Threshold for data completeness (0.0 to 1.0)
+            save_validation_dfs (bool): If True (default), stores validation dataframes
+                                        like step 3 persistence decisions.
+            ... (other args passed to respective steps)
+
+        Returns:
+            self: The TMYGenerator instance for method chaining.
+        """
+        print("--- Starting full TMY generation workflow ---")
+        self.save_validation_dfs = save_validation_dfs
+        self.step_1_load_and_prepare_data()
+        self.step_2_select_candidate_months(completeness_threshold=completeness_threshold)
+        if use_persistence:
+            self.step_3_apply_persistence(
+                thresholds=persistence_thresholds,
+                min_run_length=min_run_length,
+                persistence_weights=persistence_weights
+            )
+        else:
+            self._select_months_by_fs_rank()
+        self.step_4_create_and_smooth_tmy()
+        print("\n--- Full TMY generation finished ---")
+        return self
+
+    # --- PUBLIC METHODS FOR EXPORT, VALIDATION, AND VISUALIZATION ---
+
+    def export_tmy(self, output_path=None):
+        """
+        Exports the final TMY data to a specified file path.
+
+        Args:
+            output_path (str, optional): The destination file path. If None, a
+                default name is generated. Supported extensions: .csv, .tmy, .xlsx.
+        """
+        if self.tmy_final is None: raise RuntimeError("No TMY has been generated to export.")
+
+        if output_path is None:
+            base_name = os.path.splitext(os.path.basename(self.file_path))[0]
+            output_path = f"{base_name}_generated_tmy.csv"
+
+        _, extension = os.path.splitext(output_path)
+        extension = extension.lower()
+
+        # --- FIX: Final Pre-Export Safety Check ---
+        for col in ['GHI', 'DNI', 'Wind_speed']:
+            if col in self.tmy_final.columns:
+                if (self.tmy_final[col] < 0).any():
+                     print(f"WARNING: Negative values detected in '{col}' before export. Clipping to 0.")
+                     self.tmy_final[col] = self.tmy_final[col].clip(lower=0)
+
+        print(f"Exporting TMY to '{output_path}'...")
+        if extension in ['.csv', '.tmy']:
+            self.tmy_final.to_csv(output_path)
+        elif extension == '.xlsx':
+            try:
+                tmy_for_excel = self.tmy_final.copy()
+                tmy_for_excel.index = tmy_for_excel.index.tz_localize(None)
+                tmy_for_excel.to_excel(output_path)
+            except ImportError:
+                print("ERROR: To export to .xlsx, you need to install 'openpyxl'.")
+        else:
+            raise ValueError(f"Unsupported file format: '{extension}'.")
+        print("Export completed successfully.")
+
+    def validate_step_1_data_loading(self):
+        """Prints descriptive statistics and a sample plot for the loaded data."""
+        # Check if either hourly or daily data exists
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
+
+        print("\n--- Validation for Step 1: Data Loading and Preparation ---")
+
+        if self.df_hourly is not None:
+            print("\nDescriptive Statistics for Hourly Data (`df_hourly`):"), print(self.df_hourly.describe().to_string())
+        if self.df_daily is not None:
+            print("\nDescriptive Statistics for Daily Data (`df_daily`):"), print(self.df_daily.describe().to_string())
+
+        # plt.figure(figsize=(15, 5))
+        # sample_month, sample_year = self.df_hourly.index[0].month, self.df_hourly.index[0].year
+        # sample_data = self.df_hourly[(self.df_hourly.index.year == sample_year) & (self.df_hourly.index.month == sample_month)]
+        # plt.plot(sample_data.index, sample_data['T_air'])
+        # plt.title(f"Time Series Sample for T_air ({pd.to_datetime(f'2000-{sample_month}-01').strftime('%B')} {sample_year})")
+        # plt.ylabel("T_air (°C)"), plt.grid(True, linestyle=':'), plt.show()
+
+    def validate_fs_calculation(self, variable, month, year):
+        """
+        Provides a detailed breakdown of the FS statistic calculation for a specific case.
+
+        Args:
+            variable (str): The name of the variable to validate.
+            month (int): The month to validate (1-12).
+            year (int): The year to validate.
+
+        Returns:
+            pd.DataFrame or None: A DataFrame with the calculation steps.
+        """
+        # Check if either hourly or daily data exists
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
+        print(f"\n--- Validation of FS Calculation for '{variable}' in {pd.to_datetime(f'2000-{month}-01').strftime('%B')} of {year} ---")
+
+        analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+
+        # Handle column name mapping: user might pass 'T_air' but df_daily has 'T_air_mean'
+        if variable not in analysis_df.columns:
+            # Try to find a matching column
+            if 'T_air' in variable or variable == 'T_air':
+                variable = 'T_air_mean' if 'T_air_mean' in analysis_df.columns else 'T_air'
+            elif 'T_dew' in variable or variable == 'T_dew':
+                variable = 'T_dew_mean' if 'T_dew_mean' in analysis_df.columns else 'T_dew'
+            elif 'Wind_speed' in variable or variable == 'Wind_speed':
+                variable = 'Wind_speed_mean' if 'Wind_speed_mean' in analysis_df.columns else 'Wind_speed'
+            elif 'GHI' in variable or variable == 'GHI':
+                variable = 'GHI_sum' if 'GHI_sum' in analysis_df.columns else 'GHI'
+
+        long_term_series = analysis_df[analysis_df.index.month == month][variable]
+        year_series = analysis_df[(analysis_df.index.month == month) & (analysis_df.index.year == year)][variable]
+
+        if long_term_series.empty or year_series.empty:
+            print("Not enough data for this validation.")
+            return None
+
+        fs_val, common_x, interp_lt, interp_yr, _, _ = self._calculate_fs_statistic(year_series, long_term_series, return_details=True)
+
+        df_calc = pd.DataFrame({
+            'Interpolation_Point': common_x, 'CDF_Long_Term': interp_lt,
+            'CDF_Candidate_Year': interp_yr, 'Absolute_Difference': np.abs(interp_lt - interp_yr)
+        })
+        print("Calculation Breakdown Table (first 5 rows):"), print(df_calc.head().to_string())
+        print(f"\nSum of 'Absolute_Difference' (Final FS Value): {df_calc['Absolute_Difference'].sum():.4f}")
+
+        return df_calc
+
+    def validate_full_ranking_for_month(self, month):
+        """
+        Calculates and displays the full FS ranking for all years for a given month.
+
+        Args:
+            month (int): The month to validate (1-12).
+
+        Returns:
+            pd.DataFrame: The full ranking table for the specified month.
+        """
+        # Check if either hourly or daily data exists
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
+        month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+        print(f"\n--- Validation of Full FS Ranking for {month_name} ---")
+
+        analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+
+        # Use the internal helper to generate the table
+        df_ranking = self._generate_ranking_table_for_month(month, analysis_df)
+
+        # Update attribute as well, ensuring consistency
+        self.validation_st2_df_fs_ranking_by_month[month] = df_ranking
+
+        print("\nWeights used for calculation:"), print(self.weights)
+        print("\nFull Ranking Table (showing top 10 years):"), print(df_ranking.head(10).to_string(float_format="%.4f"))
+        print(f"(The full table with {len(df_ranking)} years has been saved to `tmy_generator.validation_st2_df_fs_ranking_by_month[{month}]`)")
+
+        return df_ranking
+
+    def validate_persistence_selection(self):
+        """Prints the detailed persistence scoring and ranking tables for each month."""
+        # Handle cases where it is None, empty DF, or empty dict
+        is_empty = False
+        if self.validation_st3_df_persistence_decision is None:
+            is_empty = True
+        elif isinstance(self.validation_st3_df_persistence_decision, pd.DataFrame) and self.validation_st3_df_persistence_decision.empty:
+            is_empty = True
+        elif isinstance(self.validation_st3_df_persistence_decision, dict) and not self.validation_st3_df_persistence_decision:
+            is_empty = True
+
+        if is_empty:
+            if self.persistence_thresholds is None:
+                print("\nPersistence step was skipped. Nothing to validate.")
+            else:
+                raise RuntimeError("Run 'step_3_apply_persistence()' first.")
+            return
+
+        print("\n--- Validation for Step 3: Persistence Scoring Selection ---")
+        
+        # Check if it's the old dict format (just in case of mixed usage, though we changed the generator)
+        if isinstance(self.validation_st3_df_persistence_decision, dict):
+             for month_num, df_decision in self.validation_st3_df_persistence_decision.items():
+                month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
+                print(f"\nScoring and Ranking Table for {month_name}:")
+                print(df_decision.to_string(float_format="%.4f"))
+                selected_year = df_decision.iloc[0]['Year']
+                print(f"--> Selected year for {month_name}: {int(selected_year)} (Rank 1)")
+        else:
+            # It is a DataFrame with a 'Month' column
+            df_all = self.validation_st3_df_persistence_decision
+            months = sorted(df_all['Month'].unique())
+            for month_num in months:
+                month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
+                df_decision = df_all[df_all['Month'] == month_num].drop(columns=['Month'])
+                
+                print(f"\nScoring and Ranking Table for {month_name}:")
+                print(df_decision.to_string(float_format="%.4f"))
+                selected_year = df_decision.iloc[0]['Year']
+                print(f"--> Selected year for {month_name}: {int(selected_year)} (Rank 1)")
+
+    def validate_step_4_final_tmy(self):
+        """Prints the composition table and descriptive statistics of the final TMY."""
+        if self.tmy_final is None: raise RuntimeError("Run 'step_4_create_and_smooth_tmy()' first.")
+        print("\n--- Validation for Step 4: Final TMY ---")
+
+        if self.validation_st4_df_tmy_composition is None:
+             self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
+
+        # Fallback if generation failed or returned None
+        if self.validation_st4_df_tmy_composition is None:
+             composition_data = {'Month': [pd.to_datetime(f'2000-{m}-01').strftime('%B') for m in range(1, 13)], 'Source_Year': [self.selected_months[m] for m in range(1, 13)]}
+             self.validation_st4_df_tmy_composition = pd.DataFrame(composition_data)
+        print("\nTMY Composition Table:"), print(self.validation_st4_df_tmy_composition.set_index('Month').to_string())
+
+        print("\nDescriptive Statistics of the Final TMY:"), print(self.tmy_final.describe().to_string())
+
+    def summarize_fs_results(self):
+        """Creates and prints a summary table of FS results for all candidate months."""
+        if self.candidate_months is None: raise RuntimeError("Run 'step_2_select_candidate_months()' first.")
+        print("\n--- Overall Summary of FS Results ---")
+
+        # Ensure the summary dataframe exists
+        if self.validation_st2_summary_fs_ranking is None:
+            self._generate_summary_fs_ranking()
+
+        print("\nRanking Breakdown for the Top 5 Candidates of Each Month:")
+        print(self.validation_st2_summary_fs_ranking.to_string(float_format="%.4f"))
+
+    def plot_cdfs(self, month_to_plot=1, years_to_plot=None, save_figure_data=False):
+        """
+        Plots the CDFs for selected years against the long-term CDF for a given month.
+
+        Args:
+            month_to_plot (int): The month to visualize (1-12).
+            years_to_plot (list, optional): A list of specific years to plot.
+            save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+        """
+        # Check if either hourly or daily data exists
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
+        print(f"\nGenerating CDF visualizations for month {month_to_plot}...")
+
+        # Adapt variables, labels, and data source based on the method
+        if self.cdf_method == 'hourly':
+            analysis_df = self.df_hourly
+            prefix = "Hourly"
+            variables = {
+                'T_air': f'{prefix} T_air (°C)', 'T_dew': f'{prefix} T_dew (°C)',
+                'Wind_speed': f'{prefix} Wind_speed (m/s)', 'GHI': f'{prefix} GHI (Wh/m^2)'
+            }
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        else:  # daily or daily_with_dtr
+            analysis_df = self.df_daily
+            prefix = "Daily"
+            if self.cdf_method == 'daily_with_dtr':
+                variables = {
+                    'T_air': f'{prefix} Mean T_air (°C)', 'DTR': 'Diurnal Temperature Range (°C)',
+                    'T_dew': f'{prefix} Mean T_dew (°C)', 'Wind_speed': f'{prefix} Mean Wind_speed (m/s)',
+                    'GHI': f'{prefix} Sum GHI (Wh/m^2)'
+                }
+                fig, axes = plt.subplots(3, 2, figsize=(16, 18))
+            else:  # daily
+                variables = {
+                    'T_air_mean': f'{prefix} Mean T_air (°C)', 'T_dew_mean': f'{prefix} Mean T_dew (°C)',
+                    'Wind_speed_mean': f'{prefix} Mean Wind_speed (m/s)', 'GHI_sum': f'{prefix} Sum GHI (Wh/m^2)'
+                }
+                # Fallback: check if columns exist, if not try without suffix (for generic daily files)
+                # Instead of checking all, let's filter variables to those that exist
+                existing_vars = {k: v for k, v in variables.items() if k in analysis_df.columns}
+                if not existing_vars:
+                    # Try alternate names if standard ones failed
+                    if 'T_air' in analysis_df.columns:
+                        variables = {
+                            'T_air': f'{prefix} Mean T_air (°C)', 'T_dew': f'{prefix} Mean T_dew (°C)',
+                            'Wind_speed': f'{prefix} Mean Wind_speed (m/s)', 'GHI': f'{prefix} Sum GHI (Wh/m^2)'
+                        }
+                        # Re-filter
+                        variables = {k: v for k, v in variables.items() if k in analysis_df.columns}
+                else:
+                    variables = existing_vars
+                
+                fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+        if years_to_plot is None: years_to_plot = sorted(analysis_df.index.year.unique())[-5:]
+
+        month_data, month_name = analysis_df[analysis_df.index.month == month_to_plot], pd.to_datetime(f'2000-{month_to_plot}-01').strftime('%B')
+        axes = axes.flatten()
+
+        for i, (var, xlabel) in enumerate(variables.items()):
+            ax = axes[i]
+            
+            # Prepare list to collect data for this subplot
+            subplot_data_list = []
+            
+            long_term_series = month_data[var]
+            if not long_term_series.empty:
+                ax.plot(*self._compute_cdf(long_term_series), 'k--', label='Long-term', lw=2)
+                
+                # Add long-term data to storage
+                lt_df = long_term_series.to_frame(name='value')
+                lt_df['type'] = 'Long-term'
+                lt_df['variable'] = var
+                subplot_data_list.append(lt_df)
+                
+            for year in years_to_plot:
+                year_series = month_data[month_data.index.year == year][var]
+                if not year_series.empty:
+                    ax.plot(*self._compute_cdf(year_series), label=str(year))
+                    
+                    # Add year data to storage
+                    y_df = year_series.to_frame(name='value')
+                    y_df['type'] = f'Year {year}'
+                    y_df['variable'] = var
+                    subplot_data_list.append(y_df)
+                    
+            ax.set_title(f'{month_name} - {var} ({prefix} CDFs)', fontsize=14)
+            ax.set_xlabel(xlabel), ax.set_ylabel('CDF'), ax.set_ylim(0, 1), ax.grid(True, linestyle=':', alpha=0.7)
+            ax.legend()
+            
+            if save_figure_data and subplot_data_list:
+                combined_df = pd.concat(subplot_data_list)
+                self.figures_data[f"{month_name} - {var} ({prefix} CDFs)"] = {'fig': fig, 'data': combined_df}
+
+        for j in range(i + 1, len(axes)):
+            axes[j].set_visible(False)
+
+        fig.suptitle(f'CDF Comparison for {month_name} - {prefix} Data', fontsize=16)
+        plt.tight_layout(), plt.show()
+
+    def plot_fs_details(self, var_to_plot, month_to_plot, year_to_plot, save_figure_data=False):
+        """
+        Generates a detailed plot illustrating how the FS statistic is calculated.
+
+        Args:
+            var_to_plot (str): The variable to visualize.
+            month_to_plot (int): The month to visualize (1-12).
+            year_to_plot (int): The year to visualize.
+            save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+        """
+        # Check if either hourly or daily data exists
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
+        print(f"\nGenerating FS Statistic visualization for {var_to_plot} in {pd.to_datetime(f'2000-{month_to_plot}-01').strftime('%B')} {year_to_plot}...")
+
+        analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+        prefix = "Hourly" if self.cdf_method == 'hourly' else "Daily"
+
+        long_term_series = analysis_df[analysis_df.index.month == month_to_plot][var_to_plot]
+        year_series = analysis_df[(analysis_df.index.month == month_to_plot) & (analysis_df.index.year == year_to_plot)][var_to_plot]
+
+        if long_term_series.empty or year_series.empty:
+            print("Not enough data to generate the plot.")
+            return
+
+        fs_val, common_x, interp_lt, interp_yr, (lt_vals, lt_cdf), (yr_vals, yr_cdf) = self._calculate_fs_statistic(year_series, long_term_series, return_details=True)
+
+        fig, axes = plt.subplots(2, 1, figsize=(10, 12), sharex=True)
+        month_name = pd.to_datetime(f'2000-{month_to_plot}-01').strftime('%B')
+
+        axes[0].plot(lt_vals, lt_cdf, color='blue', label='Long-term')
+        axes[0].plot(yr_vals, yr_cdf, color='red', label=f'{year_to_plot} (raw)')
+        axes[0].set_title(f'{month_name} {year_to_plot} - BEFORE interpolation', fontsize=14)
+        axes[0].set_ylabel('Cumulative Probability', fontsize=12), axes[0].legend(), axes[0].grid(True, linestyle='--', alpha=0.6)
+
+        axes[1].plot(common_x, interp_lt, color='blue', label='Long-term (interp)')
+        axes[1].plot(common_x, interp_yr, '--', color='green', label=f'{year_to_plot} (interp)')
+        axes[1].fill_between(common_x, interp_lt, interp_yr, color='gray', alpha=0.3, label=f'FS area = {fs_val / len(common_x):.3f}')
+        axes[1].set_title(f'{month_name} {year_to_plot} - AFTER interpolation', fontsize=14)
+        axes[1].set_xlabel(f'{prefix} Value for {var_to_plot}', fontsize=12), axes[1].set_ylabel('Cumulative Probability', fontsize=12), axes[1].legend(), axes[1].grid(True, linestyle='--', alpha=0.6)
+
+        if save_figure_data:
+            # Store interpolation details
+            data_df = pd.DataFrame({
+                'Interpolation_Point': common_x,
+                'CDF_Long_Term': interp_lt,
+                'CDF_Candidate_Year': interp_yr,
+                'Variable': var_to_plot,
+                'Month': month_to_plot,
+                'Year': year_to_plot
+            })
+            self.figures_data[f"FS Details - {var_to_plot} - {month_name} {year_to_plot}"] = {'fig': fig, 'data': data_df}
+
+        fig.suptitle(f'Finkelstein-Schafer Statistic Calculation - {var_to_plot} ({month_name} {year_to_plot})', fontsize=16)
+        plt.tight_layout(), plt.show()
+
+    def _map_daily_to_hourly_var(self, var):
+        """Maps daily variable names to their hourly counterparts."""
+        mapping = {
+            'T_air_mean': 'T_air', 'T_air_max': 'T_air', 'T_air_min': 'T_air',
+            'T_dew_mean': 'T_dew', 'T_dew_max': 'T_dew', 'T_dew_min': 'T_dew',
+            'Wind_speed_mean': 'Wind_speed', 'Wind_speed_max': 'Wind_speed',
+            'GHI_sum': 'GHI', 'DNI_sum': 'DNI'
+        }
+        return mapping.get(var, var)
+
+    def plot_junctions(self, junctions_to_plot, hours_around=12, save_figure_data=False):
+        """
+        Visualizes the raw, un-smoothed data around month junctions.
+
+        This method is intended to be used BEFORE smoothing to inspect the
+        discontinuities and help decide on appropriate smoothing parameters.
+
+        Args:
+            junctions_to_plot (list of tuples): A list where each tuple contains
+                a variable name and the first month of the junction to plot.
+                Example: `[('T_air', 1), ('GHI', 7)]`.
+            hours_around (int): The number of hours to show on either side of
+                the junction point.
+            save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+        """
+        if self.tmy_raw is None:
+            # Create a temporary raw TMY if it doesn't exist, to allow pre-visualization
+            print("Creating temporary raw TMY for junction visualization...")
+            self._create_raw_tmy()
+
+        print("\n--- Visualizing Raw Month Junctions (Pre-Smoothing) ---")
+        if not isinstance(junctions_to_plot, list): raise TypeError("`junctions_to_plot` must be a list of tuples, e.g., [('T_air', 2)]")
+
+        n_plots = len(junctions_to_plot)
+        if n_plots == 0:
+            print("No junctions were specified to plot.")
+            return
+
+        if n_plots == 1:
+            fig, axes = plt.subplots(1, 1, figsize=(15, 7), squeeze=False)
+        else:
+            n_cols = 2
+            n_rows = (n_plots + n_cols - 1) // n_cols
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(10 * n_cols, 7 * n_rows), squeeze=False)
+        axes = axes.flatten()
+
+        for i, (var_input, month1) in enumerate(junctions_to_plot):
+            ax = axes[i]
+            
+            # Map daily variable name to hourly if necessary
+            var = self._map_daily_to_hourly_var(var_input)
+            
+            # Check if variable exists in TMY
+            if var not in self.tmy_raw.columns:
+                if var_input in self.tmy_raw.columns:
+                    var = var_input
+                else:
+                    print(f"WARNING: Variable '{var}' (mapped from '{var_input}') not found in TMY data. Skipping plot.")
+                    continue
+                
+            junction_point_ts = self.tmy_raw[self.tmy_raw.index.month == month1].index[-1]
+
+            try:
+                junction_idx = self.tmy_raw.index.get_loc(junction_point_ts)
+            except KeyError:
+                print(f"WARNING: Could not find junction point for month {month1}. Skipping plot.")
+                continue
+
+            start_idx = max(0, junction_idx - hours_around)
+            end_idx = min(len(self.tmy_raw) - 1, junction_idx + hours_around)
+
+            data_raw = self.tmy_raw.iloc[start_idx:end_idx + 1]
+            x_axis = np.arange(start_idx - junction_idx, end_idx - junction_idx + 1)
+
+            month2 = month1 % 12 + 1
+            month1_name = pd.to_datetime(f'2000-{month1}-01').strftime('%B')
+            month2_name = pd.to_datetime(f'2000-{month2}-01').strftime('%B')
+
+            ax.plot(x_axis, data_raw[var], 'o-', color='royalblue', label='TMY without Smoothing')
+            ax.axvline(0, color='k', linestyle='-', lw=1, label='Month Junction')
+            ax.set_title(f'Raw Junction for {var}: {month1_name} → {month2_name}', fontsize=14)
+            ax.set_xlabel('Hours Around Junction'), ax.set_ylabel(var), ax.legend(), ax.grid(True, linestyle=':')
+
+            if save_figure_data:
+                # Store junction data
+                df_junction = data_raw[[var]].copy()
+                df_junction['hours_from_junction'] = x_axis
+                df_junction['type'] = 'Raw'
+                df_junction['variable'] = var
+                df_junction['month1'] = month1
+                self.figures_data[f"Junction - {var} - {month1}->{month2}"] = {'fig': fig, 'data': df_junction}
+
+        for j in range(i + 1, len(axes)):
+            axes[j].set_visible(False)
+
+        fig.suptitle('Raw Month Junctions (Pre-Smoothing)', fontsize=16)
+        plt.tight_layout(), plt.show()
+
+    def plot_smoothing_comparison(self, junctions_to_plot, hours_around=12, save_figure_data=False):
+        """
+        Plots a comparison of data before and after smoothing at month junctions.
+        The plot title will include the smoothing parameters used.
+
+        Args:
+            junctions_to_plot (list of tuples): Example: `[('T_air', 1), ('GHI', 7)]`.
+            hours_around (int): The number of hours to show on either side of the junction.
+            save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+        """
+        if self.tmy_raw is None or self.tmy_final is None: raise RuntimeError("Run 'step_4_create_and_smooth_tmy()' first.")
+        print("\n--- Comparing Smoothing Effect ---")
+        if not isinstance(junctions_to_plot, list): raise TypeError("`junctions_to_plot` must be a list of tuples, e.g., [('T_air', 2)]")
+
+        n_plots = len(junctions_to_plot)
+        if n_plots == 0:
+            print("No junctions were specified to plot.")
+            return
+
+        if n_plots == 1:
+            fig, axes = plt.subplots(1, 1, figsize=(15, 7), squeeze=False)
+        else:
+            n_cols = 2
+            n_rows = (n_plots + n_cols - 1) // n_cols
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(10 * n_cols, 7 * n_rows), squeeze=False)
+        axes = axes.flatten()
+
+        default_params = {'hours_before': 6, 'hours_after': 6, 's_factor': None}
+
+        for i, (var_input, month1) in enumerate(junctions_to_plot):
+            ax = axes[i]
+            
+            # Map daily variable name to hourly if necessary
+            var = self._map_daily_to_hourly_var(var_input)
+
+            # Check if variable exists in TMY
+            if var not in self.tmy_raw.columns:
+                if var_input in self.tmy_raw.columns:
+                    var = var_input
+                else:
+                    print(f"WARNING: Variable '{var}' (mapped from '{var_input}') not found in TMY data. Skipping plot.")
+                    continue
+
+            junction_params = (self.smoothing_config or {}).get(month1, {})
+            hours = junction_params.get('hours', None)
+            hours_before_val = junction_params.get('hours_before', hours or default_params['hours_before'])
+            hours_after_val = junction_params.get('hours_after', hours or default_params['hours_after'])
+            s_factor_val = junction_params.get('s_factor', default_params['s_factor'])
+
+            # Comprobar si se usó un valor automático y está disponible
+            s_auto_val = junction_params.get('s_factor_auto', {}).get(var)
+
+            if s_factor_val is None:
+                if s_auto_val is not None:
+                    s_factor_str = f"{s_auto_val:.2g} (auto)"
+                else:
+                    s_factor_str = "auto"
+            else:
+                s_factor_str = f"{s_factor_val:.2g}"
+
+            junction_point_ts = self.tmy_raw[self.tmy_raw.index.month == month1].index[-1]
+
+            try:
+                junction_idx = self.tmy_raw.index.get_loc(junction_point_ts)
+            except KeyError:
+                print(f"WARNING: Could not find junction point for month {month1}. Skipping plot.")
+                continue
+
+            start_idx = max(0, junction_idx - hours_around)
+            end_idx = min(len(self.tmy_raw) - 1, junction_idx + hours_around)
+
+            data_raw = self.tmy_raw.iloc[start_idx:end_idx + 1]
+            data_final = self.tmy_final.iloc[start_idx:end_idx + 1]
+
+            x_axis = np.arange(start_idx - junction_idx, end_idx - junction_idx + 1)
+
+            month2 = month1 % 12 + 1
+            month1_name = pd.to_datetime(f'2000-{month1}-01').strftime('%B')
+            month2_name = pd.to_datetime(f'2000-{month2}-01').strftime('%B')
+
+            ax.plot(x_axis, data_raw[var], 'o-', color='royalblue', label='TMY without Smoothing')
+
+            # --- Estilo de línea actualizado ---
+            ax.plot(x_axis, data_final[var], 'ro--', lw=2, label='Smoothed TMY')
+
+            ax.axvline(0, color='k', linestyle='-', lw=1, label='Month Junction')
+
+            title = (f'Smoothing Comparison for {var}: {month1_name} → {month2_name}\n'
+                     f'(params: h_before={hours_before_val}, h_after={hours_after_val}, s={s_factor_str})')
+            ax.set_title(title, fontsize=14)
+
+            ax.set_xlabel('Hours Around Junction'), ax.set_ylabel(var), ax.legend(), ax.grid(True, linestyle=':')
+
+            if save_figure_data:
+                # Store comparison data
+                df_raw_slice = data_raw[[var]].copy()
+                df_raw_slice['hours_from_junction'] = x_axis
+                df_raw_slice['type'] = 'Raw'
+                
+                df_final_slice = data_final[[var]].copy()
+                df_final_slice['hours_from_junction'] = x_axis
+                df_final_slice['type'] = 'Smoothed'
+                
+                combined_slice = pd.concat([df_raw_slice, df_final_slice])
+                combined_slice['variable'] = var
+                combined_slice['month1'] = month1
+                
+                self.figures_data[f"Smoothing Comparison - {var} - {month1}->{month2}"] = {'fig': fig, 'data': combined_slice}
+
+        for j in range(i + 1, len(axes)):
+            axes[j].set_visible(False)
+
+        fig.suptitle('Smoothing Effect Comparison at Month Junctions', fontsize=16)
+        plt.tight_layout(), plt.show()
+
+    def plot_persistence_runs(self, month, years, save_figure_data=False):
+        """
+        Plots the daily data and persistence runs for T_air and GHI for selected years.
+
+        Args:
+            month (int): The month to visualize (1-12).
+            years (list or int): A list of years (or a single year) to plot.
+            save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+        """
+        if self.df_daily is None: raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
+        if self.persistence_thresholds is None: raise RuntimeError("Run 'step_3_apply_persistence()' before visualizing its results.")
+        if not self.fs_ranking_results: raise RuntimeError("FS ranking results have not been calculated. Run 'step_2_select_candidate_months()' first.")
+        if isinstance(years, int): years = [years]
+
+        month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+        print(f"\n--- Visualizing Persistence Runs for T_air and GHI in {month_name} ---")
+
+        long_term_data = self.df_daily[self.df_daily.index.month == month]
+        if long_term_data.empty:
+            print("No long-term data available for this month.")
+            return
+
+        # Determine accessible columns
+        t_col = 'T_air' if 'T_air' in long_term_data.columns else 'T_air_mean'
+        ghi_col = 'GHI' if 'GHI' in long_term_data.columns else 'GHI_sum'
+
+        if t_col not in long_term_data.columns or ghi_col not in long_term_data.columns:
+            print(f"  Error: Plotting requires Temp ({t_col}) and GHI ({ghi_col}). Found {long_term_data.columns.tolist()[:5]}... Skipping.")
+            return
+
+        lower_p, upper_p = self.persistence_thresholds
+        t_air_upper, t_air_lower = long_term_data[t_col].quantile([upper_p, lower_p])
+        ghi_lower = long_term_data[ghi_col].quantile(lower_p)
+
+        fig, axes = plt.subplots(nrows=len(years), ncols=1, figsize=(16, 6 * len(years)), sharex=True)
+        if len(years) == 1: axes = [axes]
+
+        for ax, year in zip(axes, years):
+            year_data = self.df_daily[(self.df_daily.index.month == month) & (self.df_daily.index.year == year)]
+            if year_data.empty:
+                ax.text(0.5, 0.5, f"No data available for year {year}", ha='center', va='center')
+                continue
+
+            try:
+                fs_rank = self.candidate_months[month].index(year) + 1
+            except (ValueError, KeyError, AttributeError):
+                fs_rank = "N/A"
+
+            w_fs_value_str = "N/A"
+            year_stats = next((item for item in self.fs_ranking_results.get(month, []) if item['year'] == year), None)
+            if year_stats:
+                w_fs_value_str = f"{year_stats['Total_W_FS']:.4f}"
+
+            t_freq, t_dur = self._calculate_run_stats(year_data[t_col], t_air_upper, t_air_lower, self.min_run_length)
+            ghi_freq, ghi_dur = self._calculate_run_stats(year_data[ghi_col], np.inf, ghi_lower, self.min_run_length)
+
+            title_info = (f"Year {year} (FS Rank: {fs_rank}, Total_W_FS: {w_fs_value_str})\n"
+                          f"{t_col} Runs: Freq={t_freq}, MaxLen={t_dur} days | "
+                          f"{ghi_col} Low Runs: Freq={ghi_freq}, MaxLen={ghi_dur} days")
+
+            self._plot_single_persistence_subplot(ax, year_data, (t_air_upper, t_air_lower), ghi_lower, title_info, t_col=t_col, ghi_col=ghi_col)
+
+        fig.suptitle(f"Year-by-Year Persistence Analysis for {month_name}", fontsize=16, y=1.0)
+        axes[-1].set_xlabel("Day of Month")
+        plt.tight_layout(rect=[0, 0, 1, 0.98])
+        
+        # Collect data for storage
+        persistence_data_list = []
+        
+        # Add long-term data (common for all years in this context, effectively showing the dist, but the runs are per year)
+        # The plot shows year-by-year, so let's store the year data that was actually plotted.
+        for year in years:
+            year_data = self.df_daily[(self.df_daily.index.month == month) & (self.df_daily.index.year == year)]
+            if not year_data.empty:
+                 ydf = year_data[[t_col, ghi_col]].copy()
+                 ydf['type'] = f'Year {year}'
+                 ydf['month'] = month
+                 persistence_data_list.append(ydf)
+                 
+        if save_figure_data and persistence_data_list:
+            combined_df = pd.concat(persistence_data_list)
+            self.figures_data[f"Year-by-Year Persistence Analysis for {month_name}"] = {'fig': fig, 'data': combined_df}
+        
+        plt.show()
+
+    def plot_annual_cdfs(self, save_figure_data=False):
+        """
+        Plots a comparison of the annual CDF of the final TMY against the long-term data.
+
+        This method generates a 2x2 grid of plots, one for each primary weather
+        variable, to provide a high-level validation of the statistical properties
+        of the entire generated TMY year.
+
+        Args:
+             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Raises:
+            RuntimeError: If the TMY has not been generated yet.
+        """
+        # Check if TMY and data exist
+        if self.tmy_final is None:
+            raise RuntimeError("The TMY must be generated first. Run the full workflow.")
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("No data available. Run 'step_1_load_and_prepare_data()' first.")
+
+        print("\n--- Plotting Annual CDF Comparison: Final TMY vs. Long-term ---")
+
+        # Determine the data source based on the method used for generation
+        if self.data_frequency == 'daily':
+            analysis_df = self.df_daily
+            # Check if tmy_final is hourly (e.g. used hourly_file_path) and resample if needed
+            if 'T_air' in self.tmy_final.columns and 'T_air_mean' not in self.tmy_final.columns:
+                 tmy_resampled = self.tmy_final.resample('D').agg({
+                    'T_air': 'mean', 'T_dew': 'mean', 'Wind_speed': 'mean', 'GHI': 'sum'
+                 }).dropna()
+                 # Rename to match typical daily columns for consistency with analysis_df logic
+                 tmy_analysis_df = tmy_resampled.rename(columns={
+                     'T_air': 'T_air_mean', 'T_dew': 'T_dew_mean', 
+                     'Wind_speed': 'Wind_speed_mean', 'GHI': 'GHI_sum'
+                 })
+            else:
+                 tmy_analysis_df = self.tmy_final
+        else:
+            analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+            tmy_analysis_df = self.tmy_final.resample('D').agg({
+                'T_air': 'mean', 'T_dew': 'mean', 'Wind_speed': 'mean', 'GHI': 'sum'
+            }).dropna() if self.cdf_method != 'hourly' else self.tmy_final
+
+        # Determine column names based on what's actually in analysis_df
+        cols = analysis_df.columns
+        t_col = 'T_air_mean' if 'T_air_mean' in cols else 'T_air'
+        td_col = 'T_dew_mean' if 'T_dew_mean' in cols else 'T_dew'
+        ws_col = 'Wind_speed_mean' if 'Wind_speed_mean' in cols else 'Wind_speed'
+        ghi_col = 'GHI_sum' if 'GHI_sum' in cols else 'GHI'
+
+        variables = {
+            t_col: 'T_air', td_col: 'T_dew',
+            ws_col: 'Wind_speed', ghi_col: 'GHI'
+        }
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        axes = axes.flatten()
+
+        # Initialize list to collect data if saving is enabled
+        figure_data_list = []
+
+        for i, (var, xlabel) in enumerate(variables.items()):
+            ax = axes[i]
+
+            # Get the long-term and final TMY series for the current variable
+            # var is the key from variables dict (could be T_air_mean or T_air)
+            # xlabel is the display label
+            long_term_series = analysis_df[var]
+
+            # For tmy_analysis_df, we need to map back to the appropriate column
+            # If we're using daily analysis, tmy_analysis_df was resampled and has standard names
+            if self.cdf_method != 'hourly' and self.data_frequency != 'daily':
+                # tmy_analysis_df was created by resampling tmy_final (hourly) to daily
+                # It has standard column names: T_air, T_dew, Wind_speed, GHI
+                tmy_var = xlabel  # Use the display name which matches the resampled columns
+            else:
+                tmy_var = var
+
+            tmy_series = tmy_analysis_df[tmy_var]
+
+            # Plot interpolated CDFs for better comparison
+            common_x, lt_cdf, tmy_cdf = self._compute_interpolated_cdf(long_term_series, tmy_series)
+            ax.plot(common_x, lt_cdf, 'k--', label='Long-term', lw=2)
+            ax.plot(common_x, tmy_cdf, 'r-', label='Final TMY', lw=1.5)
+
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel('Cumulative Probability')
+            ax.legend()
+            ax.grid(True, linestyle=':')
+
+            if save_figure_data:
+                # Store annual CDF data
+                # Long term
+                lt_df = long_term_series.to_frame(name='value')
+                lt_df['type'] = 'Long-term'
+                lt_df['variable'] = var
+                figure_data_list.append(lt_df)
+                
+                # TMY
+                tmy_df = tmy_series.to_frame(name='value')
+                tmy_df['type'] = 'Final TMY'
+                tmy_df['variable'] = var
+                figure_data_list.append(tmy_df)
+
+        if save_figure_data and figure_data_list:
+             combined_df = pd.concat(figure_data_list)
+             self.figures_data[f"Annual CDF Comparison - {var}"] = {'fig': fig, 'data': combined_df}
+
+        fig.suptitle('Annual CDF Comparison - Final TMY vs. Long-term Data', fontsize=16)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_monthly_means(self, save_figure_data=False):
+        """
+        Plots a comparison of monthly mean values of the final TMY against long-term averages.
+
+        For GHI, it compares the total monthly sum instead of the mean. This plot is
+        essential for quickly identifying any systematic monthly biases in the generated TMY.
+
+        Args:
+             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Raises:
+            RuntimeError: If the TMY has not been generated yet.
+        """
+        # Check if TMY and daily data exist
+        if self.tmy_final is None:
+            raise RuntimeError("The TMY must be generated first. Run the full workflow.")
+        if self.df_daily is None:
+            raise RuntimeError("Daily data required. Run 'step_1_load_and_prepare_data()' first.")
+
+        print("\n--- Plotting Monthly Mean Comparison: Final TMY vs. Long-term ---")
+
+        # Calculate long-term monthly averages
+        # df_daily might have T_air_mean or T_air depending on how it was created
+        cols = self.df_daily.columns
+        t_col = 'T_air_mean' if 'T_air_mean' in cols else 'T_air'
+        td_col = 'T_dew_mean' if 'T_dew_mean' in cols else 'T_dew'
+        ws_col = 'Wind_speed_mean' if 'Wind_speed_mean' in cols else 'Wind_speed'
+        ghi_col = 'GHI_sum' if 'GHI_sum' in cols else 'GHI'
+
+        long_term_monthly = self.df_daily.groupby(self.df_daily.index.month).mean()
+        long_term_monthly[ghi_col] = self.df_daily.groupby(self.df_daily.index.month)[ghi_col].sum() / len(self.df_daily.index.year.unique())
+
+        # Calculate final TMY monthly averages
+        # Check if tmy_final is hourly
+        if 'T_air' in self.tmy_final.columns and 'T_air_mean' not in self.tmy_final.columns:
+             tmy_daily = self.tmy_final.resample('D').agg({'T_air': 'mean', 'T_dew': 'mean', 'Wind_speed': 'mean', 'GHI': 'sum'}).dropna()
+        else:
+             # Assume it's daily already
+             # We need to ensure we map whatever columns differ.
+             # If tmy_final is daily, it likely has T_air_mean.
+             # We should probably standardize to T_air for the aggregation step below.
+             tmy_daily = self.tmy_final.copy()
+             # Rename if needed for the aggregation block below which uses standard names
+             rename_map = {}
+             if 'T_air_mean' in tmy_daily.columns: rename_map['T_air_mean'] = 'T_air'
+             if 'T_dew_mean' in tmy_daily.columns: rename_map['T_dew_mean'] = 'T_dew'
+             if 'Wind_speed_mean' in tmy_daily.columns: rename_map['Wind_speed_mean'] = 'Wind_speed'
+             if 'GHI_sum' in tmy_daily.columns: rename_map['GHI_sum'] = 'GHI'
+             if rename_map:
+                 tmy_daily = tmy_daily.rename(columns=rename_map)
+
+        tmy_monthly = tmy_daily.groupby(tmy_daily.index.month).mean()
+        tmy_monthly['GHI'] = tmy_daily.groupby(tmy_daily.index.month)['GHI'].sum()
+
+        # Determine column names based on availability in long_term_monthly
+        lt_cols = long_term_monthly.columns
+        t_col = 'T_air_mean' if 'T_air_mean' in lt_cols else 'T_air'
+        td_col = 'T_dew_mean' if 'T_dew_mean' in lt_cols else 'T_dew'
+        ws_col = 'Wind_speed_mean' if 'Wind_speed_mean' in lt_cols else 'Wind_speed'
+        ghi_col = 'GHI_sum' if 'GHI_sum' in lt_cols else 'GHI'
+
+        variables = {
+            t_col: 'Temperature (°C)', td_col: 'Dew Point (°C)',
+            ws_col: 'Wind Speed (m/s)', ghi_col: 'Monthly Solar Total (Wh/m²)'
+        }
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        axes = axes.flatten()
+        month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+        # Initialize list for data collection
+        means_data = []
+
+        for i, (var, ylabel) in enumerate(variables.items()):
+            ax = axes[i]
+
+            ax.plot(long_term_monthly.index, long_term_monthly[var], 'k--', label='Long-term', lw=2)
+            # tmy_monthly always has standard column names (T_air, GHI, etc.)
+            # but var might be T_air_mean, so we need to map it
+            tmy_var = 'T_air' if 'T_air' in var else ('T_dew' if 'T_dew' in var else ('Wind_speed' if 'Wind_speed' in var else 'GHI'))
+            ax.plot(tmy_monthly.index, tmy_monthly[tmy_var], 'r-', label='Final TMY', lw=1.5)
+
+            ax.set_title(var, fontsize=14)
+            ax.set_ylabel(ylabel)
+            ax.set_xticks(range(1, 13))
+            ax.set_xticklabels(month_labels)
+            ax.legend()
+            ax.grid(True, linestyle=':')
+
+            if save_figure_data:
+                # Store Long Term
+                df_lt = long_term_monthly[var].to_frame(name='value')
+                df_lt['type'] = 'Long-term Mean'
+                df_lt['variable'] = var
+                means_data.append(df_lt)
+                
+                # Store TMY
+                df_tmy = tmy_monthly[tmy_var].to_frame(name='value')
+                df_tmy['type'] = 'Final TMY Mean'
+                df_tmy['variable'] = var
+                means_data.append(df_tmy)
+
+        if save_figure_data and means_data:
+            combined_df = pd.concat(means_data)
+            self.figures_data["Monthly Means Comparison"] = {'fig': fig, 'data': combined_df}
+
+        fig.suptitle('Monthly Mean (and Total GHI) - Final TMY vs Long-term Averages', fontsize=16)
+        plt.tight_layout()
+        plt.show()
+
+    def plot_monthly_cdfs(self, sharex=True, save_figure_data=False):
+        """
+        Plots a month-by-month CDF comparison of the final TMY against the long-term data.
+
+        For each primary variable, this method generates a grid of 12 subplots (one for
+        each month), allowing for a detailed inspection of the statistical distribution
+        of the TMY on a monthly basis.
+        
+        Args:
+            sharex (bool): If True, subplots share the X axis.
+            save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Raises:
+            RuntimeError: If the TMY has not been generated yet.
+        """
+        # Check if TMY and data exist
+        if self.tmy_final is None:
+            raise RuntimeError("The TMY must be generated first. Run the full workflow.")
+        if self.df_hourly is None and self.df_daily is None:
+            raise RuntimeError("No data available. Run 'step_1_load_and_prepare_data()' first.")
+
+        print("\n--- Plotting Monthly CDF Comparison: Final TMY vs. Long-term ---")
+
+        if self.data_frequency == 'daily':
+            analysis_df = self.df_daily
+            # For daily data, tmy_final might be hourly or daily.
+            if 'T_air' in self.tmy_final.columns and 'T_air_mean' not in self.tmy_final.columns:
+                # It is hourly, so we resample to daily including max/min for temperature
+                tmy_resampled = self.tmy_final.resample('D').agg({
+                    'T_air': ['mean', 'max', 'min'], 'T_dew': 'mean', 'Wind_speed': 'mean', 'GHI': 'sum'
+                }).dropna()
+                # Flatten multi-level columns
+                tmy_resampled.columns = ['_'.join(col).strip('_') if isinstance(col, tuple) else col 
+                                          for col in tmy_resampled.columns.values]
+                # Rename to standard names (removing aggregation suffixes)
+                tmy_analysis_df = tmy_resampled.rename(columns={
+                    'T_air_mean': 'T_air', 'T_air_max': 'T_air_max', 'T_air_min': 'T_air_min',
+                    'T_dew_mean': 'T_dew', 'Wind_speed_mean': 'Wind_speed', 'GHI_sum': 'GHI'
+                })
+            else:
+                 # It is daily, rename to standard keys expected by plotting logic block below
+                 rename_map = {
+                    'T_air_mean': 'T_air', 'T_dew_mean': 'T_dew',
+                    'Wind_speed_mean': 'Wind_speed', 'GHI_sum': 'GHI'
+                 }
+                 # Keep T_air_max and T_air_min if they exist
+                 if 'T_air_max' in self.tmy_final.columns:
+                     rename_map['T_air_max'] = 'T_air_max'
+                 if 'T_air_min' in self.tmy_final.columns:
+                     rename_map['T_air_min'] = 'T_air_min'
+                 tmy_analysis_df = self.tmy_final.rename(columns=rename_map)
+        else:
+            analysis_df = self.df_hourly if self.cdf_method == 'hourly' else self.df_daily
+            if self.cdf_method != 'hourly':
+                tmy_resampled = self.tmy_final.resample('D').agg({
+                    'T_air': ['mean', 'max', 'min'], 'T_dew': 'mean', 'Wind_speed': 'mean', 'GHI': 'sum'
+                }).dropna()
+                # Flatten multi-level columns
+                tmy_resampled.columns = ['_'.join(col).strip('_') if isinstance(col, tuple) else col 
+                                          for col in tmy_resampled.columns.values]
+                tmy_analysis_df = tmy_resampled.rename(columns={
+                    'T_air_mean': 'T_air', 'T_air_max': 'T_air_max', 'T_air_min': 'T_air_min',
+                    'T_dew_mean': 'T_dew', 'Wind_speed_mean': 'Wind_speed', 'GHI_sum': 'GHI'
+                })
+            else:
+                tmy_analysis_df = self.tmy_final
+
+        # Determine variables to plot
+        cols = analysis_df.columns
+        t_col = 'T_air_mean' if 'T_air_mean' in cols else 'T_air'
+        t_max_col = 'T_air_max' if 'T_air_max' in cols else None
+        t_min_col = 'T_air_min' if 'T_air_min' in cols else None
+        td_col = 'T_dew_mean' if 'T_dew_mean' in cols else 'T_dew'
+        ws_col = 'Wind_speed_mean' if 'Wind_speed_mean' in cols else 'Wind_speed'
+        ghi_col = 'GHI_sum' if 'GHI_sum' in cols else 'GHI'
+        
+        # Build variables list with temperature max/min if available
+        variables = [t_col]
+        if t_max_col:
+            variables.append(t_max_col)
+        if t_min_col:
+            variables.append(t_min_col)
+        variables.extend([td_col, ws_col, ghi_col])
+        
+        month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+        for var in variables:
+            fig, axes = plt.subplots(3, 4, figsize=(16, 12), sharex=sharex, sharey=True)
+            axes = axes.flatten()
+            fig.suptitle(f'Monthly CDF Comparison - {var}', fontsize=16)
+
+            # Prepare list to collect data for this figure
+            figure_data_list = []
+
+            for month in range(1, 13):
+                ax = axes[month - 1]
+
+                # Filter data for the specific month
+                long_term_series = analysis_df[analysis_df.index.month == month][var]
+                
+                # Map analysis_df variable names to tmy_analysis_df names
+                if 'T_air' in var:
+                    if 'max' in var:
+                        tmy_var = 'T_air_max' if 'T_air_max' in tmy_analysis_df.columns else 'T_air'
+                    elif 'min' in var:
+                        tmy_var = 'T_air_min' if 'T_air_min' in tmy_analysis_df.columns else 'T_air'
+                    else:
+                        tmy_var = 'T_air'
+                elif 'T_dew' in var:
+                    tmy_var = 'T_dew'
+                elif 'Wind_speed' in var:
+                    tmy_var = 'Wind_speed'
+                else:
+                    tmy_var = 'GHI'
+                
+                tmy_series = tmy_analysis_df[tmy_analysis_df.index.month == month][tmy_var]
+
+                if not long_term_series.empty:
+                    # Add long-term data to storage
+                    lt_df = long_term_series.to_frame(name='value')
+                    lt_df['type'] = 'Long-term'
+                    lt_df['month'] = month
+                    lt_df['variable'] = var
+                    figure_data_list.append(lt_df)
+
+                if not tmy_series.empty:
+                   # Add TMY data to storage
+                    tmy_df = tmy_series.to_frame(name='value')
+                    tmy_df['type'] = 'Final TMY'
+                    tmy_df['month'] = month
+                    tmy_df['variable'] = var
+                    figure_data_list.append(tmy_df)
+
+                if not long_term_series.empty and not tmy_series.empty:
+                    # Use interpolated CDFs for better comparison
+                    common_x, lt_cdf, tmy_cdf = self._compute_interpolated_cdf(long_term_series, tmy_series)
+                    ax.plot(common_x, lt_cdf, 'k--', label='Long-term', lw=1.5)
+                    ax.plot(common_x, tmy_cdf, 'r-', label='Final TMY', lw=1)
+
+                ax.set_title(month_labels[month - 1])
+                ax.grid(True, linestyle=':')
+                if month % 4 == 1:  # Leftmost column
+                    ax.set_ylabel('CDF')
+                if month > 8:  # Bottom row
+                    ax.set_xlabel(var)
+
+            # Create a single legend for the entire figure
+            handles, labels = ax.get_legend_handles_labels()
+            fig.legend(handles, labels, loc='upper right')
+
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+            
+            # Store figure and data
+            if save_figure_data and figure_data_list:
+                combined_df = pd.concat(figure_data_list)
+                self.figures_data[f"Monthly CDF Comparison - {var}"] = {'fig': fig, 'data': combined_df}
+                
+            plt.show()
+
+    @staticmethod
+    def check_input_expectations(file_path, weighting_method='sandia', data_frequency='hourly', column_mapping=None):
+        """
+        Helper method to analyze an input file and suggest column mapping.
+
+        Args:
+            file_path (str): Path to the input file (csv or excel).
+            weighting_method (str): 'sandia' or 'tmy3'.
+            data_frequency (str): 'hourly' or 'daily'.
+            column_mapping (dict, optional): Dictionary to map file columns to standard names.
+        """
+        import pandas as pd
+        print(f"--- Analyzing '{file_path}' for {weighting_method} method ({data_frequency}) ---")
+
+        try:
+            if file_path.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(file_path, nrows=5)
+            else:
+                df = pd.read_csv(file_path, nrows=5)
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            return
+
+        # Apply column mapping if provided
+        if column_mapping:
+            print(f"Applying provided column mapping: {column_mapping}")
+            df = df.rename(columns=column_mapping)
+
+        columns = df.columns.tolist()
+        print(f"Found columns (after mapping): {columns}")
+
+        # Expected Standard Variable Names (internal)
+        # 'time' is always required
+        expected_internal = ['time']
+
+        if data_frequency == 'hourly':
+            expected_internal.extend(['T_air', 'T_dew', 'Wind_speed', 'GHI'])
+            if weighting_method == 'tmy3':
+                expected_internal.append('DNI')
+
+        elif data_frequency == 'daily':
+            # Based on standard daily aggregations used in code
+            # Note: The code handles mapping internally, but these are the Keys needed in weights
+            if weighting_method == 'tmy3':
+                expected_internal.extend([
+                    'T_air_max', 'T_air_min', 'T_air_mean',
+                    'T_dew_max', 'T_dew_min', 'T_dew_mean',
+                    'Wind_speed_max', 'Wind_speed_mean',
+                    'GHI_sum', 'DNI_sum'
+                ])
+            else:  # sandia
+                expected_internal.extend([
+                    'T_air_max', 'T_air_min', 'T_air_mean',
+                    'T_dew_max', 'T_dew_min', 'T_dew_mean',
+                    'Wind_speed_max', 'Wind_speed_mean',
+                    'GHI_sum'
+                ])
+
+        print(f"\\nExpected Variables: {expected_internal}")
+
+        # Simple heuristic check
+        missing_exact = [col for col in expected_internal if col not in columns]
+
+        # Time format validation
+        time_ok = False
+        if 'time' in columns:
+            try:
+                # Try to parse the time column to see if it's valid
+                pd.to_datetime(df['time'], errors='raise', utc=True)
+                time_ok = True
+                print("Ref: 'time' column found and format looks valid.")
+            except Exception:
+                print("WARNING: 'time' column found but contains invalid format or non-datetime values.")
+        else:
+             print("WARNING: 'time' column missing. Please map a column to 'time' (e.g. 'Fecha', 'Date').")
+
+        if not missing_exact and time_ok:
+            print("\\nResult: All expected columns found exactly and time format is valid!")
+        else:
+            if missing_exact:
+                print(f"\\nResult: Missing exact matches for: {missing_exact}")
+                print("You likely need to provide or update a `column_mapping` dictionary.")
+                print("Example structure:")
+                print("column_mapping = {")
+                for miss in missing_exact:
+                    print(f"    '<your_file_column_for_{miss}>': '{miss}',")
+                print("}")
+            
+            if not time_ok and 'time' in missing_exact:
+                 print("Critical: 'time' column is missing.")
+
+        return {
+            'found_columns': columns,
+            'expected_variables': expected_internal,
+            'missing_exact': missing_exact,
+            'time_valid': time_ok
+        }
