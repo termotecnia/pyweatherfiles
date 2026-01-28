@@ -1,4 +1,4 @@
-import pytmy
+from pyweatherfiles import tmy
 import pandas as pd
 import os
 
@@ -33,7 +33,7 @@ column_mapping = {
 }
 
 
-tmy_gen = pytmy.TMYGenerator(
+tmy_gen = tmy.TMYGenerator(
     file_path=data_path,
     cdf_method='daily',
     data_frequency='daily',

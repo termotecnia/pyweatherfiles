@@ -1,20 +1,20 @@
-# pytmy
+# pyweatherfiles
 
-A Python package to generate Typical Meteorological Year (TMY) files from historical weather data.
+A Python package to manage weather files and generate Typical Meteorological Year (TMY) data from historical records.
 
 ## Installation
 
 ```bash
-pip install pytmy
+pip install pyweatherfiles
 ```
 
 ## Usage
 
 ```python
-import pytmy
+from pyweatherfiles import tmy
 
 # See examples/using_tmy_generator.py for a complete example.
-generator = pytmy.TMYGenerator("path/to/your/weather_data.csv")
+generator = tmy.TMYGenerator("path/to/your/weather_data.csv")
 # ... check the example file for more details
 ```
 
