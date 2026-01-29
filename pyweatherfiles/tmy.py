@@ -677,14 +677,56 @@ class TMYGenerator:
         """
         Applies the persistence criteria using the sequential iterative exclusion method.
         
-        Logic:
-        1. Calculate runs (Warm T, Cool T, Low GHI).
-        2. Iteratively exclude candidates based on:
-           - Number of runs
-           - Length of runs
-           - Zero runs
-        3. Stop when 2 or 3 candidates remain.
-        4. Select the highest FS-ranked candidate among survivors.
+        PERSISTENCE PROCESS (Sequential Exclusion):
+        ==========================================
+        
+        Start from the 5 candidate years already ranked by FS.
+        
+        STEP A: COMPUTE PERSISTENCE INDICATORS (using daily data)
+        ---------------------------------------------------------
+        For mean dry-bulb temperature:
+            - consecutive days above the 67th percentile (warm runs)
+            - consecutive days below the 33rd percentile (cool runs)
+        For GHI:
+            - consecutive days below the 33rd percentile (low-radiation runs)
+        
+        For each candidate month, calculate:
+            - Number of runs (frequency)
+            - Longest run length
+        
+        STEP B: ITERATIVE EXCLUSION CRITERIA
+        ------------------------------------
+        The exclusion criteria are applied sequentially and iteratively.
+        Step 1 is always fully applied first. After each exclusion, the remaining 
+        months are re-evaluated starting again from Step 1.
+        
+        1. NUMBER OF RUNS CRITERION
+           a. If all months have no runs → select the first month in ranking list
+           b. If all months have equal number of runs → check length of runs:
+              i.  If unequal run lengths → exclude the one with the longest run
+              ii. If equal run lengths → exclude the last one in the list
+           c. If number of runs are not equal:
+              - Exclude the one with largest number of runs
+              - Modified rule: eliminate only if it has more runs than all others
+              - If tie for max runs → eliminate the worst-ranked among them
+        
+        2. RUNS LENGTH CRITERION (only if Step 1 cannot eliminate)
+           a. If unequal run length → exclude the longest run month
+           b. If equal run length → check number of runs:
+              i.  If equal number of runs → exclude the last one in the list
+              ii. If not equal → exclude the one with the largest number of runs
+        
+        3. ZERO-RUN CRITERION (only if Steps 1 and 2 cannot eliminate)
+           Inspect remaining months for number of runs
+           Exclude the one with zero runs (if any)
+        
+        STEP C: FINAL SELECTION
+        -----------------------
+        The above criteria will eliminate 2 or 3 months, leaving 2 or 3 remaining.
+        Select the highest FS-ranked candidate among survivors.
+        
+        MODIFIED RULE:
+        If all candidates are excluded, ignore persistence and select best FS month.
         """
         print("\nApplying persistence criteria based on sequential exclusion...")
         selected_months = {}
@@ -697,18 +739,19 @@ class TMYGenerator:
             candidates_years = self.candidate_months.get(month, [])
             if not candidates_years: continue
 
-            # Preserve initial FS Rank (0-based index from the list)
-            # The list 'candidates_years' is already sorted by FS (best first)
-            
-            # Map for storing decisions (Eliminated: ..., or SELECTED ...)
+            # candidates_years is already sorted by FS (best first) - this is our starting point
             month_decisions = {y: "" for y in candidates_years}
-            month_stats_list = [] # Temporary list to hold stats for generating the DataFrame later
+            month_stats_list = []
             
             long_term_month_data = self.df_daily[self.df_daily.index.month == month]
             if long_term_month_data.empty: continue
 
-            # Define Thresholds
-            lower_p, upper_p = self.persistence_thresholds
+            # ═══════════════════════════════════════════════════════════════════
+            # STEP A: COMPUTE PERSISTENCE INDICATORS (using daily data)
+            # ═══════════════════════════════════════════════════════════════════
+            
+            # Define thresholds for runs
+            lower_p, upper_p = self.persistence_thresholds  # Default: 33rd and 67th percentiles
             
             t_col = 'T_air' if 'T_air' in long_term_month_data.columns else 'T_air_mean'
             ghi_col = 'GHI' if 'GHI' in long_term_month_data.columns else 'GHI_sum'
@@ -718,116 +761,167 @@ class TMYGenerator:
                  selected_months[month] = candidates_years[0]
                  continue
             
-            # Calculate Quantiles
-            t_air_upper = long_term_month_data[t_col].quantile(upper_p)
-            t_air_lower = long_term_month_data[t_col].quantile(lower_p)
-            ghi_lower = long_term_month_data[ghi_col].quantile(lower_p)
+            # Calculate quantiles for the entire long-term month data
+            # For dry-bulb temperature: 67th percentile (warm runs) and 33rd percentile (cool runs)
+            t_air_upper = long_term_month_data[t_col].quantile(upper_p)  # 67th percentile
+            t_air_lower = long_term_month_data[t_col].quantile(lower_p)  # 33rd percentile
+            # For GHI: 33rd percentile (low-radiation runs)
+            ghi_lower = long_term_month_data[ghi_col].quantile(lower_p)  # 33rd percentile
 
-            # Build initial stats for candidates
+            # Build initial persistence statistics for all candidates
+            # For each candidate month, calculate:
+            #   - Number of runs (frequency)
+            #   - Longest run length
             month_stats_list = []
             for rank, year in enumerate(candidates_years):
                 candidate_data = self.df_daily[(self.df_daily.index.month == month) & (self.df_daily.index.year == year)]
                 if candidate_data.empty: continue
                 
+                # Temperature runs: consecutive days above 67th OR below 33rd percentile
                 t_freq, t_dur = self._calculate_run_stats(candidate_data[t_col], t_air_upper, t_air_lower, self.min_run_length)
+                # GHI runs: consecutive days below 33rd percentile
                 ghi_freq, ghi_dur = self._calculate_run_stats(candidate_data[ghi_col], np.inf, ghi_lower, self.min_run_length)
                 
-                total_runs = t_freq + ghi_freq
-                max_run_len = max(t_dur, ghi_dur)
+                # Aggregate metrics
+                total_runs = t_freq + ghi_freq        # Total number of runs
+                max_run_len = max(t_dur, ghi_dur)     # Longest run length
                 
+                # Get FS value for reference
                 fs_val_ranking = next((item for item in self.fs_ranking_results.get(month, []) if item['year'] == year), None)
                 fs_val = fs_val_ranking['Total_W_FS'] if fs_val_ranking else np.nan
 
                 month_stats_list.append({
                     'Year': year,
-                    'Original_Rank': rank,
+                    'Original_Rank': rank,  # 0 = best FS rank
                     'Total_Runs': total_runs,
                     'Max_Run_Len': max_run_len,
                     'FS': fs_val
                 })
 
-            # Iterative exclusion logic
+            # ═══════════════════════════════════════════════════════════════════
+            # STEP B: ITERATIVE EXCLUSION CRITERIA
+            # ═══════════════════════════════════════════════════════════════════
+            # The exclusion criteria are applied sequentially and iteratively.
+            # After each exclusion, re-evaluate from Step 1.
+            # Stop when 2 or 3 candidates remain.
+            
             survivors = month_stats_list.copy()
             month_decisions = {s['Year']: "" for s in survivors}
 
             iteration = 0
-            while len(survivors) > 3:
+            while len(survivors) > 3:  # Continue until 2 or 3 candidates remain
                 iteration += 1
                 excluded_year = None
                 rule_applied = ""
 
-                # --- Step 1: Number of Runs ---
+                # ───────────────────────────────────────────────────────────────
+                # STEP 1: NUMBER OF RUNS CRITERION
+                # ───────────────────────────────────────────────────────────────
                 runs_values = [s['Total_Runs'] for s in survivors]
                 max_runs = max(runs_values)
                 min_runs = min(runs_values)
 
+                # Rule 1a: If all months have no runs → select first in ranking list
                 if max_runs == 0:
-                    break 
+                    break  # Exit loop, final selection will choose best FS rank
 
+                # Rule 1b: If all months have equal number of runs
                 if max_runs == min_runs:
                     lens = [s['Max_Run_Len'] for s in survivors]
+                    # Rule 1b.i: If unequal run lengths → exclude the one with longest run
                     if max(lens) != min(lens):
                         max_len = max(lens)
+                        # If multiple have max length, pick worst FS rank
                         cand = sorted([s for s in survivors if s['Max_Run_Len'] == max_len], key=lambda x: x['Original_Rank'])[-1]
                         excluded_year = cand['Year']
                         rule_applied = "Eliminated: longest run"
+                    # Rule 1b.ii: If equal run lengths → exclude last one in list
                     else:
                         cand = sorted(survivors, key=lambda x: x['Original_Rank'])[-1]
                         excluded_year = cand['Year']
                         rule_applied = "Eliminated: equal runs & lengths (worst rank)"
+                # Rule 1c: If number of runs are not equal
                 else:
+                    # Modified rule: eliminate only if it has more runs than all others
+                    # If there's a tie for max runs, eliminate the worst-ranked among them
                     cands_with_max = [s for s in survivors if s['Total_Runs'] == max_runs]
                     if len(cands_with_max) == 1:
+                        # One candidate has strictly more runs than all others
                         excluded_year = cands_with_max[0]['Year']
                         rule_applied = "Eliminated: highest number of runs"
+                    else:
+                        # Tie for max runs -> eliminate worst FS-ranked among them
+                        cand = sorted(cands_with_max, key=lambda x: x['Original_Rank'])[-1]
+                        excluded_year = cand['Year']
+                        rule_applied = "Eliminated: tie -> last FS-ranked"
                 
+                # If Step 1 eliminated someone, update and restart from Step 1
                 if excluded_year:
                     month_decisions[excluded_year] = rule_applied
                     survivors = [s for s in survivors if s['Year'] != excluded_year]
-                    continue
+                    continue  # Re-evaluate from Step 1
 
-                # STEP 2: Runs Length Criterion
+                # ───────────────────────────────────────────────────────────────
+                # STEP 2: RUNS LENGTH CRITERION
+                # (Only reached if Step 1 cannot eliminate anyone)
+                # ───────────────────────────────────────────────────────────────
                 lens = [s['Max_Run_Len'] for s in survivors]
                 max_len = max(lens)
                 min_len = min(lens)
 
+                # Rule 2a: If unequal run length → exclude longest run month
                 if max_len != min_len:
+                    # If multiple have max length, pick worst FS rank
                     cand = sorted([s for s in survivors if s['Max_Run_Len'] == max_len], key=lambda x: x['Original_Rank'])[-1]
                     excluded_year = cand['Year']
                     rule_applied = "Eliminated: longest run (equal runs)"
+                # Rule 2b: If equal run length → check number of runs
                 else:
                     runs = [s['Total_Runs'] for s in survivors]
                     max_runs_2 = max(runs)
                     min_runs_2 = min(runs)
+                    # Rule 2b.i: If equal number of runs → exclude last one in list
                     if max_runs_2 == min_runs_2:
                         cand = sorted(survivors, key=lambda x: x['Original_Rank'])[-1]
                         excluded_year = cand['Year']
                         rule_applied = "Eliminated: equal runs & lengths (worst rank)"
+                    # Rule 2b.ii: If not equal → exclude one with largest number of runs
                     else:
                         cand = sorted([s for s in survivors if s['Total_Runs'] == max_runs_2], key=lambda x: x['Original_Rank'])[-1]
                         excluded_year = cand['Year']
                         rule_applied = "Eliminated: highest number of runs"
 
+                # If Step 2 eliminated someone, update and restart from Step 1
                 if excluded_year:
                     month_decisions[excluded_year] = rule_applied
                     survivors = [s for s in survivors if s['Year'] != excluded_year]
-                    continue
+                    continue  # Re-evaluate from Step 1
 
-                # STEP 3: Zero-run criterion
+                # ───────────────────────────────────────────────────────────────
+                # STEP 3: ZERO-RUN CRITERION
+                # (Only reached if Steps 1 and 2 cannot eliminate anyone)
+                # ───────────────────────────────────────────────────────────────
+                # Inspect remaining months for zero runs
                 cands_zero = [s for s in survivors if s['Total_Runs'] == 0]
                 if cands_zero:
+                    # If multiple have zero runs, pick worst FS rank
                     cand = sorted(cands_zero, key=lambda x: x['Original_Rank'])[-1]
                     excluded_year = cand['Year']
                     rule_applied = "Eliminated: zero runs"
                 
+                # If Step 3 eliminated someone, update and restart from Step 1
                 if excluded_year:
                     month_decisions[excluded_year] = rule_applied
                     survivors = [s for s in survivors if s['Year'] != excluded_year]
-                    continue
+                    continue  # Re-evaluate from Step 1
                 else:
+                    # No elimination possible → exit loop
                     break
 
-            # Final Selection
+            # ═══════════════════════════════════════════════════════════════════
+            # STEP C: FINAL SELECTION
+            # ═══════════════════════════════════════════════════════════════════
+            # Select the highest FS-ranked candidate among survivors
             survivors.sort(key=lambda x: x['Original_Rank'])
             best_choice = survivors[0]['Year']
             selected_months[month] = best_choice
