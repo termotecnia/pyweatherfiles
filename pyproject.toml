@@ -27,3 +27,7 @@ requires-python = ">=3.7"
 [project.urls]
 "Homepage" = "https://github.com/dsanchez-garcia/pyweatherfiles"
 "Bug Tracker" = "https://github.com/dsanchez-garcia/pyweatherfiles/issues"
+
+[tool.setuptools.packages.find]
+include = ["pyweatherfiles*"]
+exclude = ["onedrive_backup*", "examples*"]
