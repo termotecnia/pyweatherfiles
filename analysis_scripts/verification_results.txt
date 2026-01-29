@@ -1,0 +1,15 @@
+
+========================================
+RESUMEN DE RESULTADOS
+========================================
+Método hazen       : FS = 0.034990
+Método california  : FS = 0.044641
+Método weibull     : FS = 0.034894
+----------------------------------------
+Safae (Objetivo)    : FS = 0.034990
+Usuario (Previo)    : FS = 0.044641
+========================================
+
+Verificando comportamiento por defecto (debe ser hazen)...
+FS Default:           0.034990
+SUCCESS: El valor por defecto coincide con el de Safae (Hazen).

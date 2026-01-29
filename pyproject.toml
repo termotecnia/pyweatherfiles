@@ -30,4 +30,4 @@ requires-python = ">=3.7"
 
 [tool.setuptools.packages.find]
 include = ["pyweatherfiles*"]
-exclude = ["onedrive_backup*", "examples*"]
+exclude = ["onedrive_backup*", "examples*", "analysis_scripts*"]

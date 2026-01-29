@@ -34,7 +34,7 @@ class TMYGenerator:
     weather data, using one of several selectable methodologies.
     """
 
-    def __init__(self, file_path, cdf_method='daily', years_to_include=None, weights=None, column_mapping=None, data_frequency='hourly', weighting_method='sandia', save_validation_dfs=True, hourly_file_path=None, missing_data_threshold=0.9):
+    def __init__(self, file_path, cdf_method='daily', years_to_include=None, weights=None, column_mapping=None, data_frequency='hourly', weighting_method='sandia', save_validation_dfs=True, hourly_file_path=None, missing_data_threshold=0.9, plotting_position_method='hazen'):
         """
         Initializes the TMYGenerator.
 
@@ -52,6 +52,9 @@ class TMYGenerator:
             hourly_file_path (str, optional): Path to hourly data file. When data_frequency='daily',
                 this allows generating the final TMY from hourly data after selecting months based
                 on daily analysis. Only months available in the daily file will be used.
+            missing_data_threshold (float, optional): Threshold for missing data to exclude a month. Default is 0.9.
+            plotting_position_method (str, optional): The method for calculating CDF plotting positions.
+                Must be one of: 'california', 'hazen', 'weibull'. Default is 'hazen'.
         """
         self.file_path = file_path
         self.hourly_file_path = hourly_file_path
@@ -68,6 +71,14 @@ class TMYGenerator:
         if data_frequency not in valid_frequencies:
             raise ValueError(f"Invalid data_frequency '{data_frequency}'. Must be one of {valid_frequencies}")
         self.data_frequency = data_frequency
+
+        # Validate plotting position method
+        valid_pp_methods = ['california', 'hazen', 'weibull']
+        if plotting_position_method not in valid_pp_methods:
+            raise ValueError(f"Invalid plotting_position_method '{plotting_position_method}'. Must be one of {valid_pp_methods}")
+        self.plotting_position_method = plotting_position_method
+        if self.plotting_position_method != 'california':
+            print(f"Using '{self.plotting_position_method}' plotting position for CDF calculation.")
 
         # Validate and set the CDF calculation method
         # Validate and set the CDF calculation method
@@ -332,7 +343,12 @@ class TMYGenerator:
 
     def _compute_cdf(self, series):
         """Computes the Cumulative Distribution Function (CDF) of a data series."""
-        return np.sort(series), np.arange(1, len(series) + 1) / len(series)
+        if self.plotting_position_method == 'hazen':
+            return np.sort(series), (np.arange(1, len(series) + 1) - 0.5) / len(series)
+        elif self.plotting_position_method == 'weibull':
+            return np.sort(series), np.arange(1, len(series) + 1) / (len(series) + 1)
+        else: # 'california' (previous default)
+            return np.sort(series), np.arange(1, len(series) + 1) / len(series)
 
     def _compute_interpolated_cdf(self, series1, series2, num_points=200):
         """

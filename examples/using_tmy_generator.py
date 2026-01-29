@@ -45,4 +45,4 @@ tmy_gen = tmy.TMYGenerator(
 tmy_gen.generate_tmy(use_persistence=True)
 tmy_gen.export_tmy('MADRID_TMY_persistence_tmy3.csv')
 
-tmy_gen.plot_persistence_runs(month=1, years=tmy_gen.candidate_months[1])
+# tmy_gen.plot_persistence_runs(month=1, years=tmy_gen.candidate_months[1])
