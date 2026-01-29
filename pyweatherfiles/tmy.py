@@ -138,6 +138,8 @@ class TMYGenerator:
         self.validation_st2_df_fs_ranking_by_month = {}
         self.validation_st2_summary_fs_ranking = None
         self.validation_st3_df_persistence_decision = {}
+        self.validation_st3_persistence_sequential_details = None # Dictionary for sequential method details
+        self.validation_st3_persistence_score_details = None # Dictionary for score method details
         self.validation_st4_df_tmy_composition = None
         self.smoothing_config = None  # Attribute to store the used smoothing config
         self.save_validation_dfs = save_validation_dfs
@@ -588,8 +590,11 @@ class TMYGenerator:
         """Applies the persistence criteria using a scoring system."""
         print("\nApplying persistence criteria based on scoring...")
         selected_months = {}
-        self.validation_st3_df_persistence_decision = None
         persistence_decisions_list = []
+        if self.save_validation_dfs:
+            self.validation_st3_persistence_score_details = {}
+            self.validation_st3_persistence_sequential_details = None
+
         for month in range(1, 13):
             candidates = self.candidate_months.get(month, [])
             if not candidates: continue
@@ -622,16 +627,25 @@ class TMYGenerator:
                 t_air_freq, t_air_dur = self._calculate_run_stats(candidate_data[t_col], t_air_upper, t_air_lower, self.min_run_length)
                 ghi_freq, ghi_dur = self._calculate_run_stats(candidate_data[ghi_col], np.inf, ghi_lower, self.min_run_length)
 
-                score = (total_w_fs +
-                         persistence_weights['w_t_longest_run'] * t_air_dur +
-                         persistence_weights['w_t_total_runs'] * t_air_freq +
-                         persistence_weights['w_ghi_longest_run'] * ghi_dur +
-                         persistence_weights['w_ghi_total_runs'] * ghi_freq)
+                w_t_dur = persistence_weights['w_t_longest_run']
+                w_t_freq = persistence_weights['w_t_total_runs']
+                w_ghi_dur = persistence_weights['w_ghi_longest_run']
+                w_ghi_freq = persistence_weights['w_ghi_total_runs']
+
+                prod_t_dur = w_t_dur * t_air_dur
+                prod_t_freq = w_t_freq * t_air_freq
+                prod_ghi_dur = w_ghi_dur * ghi_dur
+                prod_ghi_freq = w_ghi_freq * ghi_freq
+
+                score = total_w_fs + prod_t_dur + prod_t_freq + prod_ghi_dur + prod_ghi_freq
 
                 candidate_scores.append({
-                    'Year': year, 'Total_W_FS': total_w_fs,
-                    'LongestRun_T_air': t_air_dur, 'TotalRuns_T_air': t_air_freq,
-                    'LongestRun_GHI': ghi_dur, 'TotalRuns_GHI': ghi_freq,
+                    'Year': year, 
+                    'WT_FS': total_w_fs,
+                    'T_Max_Len': t_air_dur, 'W_T_Max_Len': w_t_dur, 'Prod_T_Max_Len': prod_t_dur,
+                    'T_TotalRuns': t_air_freq, 'W_T_TotalRuns': w_t_freq, 'Prod_T_TotalRuns': prod_t_freq,
+                    'GHI_Max_Len': ghi_dur, 'W_GHI_Max_Len': w_ghi_dur, 'Prod_GHI_Max_Len': prod_ghi_dur,
+                    'GHI_TotalRuns': ghi_freq, 'W_GHI_TotalRuns': w_ghi_freq, 'Prod_GHI_TotalRuns': prod_ghi_freq,
                     'Score': score
                 })
 
@@ -641,20 +655,14 @@ class TMYGenerator:
             df_decision['Rank'] = df_decision.index + 1
             df_decision['Year'] = df_decision['Year'].astype(int)
 
-            df_decision['W_T_LongestRun'] = persistence_weights['w_t_longest_run']
-            df_decision['W_T_TotalRuns'] = persistence_weights['w_t_total_runs']
-            df_decision['W_GHI_LongestRun'] = persistence_weights['w_ghi_longest_run']
-            df_decision['W_GHI_TotalRuns'] = persistence_weights['w_ghi_total_runs']
-
-            cols_order = ['Year', 'Total_W_FS',
-                          'W_T_LongestRun', 'LongestRun_T_air', 'W_T_TotalRuns', 'TotalRuns_T_air',
-                          'W_GHI_LongestRun', 'LongestRun_GHI', 'W_GHI_TotalRuns', 'TotalRuns_GHI',
-                          'Score', 'Rank']
-            df_decision = df_decision[cols_order]
-
             if self.save_validation_dfs:
-                df_decision.insert(0, 'Month', month)
-                persistence_decisions_list.append(df_decision)
+                self.validation_st3_persistence_score_details[month] = df_decision.copy()
+                
+                # Also populate the old fallback for backward compatibility if needed, 
+                # but adding 'Month' column as expected by validate_persistence_selection fallback
+                df_for_concat = df_decision.copy()
+                df_for_concat.insert(0, 'Month', month)
+                persistence_decisions_list.append(df_for_concat)
 
             best_choice = df_decision.iloc[0]['Year'].astype(int)
             selected_months[month] = best_choice
@@ -680,9 +688,10 @@ class TMYGenerator:
         """
         print("\nApplying persistence criteria based on sequential exclusion...")
         selected_months = {}
-        self.validation_st3_df_persistence_decision = None
-        exclusion_logs = []
-        all_candidates_stats = []
+        if self.save_validation_dfs:
+            self.validation_st3_persistence_sequential_details = {}
+            self.validation_st3_persistence_score_details = None
+            self.validation_st3_df_persistence_decision = None 
 
         for month in range(1, 13):
             candidates_years = self.candidate_months.get(month, [])
@@ -690,6 +699,10 @@ class TMYGenerator:
 
             # Preserve initial FS Rank (0-based index from the list)
             # The list 'candidates_years' is already sorted by FS (best first)
+            
+            # Map for storing decisions (Eliminated: ..., or SELECTED ...)
+            month_decisions = {y: "" for y in candidates_years}
+            month_stats_list = [] # Temporary list to hold stats for generating the DataFrame later
             
             long_term_month_data = self.df_daily[self.df_daily.index.month == month]
             if long_term_month_data.empty: continue
@@ -706,188 +719,133 @@ class TMYGenerator:
                  continue
             
             # Calculate Quantiles
-            t_air_upper = long_term_month_data[t_col].quantile(upper_p) # 67th
-            t_air_lower = long_term_month_data[t_col].quantile(lower_p) # 33rd
-            ghi_lower = long_term_month_data[ghi_col].quantile(lower_p) # 33rd
+            t_air_upper = long_term_month_data[t_col].quantile(upper_p)
+            t_air_lower = long_term_month_data[t_col].quantile(lower_p)
+            ghi_lower = long_term_month_data[ghi_col].quantile(lower_p)
 
-            # Build Initial Stats
-            active_candidates = []
+            # Build initial stats for candidates
+            month_stats_list = []
             for rank, year in enumerate(candidates_years):
                 candidate_data = self.df_daily[(self.df_daily.index.month == month) & (self.df_daily.index.year == year)]
                 if candidate_data.empty: continue
-
-                # T Stats
-                t_freq_hot, t_dur_hot = self._calculate_run_stats(candidate_data[t_col], t_air_upper, -np.inf, self.min_run_length)
-                t_freq_cold, t_dur_cold = self._calculate_run_stats(candidate_data[t_col], np.inf, t_air_lower, self.min_run_length)
-                
-                # GHI Stats (Low only)
-                ghi_freq, ghi_dur = self._calculate_run_stats(candidate_data[ghi_col], np.inf, ghi_lower, self.min_run_length)
-
-                # Aggregated Stats
-                # Note: _calculate_run_stats for T combined (above/below) in one call? 
-                # Let's check _calculate_run_stats implementation. 
-                # It does: total_freq = above_freq + below_freq.
-                # So we can just call it once for T with correct thresholds.
                 
                 t_freq, t_dur = self._calculate_run_stats(candidate_data[t_col], t_air_upper, t_air_lower, self.min_run_length)
+                ghi_freq, ghi_dur = self._calculate_run_stats(candidate_data[ghi_col], np.inf, ghi_lower, self.min_run_length)
                 
                 total_runs = t_freq + ghi_freq
                 max_run_len = max(t_dur, ghi_dur)
                 
-                stats = {
+                fs_val_ranking = next((item for item in self.fs_ranking_results.get(month, []) if item['year'] == year), None)
+                fs_val = fs_val_ranking['Total_W_FS'] if fs_val_ranking else np.nan
+
+                month_stats_list.append({
                     'Year': year,
-                    'Original_Rank': rank, # 0 is best FS
+                    'Original_Rank': rank,
                     'Total_Runs': total_runs,
                     'Max_Run_Len': max_run_len,
-                    'T_Runs': t_freq, 'T_Max_Len': t_dur,
-                    'GHI_Runs': ghi_freq, 'GHI_Max_Len': ghi_dur
-                }
-                active_candidates.append(stats)
-                
-                # Add to all_stats for validation DF
-                stats_for_log = stats.copy()
-                stats_for_log['Month'] = month
-                all_candidates_stats.append(stats_for_log)
+                    'FS': fs_val
+                })
 
-            # Iterative Exclusion
+            # Iterative exclusion logic
+            survivors = month_stats_list.copy()
+            month_decisions = {s['Year']: "" for s in survivors}
+
             iteration = 0
-            while len(active_candidates) > 3: # Stop if 3 (or fewer) remain
+            while len(survivors) > 3:
                 iteration += 1
-                outcome = "Next Iteration"
                 excluded_year = None
                 rule_applied = ""
 
                 # --- Step 1: Number of Runs ---
-                runs_values = [c['Total_Runs'] for c in active_candidates]
+                runs_values = [s['Total_Runs'] for s in survivors]
                 max_runs = max(runs_values)
                 min_runs = min(runs_values)
 
-                # 1a. All zero?
                 if max_runs == 0:
-                    # Logic: Select first month. 
-                    # We implement this by removing everyone except the first FS rank?
-                    # Or just break and let final selection handle it.
-                    # "If all five... have no runs the first month ... is selected."
-                    # The loop condition will break naturally if we select/reduce?
-                    # We should just break the loop here.
-                    outcome = "Selected (All Zero Runs)"
-                    rule_applied = "1a. All Zero Runs"
                     break 
 
-                # 1b. All equal?
-                all_equal_runs = (max_runs == min_runs)
-                
-                if all_equal_runs:
-                    # Proceed to Length (Step 1b logic)
-                    len_values = [c['Max_Run_Len'] for c in active_candidates]
-                    max_len = max(len_values)
-                    min_len = min(len_values)
-                    
-                    if max_len != min_len:
-                         # 1b.i: Unequal lengths -> Exclude Longest Run
-                         # "exclude the one with the longest run"
-                         # Tie-breaker for longest run? Assume worst FS rank.
-                         candidates_with_max_len = [c for c in active_candidates if c['Max_Run_Len'] == max_len]
-                         excluded_cand = sorted(candidates_with_max_len, key=lambda x: x['Original_Rank'])[-1]
-                         excluded_year = excluded_cand['Year']
-                         rule_applied = f"1b.i Exclude Longest Run ({max_len})"
+                if max_runs == min_runs:
+                    lens = [s['Max_Run_Len'] for s in survivors]
+                    if max(lens) != min(lens):
+                        max_len = max(lens)
+                        cand = sorted([s for s in survivors if s['Max_Run_Len'] == max_len], key=lambda x: x['Original_Rank'])[-1]
+                        excluded_year = cand['Year']
+                        rule_applied = "Eliminated: longest run"
                     else:
-                         # 1b.ii: Equal lengths -> Exclude last one
-                         excluded_cand = sorted(active_candidates, key=lambda x: x['Original_Rank'])[-1]
-                         excluded_year = excluded_cand['Year']
-                         rule_applied = "1b.ii Equal Runs & Lengths (Exclude Last)"
-                
+                        cand = sorted(survivors, key=lambda x: x['Original_Rank'])[-1]
+                        excluded_year = cand['Year']
+                        rule_applied = "Eliminated: equal runs & lengths (worst rank)"
                 else:
-                    # 1c. Not equal runs -> Exclude largest number of runs
-                    # Modified Rule Check: "eliminate ... only if it has more runs than all others"
-                    candidates_with_max = [c for c in active_candidates if c['Total_Runs'] == max_runs]
-                    
-                    if len(candidates_with_max) == 1:
-                        # Strictly more runs than others
-                        excluded_year = candidates_with_max[0]['Year']
-                        rule_applied = f"1c Exclude Max Runs ({max_runs})"
-                    else:
-                        # Tie for max runs.
-                        # Rule says "eliminate ONLY IF...". So we do NOT eliminate here.
-                        # Proceed to Step 2: Runs Length
-                        
-                        # --- Step 2: Runs Length ---
-                        len_values = [c['Max_Run_Len'] for c in active_candidates]
-                        max_len = max(len_values)
-                        min_len = min(len_values)
-                        
-                        if max_len != min_len:
-                            # 2a. Unequal run length -> Exclude longest
-                            candidates_with_max_len = [c for c in active_candidates if c['Max_Run_Len'] == max_len]
-                            excluded_cand = sorted(candidates_with_max_len, key=lambda x: x['Original_Rank'])[-1]
-                            excluded_year = excluded_cand['Year']
-                            rule_applied = f"2a Exclude Longest Run (Tie in runs) ({max_len})"
-                        else:
-                            # 2b. Equal run length -> Check number of runs
-                            # 2b.i: Equal runs? NO, we are here because runs were NOT equal (else 1b would trigger).
-                            # So we are in 2b.ii: Not equal runs -> Exclude largest number of runs.
-                            # (Here we don't apply the 'Modified Rule' strictness because 2b.ii doesn't mention it explicitly,
-                            # or logic dictates we Must exclude something).
-                            candidates_with_max_runs = [c for c in active_candidates if c['Total_Runs'] == max_runs]
-                            excluded_cand = sorted(candidates_with_max_runs, key=lambda x: x['Original_Rank'])[-1]
-                            excluded_year = excluded_cand['Year']
-                            rule_applied = f"2b.ii Exclude Max Runs (Tie Breaker) ({max_runs})"
+                    cands_with_max = [s for s in survivors if s['Total_Runs'] == max_runs]
+                    if len(cands_with_max) == 1:
+                        excluded_year = cands_with_max[0]['Year']
+                        rule_applied = "Eliminated: highest number of runs"
+                
+                if excluded_year:
+                    month_decisions[excluded_year] = rule_applied
+                    survivors = [s for s in survivors if s['Year'] != excluded_year]
+                    continue
 
-                # --- Step 3: Zero-run criterion ---
-                # Check this only if no exclusion yet?
-                # "The above exclusion criteria will result in elimination...".
-                # The steps are iterative. If we found an exclusion above, we take it.
-                # If we fell through everything (unlikely given the logic covers all cases), check zero.
+                # STEP 2: Runs Length Criterion
+                lens = [s['Max_Run_Len'] for s in survivors]
+                max_len = max(lens)
+                min_len = min(lens)
+
+                if max_len != min_len:
+                    cand = sorted([s for s in survivors if s['Max_Run_Len'] == max_len], key=lambda x: x['Original_Rank'])[-1]
+                    excluded_year = cand['Year']
+                    rule_applied = "Eliminated: longest run (equal runs)"
+                else:
+                    runs = [s['Total_Runs'] for s in survivors]
+                    max_runs_2 = max(runs)
+                    min_runs_2 = min(runs)
+                    if max_runs_2 == min_runs_2:
+                        cand = sorted(survivors, key=lambda x: x['Original_Rank'])[-1]
+                        excluded_year = cand['Year']
+                        rule_applied = "Eliminated: equal runs & lengths (worst rank)"
+                    else:
+                        cand = sorted([s for s in survivors if s['Total_Runs'] == max_runs_2], key=lambda x: x['Original_Rank'])[-1]
+                        excluded_year = cand['Year']
+                        rule_applied = "Eliminated: highest number of runs"
+
+                if excluded_year:
+                    month_decisions[excluded_year] = rule_applied
+                    survivors = [s for s in survivors if s['Year'] != excluded_year]
+                    continue
+
+                # STEP 3: Zero-run criterion
+                cands_zero = [s for s in survivors if s['Total_Runs'] == 0]
+                if cands_zero:
+                    cand = sorted(cands_zero, key=lambda x: x['Original_Rank'])[-1]
+                    excluded_year = cand['Year']
+                    rule_applied = "Eliminated: zero runs"
                 
-                if excluded_year is None and outcome == "Next Iteration":
-                     # Inspect for zero runs
-                     zero_run_candidates = [c for c in active_candidates if c['Total_Runs'] == 0]
-                     if zero_run_candidates:
-                         # "Exclude the one with zero runs"
-                         # If multiple? Exclude worst rank.
-                         excluded_cand = sorted(zero_run_candidates, key=lambda x: x['Original_Rank'])[-1]
-                         excluded_year = excluded_cand['Year']
-                         rule_applied = "3. Exclude Zero Run"
-                
-                if excluded_year is not None:
-                    active_candidates = [c for c in active_candidates if c['Year'] != excluded_year]
-                    outcome = f"Excluded {excluded_year}"
-                
-                # Log outcome
-                exclusion_logs.append({
-                    'Month': month,
-                    'Iteration': iteration,
-                    'Rule': rule_applied,
-                    'Excluded_Year': excluded_year if excluded_year else "None",
-                    'Remaining_Count': len(active_candidates)
-                })
-                
-                if excluded_year is None and outcome != "Selected (All Zero Runs)":
-                     # Avoid infinite loop if no logic triggered
-                     print(f"  Month {month}: Warning - No exclusion rule triggered. Stopping.")
-                     break
-                
-                if outcome == "Selected (All Zero Runs)":
+                if excluded_year:
+                    month_decisions[excluded_year] = rule_applied
+                    survivors = [s for s in survivors if s['Year'] != excluded_year]
+                    continue
+                else:
                     break
 
             # Final Selection
-            # "choose the highest FS-ranked candidate that remains"
-            active_candidates.sort(key=lambda x: x['Original_Rank'])
-            best_choice = active_candidates[0]['Year']
+            survivors.sort(key=lambda x: x['Original_Rank'])
+            best_choice = survivors[0]['Year']
             selected_months[month] = best_choice
-            
-            print(f"  Month {month}: Selected Year -> {best_choice} (Candidates remaining: {len(active_candidates)})")
-            
-            # Save logs if needed
-            if hasattr(self, 'validation_logs') and isinstance(self.validation_logs, list):
-                self.validation_logs.extend(exclusion_logs)
+            month_decisions[best_choice] = "SELECTED TMY MONTH"
 
-        # Store results
-        if self.save_validation_dfs:
-            if all_candidates_stats:
-                self.validation_st3_df_persistence_decision = pd.DataFrame(all_candidates_stats)
-            if exclusion_logs:
-                self.validation_st3_sequential_log = pd.DataFrame(exclusion_logs)
+            # Populate details attribute
+            if self.save_validation_dfs:
+                month_details = []
+                for stat in month_stats_list:
+                    month_details.append({
+                        'Rank': stat['Original_Rank'] + 1,
+                        'Year': stat['Year'],
+                        'FS': stat['FS'],
+                        'NumRuns': stat['Total_Runs'],
+                        'Max_run': stat['Max_Run_Len'],
+                        'Decision': month_decisions.get(stat['Year'], "")
+                    })
+                self.validation_st3_persistence_sequential_details[month] = pd.DataFrame(month_details).sort_values('Rank')
 
         self.selected_months = selected_months
 
@@ -1377,45 +1335,39 @@ class TMYGenerator:
         return df_ranking
 
     def validate_persistence_selection(self):
-        """Prints the detailed persistence scoring and ranking tables for each month."""
-        # Handle cases where it is None, empty DF, or empty dict
-        is_empty = False
-        if self.validation_st3_df_persistence_decision is None:
-            is_empty = True
-        elif isinstance(self.validation_st3_df_persistence_decision, pd.DataFrame) and self.validation_st3_df_persistence_decision.empty:
-            is_empty = True
-        elif isinstance(self.validation_st3_df_persistence_decision, dict) and not self.validation_st3_df_persistence_decision:
-            is_empty = True
-
-        if is_empty:
-            if self.persistence_thresholds is None:
-                print("\nPersistence step was skipped. Nothing to validate.")
-            else:
-                raise RuntimeError("Run 'step_3_apply_persistence()' first.")
+        """Prints the detailed persistence tables for each month."""
+        
+        # 1. Check for Sequential method details
+        if self.validation_st3_persistence_sequential_details:
+            print("\n--- Validation for Step 3: Persistence Decisions (Sequential Exclusion) ---")
+            for month_num, df_details in sorted(self.validation_st3_persistence_sequential_details.items()):
+                month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
+                print(f"\nPersistence Table for {month_name}:")
+                # Format floats for FS
+                print(df_details.to_string(index=False, float_format=lambda x: f"{x:.3f}" if isinstance(x, float) else str(x)))
+                
+                selected_row = df_details[df_details['Decision'].str.contains("SELECTED", na=False)]
+                if not selected_row.empty:
+                    print(f"--> Selected Year: {int(selected_row.iloc[0]['Year'])}")
             return
 
-        print("\n--- Validation for Step 3: Persistence Scoring Selection ---")
-        
-        # Check if it's the old dict format (just in case of mixed usage, though we changed the generator)
-        if isinstance(self.validation_st3_df_persistence_decision, dict):
-             for month_num, df_decision in self.validation_st3_df_persistence_decision.items():
+        # 2. Check for Scoring method details
+        if self.validation_st3_persistence_score_details:
+            print("\n--- Validation for Step 3: Persistence Scoring Selection ---")
+            for month_num, df_details in sorted(self.validation_st3_persistence_score_details.items()):
                 month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
-                print(f"\nScoring and Ranking Table for {month_name}:")
-                print(df_decision.to_string(float_format="%.4f"))
-                selected_year = df_decision.iloc[0]['Year']
+                print(f"\nScoring Table for {month_name}:")
+                # Format floats
+                print(df_details.to_string(index=False, float_format=lambda x: f"{x:.4f}" if isinstance(x, float) else str(x)))
+                selected_year = df_details.iloc[0]['Year']
                 print(f"--> Selected year for {month_name}: {int(selected_year)} (Rank 1)")
+            return
+
+        # Fallback for old data or if no details were saved
+        if self.persistence_thresholds is None:
+            print("\nPersistence step was skipped. Nothing to validate.")
         else:
-            # It is a DataFrame with a 'Month' column
-            df_all = self.validation_st3_df_persistence_decision
-            months = sorted(df_all['Month'].unique())
-            for month_num in months:
-                month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
-                df_decision = df_all[df_all['Month'] == month_num].drop(columns=['Month'])
-                
-                print(f"\nScoring and Ranking Table for {month_name}:")
-                print(df_decision.to_string(float_format="%.4f"))
-                selected_year = df_decision.iloc[0]['Year']
-                print(f"--> Selected year for {month_name}: {int(selected_year)} (Rank 1)")
+            raise RuntimeError("Run 'step_3_apply_persistence()' first.")
 
     def validate_step_4_final_tmy(self):
         """Prints the composition table and descriptive statistics of the final TMY."""
