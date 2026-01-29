@@ -34,3 +34,6 @@ ENV/
 *.xlsx
 *.csv
 !examples/*.csv
+
+# Data
+onedrive_backup/
