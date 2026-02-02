@@ -516,6 +516,9 @@ class TMYGenerator:
             candidate_months[month] = [res['year'] for res in top_5]
             print(f"  Month {month}: Selected candidates -> {candidate_months[month]}")
 
+        # Call Proximity Ranking (Step 3) immediately after selection
+        self._apply_proximity_ranking(candidate_months)
+
         self.candidate_months = candidate_months
 
         if self.excluded_months:
@@ -528,6 +531,94 @@ class TMYGenerator:
         # Generate summary DF if requested
         if self.save_validation_dfs:
             self._generate_summary_fs_ranking()
+
+    def _apply_proximity_ranking(self, candidate_months):
+        """
+        Step 3: Proximity Ranking (Sawaqed et al. 2005)
+        Re-orders the top 5 candidates based on the deviation of their monthly
+        mean and median Temperature and GHI from the long-term history.
+        """
+        print("Step 3: Applying Proximity Ranking to re-order top 5 candidates...")
+        
+        # Calculate Long-Term Stats for all months first for efficiency
+        # We need Mean and Median for T_air and GHI
+        
+        # Determine variable names in df_daily
+        t_col = 'T_air' if 'T_air' in self.df_daily.columns else 'T_air_mean'
+        ghi_col = 'GHI' if 'GHI' in self.df_daily.columns else 'GHI_sum'
+
+        if t_col not in self.df_daily.columns or ghi_col not in self.df_daily.columns:
+            print(f"  WARNING: Proximity ranking requires Temp and GHI. Found {self.df_daily.columns.tolist()}. Skipping re-ordering.")
+            return
+
+        for month in range(1, 13):
+            candidates = candidate_months.get(month, [])
+            if not candidates: continue
+            
+            # Long-term stats for the month (using all available years in df_daily)
+            lt_data_month = self.df_daily[self.df_daily.index.month == month]
+            
+            lt_t_mean = lt_data_month[t_col].mean()
+            lt_t_median = lt_data_month[t_col].median()
+            lt_ghi_mean = lt_data_month[ghi_col].mean()
+            lt_ghi_median = lt_data_month[ghi_col].median()
+            
+            ranking_details = []
+            
+            for year in candidates:
+                cand_data = lt_data_month[lt_data_month.index.year == year]
+                
+                if cand_data.empty: 
+                    ranking_details.append({'Year': year, 'Max_Error': np.inf})
+                    continue
+
+                # Candidate stats
+                c_t_mean = cand_data[t_col].mean()
+                c_t_median = cand_data[t_col].median()
+                c_ghi_mean = cand_data[ghi_col].mean()
+                c_ghi_median = cand_data[ghi_col].median()
+                
+                # Deviations (Errors)
+                err_t_mean = abs(c_t_mean - lt_t_mean)
+                err_t_median = abs(c_t_median - lt_t_median)
+                err_ghi_mean = abs(c_ghi_mean - lt_ghi_mean)
+                err_ghi_median = abs(c_ghi_median - lt_ghi_median)
+                
+                # Ranking Value = Max of the 4 errors
+                max_error = max(err_t_mean, err_t_median, err_ghi_mean, err_ghi_median)
+                
+                ranking_details.append({
+                    'Year': year,
+                    'Max_Error': max_error,
+                    'Err_T_Mean': err_t_mean,
+                    'Err_T_Med': err_t_median,
+                    'Err_GHI_Mean': err_ghi_mean,
+                    'Err_GHI_Med': err_ghi_median
+                })
+            
+            # Sort candidates by Max_Error (Ascending)
+            # Rank 1 = Lowest Max Error
+            sorted_details = sorted(ranking_details, key=lambda x: x['Max_Error'])
+            
+            # Update the candidate list for this month with the new order
+            sorted_candidates = [item['Year'] for item in sorted_details]
+            candidate_months[month] = sorted_candidates
+            
+            # Update fs_ranking_results to reflect new order and store ranking metric
+            # We preserve the FS score but re-order the list
+            current_fs_results = self.fs_ranking_results.get(month, [])
+            new_fs_results = []
+            for item in sorted_details:
+                year = item['Year']
+                # Find original FS data
+                orig_data = next((x for x in current_fs_results if x['year'] == year), {'Total_W_FS': np.nan})
+                new_entry = orig_data.copy()
+                new_entry.update(item) # Add the error stats
+                new_fs_results.append(new_entry)
+            
+            self.fs_ranking_results[month] = new_fs_results
+            
+            print(f"  Month {month}: Re-ordered by Proximity -> {sorted_candidates}")
 
     def _generate_summary_fs_ranking(self):
         """Generates the summary dataframe of Top 5 candidates for all months."""
@@ -673,9 +764,13 @@ class TMYGenerator:
 
         self.selected_months = selected_months
 
-    def _apply_persistence_sequential_exclusion(self):
+    def _apply_persistence_sequential_exclusion(self, zero_run_method='eliminate_worst_ranked'):
         """
         Applies the persistence criteria using the sequential iterative exclusion method.
+        
+        Args:
+             zero_run_method (str): Methodology for handling candidates with zero runs in Pass 3.
+                 Options: 'eliminate_worst_ranked' (default), 'eliminate_all', 'eliminate_none'.
         
         PERSISTENCE PROCESS (Sequential Exclusion):
         ==========================================
@@ -717,8 +812,11 @@ class TMYGenerator:
               ii. If not equal → exclude the one with the largest number of runs
         
         3. ZERO-RUN CRITERION (only if Steps 1 and 2 cannot eliminate)
-           Inspect remaining months for number of runs
-           Exclude the one with zero runs (if any)
+           Inspect remaining months for number of runs.
+           Behavior depends on `zero_run_method`:
+           - 'eliminate_worst_ranked': Exclude ONE candidate (the one with worst Proximity Rank).
+           - 'eliminate_all': Exclude ALL candidates with zero runs.
+           - 'eliminate_none': Do nothing.
         
         STEP C: FINAL SELECTION
         -----------------------
@@ -798,150 +896,177 @@ class TMYGenerator:
                     'FS': fs_val
                 })
 
+
+            
             # ═══════════════════════════════════════════════════════════════════
-            # STEP B: ITERATIVE EXCLUSION CRITERIA
+            # STEP B: SINGLE-PASS SEQUENTIAL EXCLUSION
             # ═══════════════════════════════════════════════════════════════════
-            # The exclusion criteria are applied sequentially and iteratively.
-            # After each exclusion, re-evaluate from Step 1.
-            # Stop when 2 or 3 candidates remain.
             
             survivors = month_stats_list.copy()
             month_decisions = {s['Year']: "" for s in survivors}
+            
+            # Helper to find candidate with worst Proximity Rank among a list
+            def get_worst_ranked(cands):
+                return sorted(cands, key=lambda x: x['Original_Rank'])[-1]
 
-            iteration = 0
-            while len(survivors) > 3:  # Continue until 2 or 3 candidates remain
-                iteration += 1
-                excluded_year = None
-                rule_applied = ""
-
-                # ───────────────────────────────────────────────────────────────
-                # STEP 1: NUMBER OF RUNS CRITERION
-                # ───────────────────────────────────────────────────────────────
-                runs_values = [s['Total_Runs'] for s in survivors]
-                max_runs = max(runs_values)
-                min_runs = min(runs_values)
-
-                # Rule 1a: If all months have no runs → select first in ranking list
-                if max_runs == 0:
-                    break  # Exit loop, final selection will choose best FS rank
-
-                # Rule 1b: If all months have equal number of runs
-                if max_runs == min_runs:
-                    lens = [s['Max_Run_Len'] for s in survivors]
-                    # Rule 1b.i: If unequal run lengths → exclude the one with longest run
-                    if max(lens) != min(lens):
-                        max_len = max(lens)
-                        # If multiple have max length, pick worst FS rank
-                        cand = sorted([s for s in survivors if s['Max_Run_Len'] == max_len], key=lambda x: x['Original_Rank'])[-1]
-                        excluded_year = cand['Year']
-                        rule_applied = "Eliminated: longest run"
-                    # Rule 1b.ii: If equal run lengths → exclude last one in list
-                    else:
-                        cand = sorted(survivors, key=lambda x: x['Original_Rank'])[-1]
-                        excluded_year = cand['Year']
-                        rule_applied = "Eliminated: equal runs & lengths (worst rank)"
-                # Rule 1c: If number of runs are not equal
-                else:
-                    # Modified rule: eliminate only if it has more runs than all others
-                    # If there's a tie for max runs, eliminate the worst-ranked among them
-                    cands_with_max = [s for s in survivors if s['Total_Runs'] == max_runs]
-                    if len(cands_with_max) == 1:
-                        # One candidate has strictly more runs than all others
-                        excluded_year = cands_with_max[0]['Year']
-                        rule_applied = "Eliminated: highest number of runs"
-                    else:
-                        # Tie for max runs -> eliminate worst FS-ranked among them
-                        cand = sorted(cands_with_max, key=lambda x: x['Original_Rank'])[-1]
-                        excluded_year = cand['Year']
-                        rule_applied = "Eliminated: tie -> last FS-ranked"
+            # ───────────────────────────────────────────────────────────────
+            # PASS 1: NUMBER OF RUNS CRITERION
+            # ───────────────────────────────────────────────────────────────
+            # Logic:
+            # Rule 1a: If all candidates have 0 runs -> Select Rank 1 immediately.
+            # Rule 1b: If all candidates have EQUAL runs -> Check run lengths.
+            #    Rule 1b.i: Unequal run lengths -> Exclude Longest Run.
+            #    Rule 1b.ii: Equal run lengths -> Exclude Last in List (Worst Rank).
+            # Rule 1c: Unequal runs -> Exclude Max Runs.
+            
+            runs_values = [s['Total_Runs'] for s in survivors]
+            max_runs = max(runs_values)
+            min_runs = min(runs_values)
+            
+            excluded_p1 = None
+            
+            if max_runs == 0:
+                # Rule 1a: Immediate selection
+                top_cand = sorted(survivors, key=lambda x: x['Original_Rank'])[0]
+                month_decisions[top_cand['Year']] = "SELECTED (Rule 1a: No runs)"
+                selected_months[month] = top_cand['Year']
                 
-                # If Step 1 eliminated someone, update and restart from Step 1
-                if excluded_year:
-                    month_decisions[excluded_year] = rule_applied
-                    survivors = [s for s in survivors if s['Year'] != excluded_year]
-                    continue  # Re-evaluate from Step 1
+                # Save details and continue to next month
+                if self.save_validation_dfs:
+                    self._save_persistence_details(month, month_stats_list, month_decisions)
+                continue
+                
+            elif max_runs == min_runs:
+                # Rule 1b: Equal runs
+                max_lens = [s['Max_Run_Len'] for s in survivors]
+                if max(max_lens) != min(max_lens):
+                    # Rule 1b.i: Unequal lengths -> Exclude longest run
+                    # Tie-breaker for longest run: Worst Rank (implied/common sense)
+                    target_len = max(max_lens)
+                    cands_target = [s for s in survivors if s['Max_Run_Len'] == target_len]
+                    to_exclude = get_worst_ranked(cands_target)
+                    excluded_p1 = to_exclude
+                    month_decisions[to_exclude['Year']] = "Excluded Pass 1 (Rule 1b.i: Longest Run)"
+                else:
+                    # Rule 1b.ii: Equal lengths -> Exclude last in list
+                    to_exclude = get_worst_ranked(survivors)
+                    excluded_p1 = to_exclude
+                    month_decisions[to_exclude['Year']] = "Excluded Pass 1 (Rule 1b.ii: Last in list)"
+            else:
+                # Rule 1c: Unequal runs -> Exclude Max Runs
+                # Tie-breaker for max runs: Worst Rank
+                cands_target = [s for s in survivors if s['Total_Runs'] == max_runs]
+                to_exclude = get_worst_ranked(cands_target)
+                excluded_p1 = to_exclude
+                month_decisions[to_exclude['Year']] = "Excluded Pass 1 (Rule 1c: Max Runs)"
 
-                # ───────────────────────────────────────────────────────────────
-                # STEP 2: RUNS LENGTH CRITERION
-                # (Only reached if Step 1 cannot eliminate anyone)
-                # ───────────────────────────────────────────────────────────────
-                lens = [s['Max_Run_Len'] for s in survivors]
+            if excluded_p1:
+                survivors = [s for s in survivors if s['Year'] != excluded_p1['Year']]
+
+            # ───────────────────────────────────────────────────────────────
+            # PASS 2: LONGEST RUN LENGTH CRITERION
+            # ───────────────────────────────────────────────────────────────
+            # Logic:
+            # Rule 2a: Unequal run lengths -> Exclude Longest Run Month.
+            # Rule 2b: Equal run lengths -> Check number of runs.
+            #    Rule 2b.i: Equal number of runs -> Exclude Last in List.
+            #    Rule 2b.ii: Unequal number of runs -> Exclude Max Runs.
+
+            excluded_p2 = None
+            lens = [s['Max_Run_Len'] for s in survivors]
+            if not lens: pass # Safety
+            else:
                 max_len = max(lens)
                 min_len = min(lens)
-
-                # Rule 2a: If unequal run length → exclude longest run month
-                if max_len != min_len:
-                    # If multiple have max length, pick worst FS rank
-                    cand = sorted([s for s in survivors if s['Max_Run_Len'] == max_len], key=lambda x: x['Original_Rank'])[-1]
-                    excluded_year = cand['Year']
-                    rule_applied = "Eliminated: longest run (equal runs)"
-                # Rule 2b: If equal run length → check number of runs
-                else:
-                    runs = [s['Total_Runs'] for s in survivors]
-                    max_runs_2 = max(runs)
-                    min_runs_2 = min(runs)
-                    # Rule 2b.i: If equal number of runs → exclude last one in list
-                    if max_runs_2 == min_runs_2:
-                        cand = sorted(survivors, key=lambda x: x['Original_Rank'])[-1]
-                        excluded_year = cand['Year']
-                        rule_applied = "Eliminated: equal runs & lengths (worst rank)"
-                    # Rule 2b.ii: If not equal → exclude one with largest number of runs
-                    else:
-                        cand = sorted([s for s in survivors if s['Total_Runs'] == max_runs_2], key=lambda x: x['Original_Rank'])[-1]
-                        excluded_year = cand['Year']
-                        rule_applied = "Eliminated: highest number of runs"
-
-                # If Step 2 eliminated someone, update and restart from Step 1
-                if excluded_year:
-                    month_decisions[excluded_year] = rule_applied
-                    survivors = [s for s in survivors if s['Year'] != excluded_year]
-                    continue  # Re-evaluate from Step 1
-
-                # ───────────────────────────────────────────────────────────────
-                # STEP 3: ZERO-RUN CRITERION
-                # (Only reached if Steps 1 and 2 cannot eliminate anyone)
-                # ───────────────────────────────────────────────────────────────
-                # Inspect remaining months for zero runs
-                cands_zero = [s for s in survivors if s['Total_Runs'] == 0]
-                if cands_zero:
-                    # If multiple have zero runs, pick worst FS rank
-                    cand = sorted(cands_zero, key=lambda x: x['Original_Rank'])[-1]
-                    excluded_year = cand['Year']
-                    rule_applied = "Eliminated: zero runs"
                 
-                # If Step 3 eliminated someone, update and restart from Step 1
-                if excluded_year:
-                    month_decisions[excluded_year] = rule_applied
-                    survivors = [s for s in survivors if s['Year'] != excluded_year]
-                    continue  # Re-evaluate from Step 1
+                if max_len != min_len:
+                    # Rule 2a: Unequal run lengths -> Exclude longest run
+                    # Tie-breaker: Max Runs (from user prompt) then Worst Rank
+                    cands_target = [s for s in survivors if s['Max_Run_Len'] == max_len]
+                    # Sort primarily by Runs (desc), then by Rank (desc)
+                    to_exclude = sorted(cands_target, key=lambda x: (x['Total_Runs'], x['Original_Rank']))[-1]
+                    excluded_p2 = to_exclude
+                    month_decisions[to_exclude['Year']] = "Excluded Pass 2 (Rule 2a: Longest Run)"
                 else:
-                    # No elimination possible → exit loop
-                    break
+                    # Rule 2b: Equal run lengths
+                    runs = [s['Total_Runs'] for s in survivors]
+                    if max(runs) == min(runs):
+                         # Rule 2b.i: Equal runs -> Exclude Last in List
+                         to_exclude = get_worst_ranked(survivors)
+                         excluded_p2 = to_exclude
+                         month_decisions[to_exclude['Year']] = "Excluded Pass 2 (Rule 2b.i: Equal runs, last in list)"
+                    else:
+                         # Rule 2b.ii: Unequal runs -> Exclude Max Runs
+                         target_runs = max(runs)
+                         cands_target = [s for s in survivors if s['Total_Runs'] == target_runs]
+                         to_exclude = get_worst_ranked(cands_target)
+                         excluded_p2 = to_exclude
+                         month_decisions[to_exclude['Year']] = "Excluded Pass 2 (Rule 2b.ii: Max Runs)"
 
+            if excluded_p2:
+                survivors = [s for s in survivors if s['Year'] != excluded_p2['Year']]
+
+            # ───────────────────────────────────────────────────────────────
+            # PASS 3: ZERO-RUN CRITERION
+            # ───────────────────────────────────────────────────────────────
+            # Logic: If exists, eliminate based on `zero_run_method`.
+            
+            zero_run_cands = [s for s in survivors if s['Total_Runs'] == 0]
+            
+            if zero_run_cands:
+                if zero_run_method == 'eliminate_none':
+                    pass # Do nothing
+                
+                elif zero_run_method == 'eliminate_all':
+                     # Eliminate ALL candidates with zero runs
+                     for cand in zero_run_cands:
+                         month_decisions[cand['Year']] = "Excluded Pass 3 (Zero Run - All)"
+                     
+                     survivors = [s for s in survivors if s['Total_Runs'] > 0]
+                     
+                else: # 'eliminate_worst_ranked' (Default)
+                    # Eliminate ONLY the worst-ranked candidate with 0 runs
+                    to_exclude = get_worst_ranked(zero_run_cands)
+                    month_decisions[to_exclude['Year']] = "Excluded Pass 3 (Zero Run - Worst Ranked)"
+                    survivors = [s for s in survivors if s['Year'] != to_exclude['Year']]
+            
             # ═══════════════════════════════════════════════════════════════════
             # STEP C: FINAL SELECTION
             # ═══════════════════════════════════════════════════════════════════
-            # Select the highest FS-ranked candidate among survivors
-            survivors.sort(key=lambda x: x['Original_Rank'])
-            best_choice = survivors[0]['Year']
-            selected_months[month] = best_choice
-            month_decisions[best_choice] = "SELECTED TMY MONTH"
-
-            # Populate details attribute
+            # Select the highest Proximity-ranked candidate among survivors (lowest Original_Rank index)
+            
+            if survivors:
+                survivors.sort(key=lambda x: x['Original_Rank'])
+                best_choice = survivors[0]['Year']
+                selected_months[month] = best_choice
+                month_decisions[best_choice] = "SELECTED TMY MONTH"
+            else:
+                # Fallback (should not happen with 5 candidates and 3 passes)
+                print(f"  Warning: All candidates excluded for Month {month}. Selecting best Proximity Rank.")
+                best_choice = candidates_years[0]
+                selected_months[month] = best_choice
+            
             if self.save_validation_dfs:
-                month_details = []
-                for stat in month_stats_list:
-                    month_details.append({
-                        'Rank': stat['Original_Rank'] + 1,
-                        'Year': stat['Year'],
-                        'FS': stat['FS'],
-                        'NumRuns': stat['Total_Runs'],
-                        'Max_run': stat['Max_Run_Len'],
-                        'Decision': month_decisions.get(stat['Year'], "")
-                    })
-                self.validation_st3_persistence_sequential_details[month] = pd.DataFrame(month_details).sort_values('Rank')
+                self._save_persistence_details(month, month_stats_list, month_decisions)
 
         self.selected_months = selected_months
+
+    def _save_persistence_details(self, month, stats_list, decisions):
+        """Helper to save persistence details dataframe."""
+        month_details = []
+        for stat in stats_list:
+            month_details.append({
+                'Prox_Rank': stat['Original_Rank'] + 1,
+                'Year': stat['Year'],
+                'FS_Score': stat['FS'],
+                'NumRuns': stat['Total_Runs'],
+                'Max_run': stat['Max_Run_Len'],
+                'Decision': decisions.get(stat['Year'], "")
+            })
+        df = pd.DataFrame(month_details).sort_values('Prox_Rank')
+        self.validation_st3_persistence_sequential_details[month] = df
+
+
 
     def _select_months_by_fs_rank(self):
         """Selects months based purely on FS rank, skipping persistence criteria."""
@@ -1146,7 +1271,7 @@ class TMYGenerator:
         self._select_candidate_months(completeness_threshold=completeness_threshold)
         return self
 
-    def step_3_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score'):
+    def step_3_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score', zero_run_method='eliminate_worst_ranked'):
         """
         Public method to run Step 3: Apply persistence criteria.
 
@@ -1157,13 +1282,15 @@ class TMYGenerator:
             persistence_weights (dict, optional): A dictionary to customize the
                 weights for persistence penalties (only for 'score' method).
             persistence_method (str): Method to use. 'score' (default) or 'sequential'.
+            zero_run_method (str): Method for handling zero-run candidates (only for 'sequential').
+                Options: 'eliminate_worst_ranked' (default), 'eliminate_all', 'eliminate_none'.
         """
         if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
         self.persistence_thresholds = thresholds
         self.min_run_length = min_run_length
 
         if persistence_method == 'sequential':
-            self._apply_persistence_sequential_exclusion()
+            self._apply_persistence_sequential_exclusion(zero_run_method=zero_run_method)
         else:
             # Default Score Method
             default_weights = {
@@ -1258,7 +1385,7 @@ class TMYGenerator:
             self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
         return self
 
-    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score', completeness_threshold=0.9, save_validation_dfs=True):
+    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='sequential', zero_run_method='eliminate_worst_ranked', completeness_threshold=0.9, save_validation_dfs=True):
         """
         Runs the complete TMY generation workflow from start to finish.
 
@@ -1281,7 +1408,8 @@ class TMYGenerator:
                 thresholds=persistence_thresholds,
                 min_run_length=min_run_length,
                 persistence_weights=persistence_weights,
-                persistence_method=persistence_method
+                persistence_method=persistence_method,
+                zero_run_method=zero_run_method
             )
         else:
             self._select_months_by_fs_rank()
