@@ -454,7 +454,12 @@ class TMYGenerator:
         return df_ranking[ordered_columns]
 
     def _select_candidate_months(self, completeness_threshold=None):
-        """Step 2: Selects candidate months based on the chosen `cdf_method`."""
+        """
+        Step 2 & 3: Selects candidate months (FS) and applies Proximity Ranking.
+        
+        Step 2: Selects top 5 candidate months based on FS statistic.
+        Step 3: Re-ranks these 5 candidates based on Proximity methodology.
+        """
         if completeness_threshold is None:
             completeness_threshold = self.missing_data_threshold
 
@@ -772,13 +777,13 @@ class TMYGenerator:
              zero_run_method (str): Methodology for handling candidates with zero runs in Pass 3.
                  Options: 'eliminate_worst_ranked' (default), 'eliminate_all', 'eliminate_none'.
         
-        PERSISTENCE PROCESS (Sequential Exclusion):
-        ==========================================
+        PERSISTENCE PROCESS (Step 4 & 5 - Sequential Exclusion):
+        ========================================================
         
-        Start from the 5 candidate years already ranked by FS.
+        Start from the 5 candidate years already ranked by Proximity in Step 3.
         
-        STEP A: COMPUTE PERSISTENCE INDICATORS (using daily data)
-        ---------------------------------------------------------
+        STEP 4: COMPUTE PERSISTENCE INDICATORS & FILTER
+        -----------------------------------------------
         For mean dry-bulb temperature:
             - consecutive days above the 67th percentile (warm runs)
             - consecutive days below the 33rd percentile (cool runs)
@@ -789,13 +794,11 @@ class TMYGenerator:
             - Number of runs (frequency)
             - Longest run length
         
-        STEP B: ITERATIVE EXCLUSION CRITERIA
-        ------------------------------------
-        The exclusion criteria are applied sequentially and iteratively.
-        Step 1 is always fully applied first. After each exclusion, the remaining 
-        months are re-evaluated starting again from Step 1.
+        EXCLUSION CRITERIA (Step 4 continued):
+        --------------------------------------
+        The exclusion criteria are applied sequentially in a single pass (Pass 1, 2, 3).
         
-        1. NUMBER OF RUNS CRITERION
+        PASS 1: NUMBER OF RUNS CRITERION
            a. If all months have no runs → select the first month in ranking list
            b. If all months have equal number of runs → check length of runs:
               i.  If unequal run lengths → exclude the one with the longest run
@@ -805,28 +808,24 @@ class TMYGenerator:
               - Modified rule: eliminate only if it has more runs than all others
               - If tie for max runs → eliminate the worst-ranked among them
         
-        2. RUNS LENGTH CRITERION (only if Step 1 cannot eliminate)
+        PASS 2: RUNS LENGTH CRITERION (if Pass 1 survivors > 1)
            a. If unequal run length → exclude the longest run month
            b. If equal run length → check number of runs:
               i.  If equal number of runs → exclude the last one in the list
               ii. If not equal → exclude the one with the largest number of runs
         
-        3. ZERO-RUN CRITERION (only if Steps 1 and 2 cannot eliminate)
+        PASS 3: ZERO-RUN CRITERION (if Pass 2 survivors > 1)
            Inspect remaining months for number of runs.
            Behavior depends on `zero_run_method`:
            - 'eliminate_worst_ranked': Exclude ONE candidate (the one with worst Proximity Rank).
            - 'eliminate_all': Exclude ALL candidates with zero runs.
            - 'eliminate_none': Do nothing.
         
-        STEP C: FINAL SELECTION
+        STEP 5: FINAL SELECTION
         -----------------------
-        The above criteria will eliminate 2 or 3 months, leaving 2 or 3 remaining.
-        Select the highest FS-ranked candidate among survivors.
-        
-        MODIFIED RULE:
-        If all candidates are excluded, ignore persistence and select best FS month.
+        Select the highest Proximity-ranked candidate among survivors.
         """
-        print("\nApplying persistence criteria based on sequential exclusion...")
+        print("\nApplying persistence criteria (Step 4) and Final Selection (Step 5)...")
         selected_months = {}
         if self.save_validation_dfs:
             self.validation_st3_persistence_sequential_details = {}
@@ -845,7 +844,7 @@ class TMYGenerator:
             if long_term_month_data.empty: continue
 
             # ═══════════════════════════════════════════════════════════════════
-            # STEP A: COMPUTE PERSISTENCE INDICATORS (using daily data)
+            # STEP 4 (Part A): COMPUTE PERSISTENCE INDICATORS
             # ═══════════════════════════════════════════════════════════════════
             
             # Define thresholds for runs
@@ -899,7 +898,7 @@ class TMYGenerator:
 
             
             # ═══════════════════════════════════════════════════════════════════
-            # STEP B: SINGLE-PASS SEQUENTIAL EXCLUSION
+            # STEP 4 (Part B): SINGLE-PASS SEQUENTIAL EXCLUSION
             # ═══════════════════════════════════════════════════════════════════
             
             survivors = month_stats_list.copy()
@@ -1031,7 +1030,7 @@ class TMYGenerator:
                     survivors = [s for s in survivors if s['Year'] != to_exclude['Year']]
             
             # ═══════════════════════════════════════════════════════════════════
-            # STEP C: FINAL SELECTION
+            # STEP 5: FINAL SELECTION
             # ═══════════════════════════════════════════════════════════════════
             # Select the highest Proximity-ranked candidate among survivors (lowest Original_Rank index)
             
@@ -1069,14 +1068,16 @@ class TMYGenerator:
 
 
     def _select_months_by_fs_rank(self):
-        """Selects months based purely on FS rank, skipping persistence criteria."""
-        print("\nSkipping persistence criteria. Selecting the best candidate by FS rank.")
+        """Selects months based purely on FS/Proximity rank, skipping persistence filtering (Step 4 & 5)."""
+        print("\nSkipping persistence filtering. Selecting the best candidate by rank.")
         if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
         self.selected_months = {month: candidates[0] for month, candidates in self.candidate_months.items() if candidates}
 
     def _create_raw_tmy(self):
-        """Assembles the raw TMY by concatenating the selected months."""
-        print("\nCreating raw (un-smoothed) TMY...")
+        """
+        Step 6: Assembles the raw TMY by concatenating the selected months.
+        """
+        print("\nStep 6: Creating raw (un-smoothed) TMY...")
         TMY_YEAR = 2000
         tmy_pieces = []
         for month in range(1, 13):
@@ -1101,10 +1102,15 @@ class TMYGenerator:
         if not self.tmy_raw.index.is_unique:
             self.tmy_raw = self.tmy_raw[~self.tmy_raw.index.duplicated()]
 
-    def _apply_smoothing(self, smoothing_config=None):
+    def _apply_smoothing(self, smoothing_config=None, hours=6, s_factor=0.0):
         """
         Applies a sophisticated smoothing spline at the month junctions, with
         configurable and potentially asymmetric parameters for each junction.
+        
+        Args:
+            smoothing_config (dict): Per-junction configuration.
+            hours (int): Global default hours before/after (used if not in config).
+            s_factor (float): Global default smoothing factor (used if not in config).
         """
 
         # Check if hourly data is available for smoothing
@@ -1118,7 +1124,7 @@ class TMYGenerator:
 
         self.smoothing_config = smoothing_config or {}
 
-        default_params = {'hours_before': 6, 'hours_after': 6, 's_factor': None}
+        default_params = {'hours_before': hours, 'hours_after': hours, 's_factor': s_factor}
 
         tmy_final = self.tmy_raw.copy()
 
@@ -1273,7 +1279,8 @@ class TMYGenerator:
 
     def step_3_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score', zero_run_method='eliminate_worst_ranked'):
         """
-        Public method to run Step 3: Apply persistence criteria.
+        Public method to run Step 4 & 5: Apply persistence criteria and Select Final Month.
+        (Note: Name retained as 'step_3' for API compatibility, but implements Steps 4-5)
 
         Args:
             thresholds (tuple): Lower and upper percentile thresholds to define runs.
@@ -1367,20 +1374,20 @@ class TMYGenerator:
         other_cols = [c for c in df_comp.columns if c not in basic_cols]
         return df_comp[basic_cols + other_cols]
 
-    def step_4_create_and_smooth_tmy(self, smoothing_config=None):
+    def step_4_create_and_smooth_tmy(self, hours=6, s_factor=0.0):
         """
-        Public method to run Step 4: Create the raw TMY and apply smoothing.
+        Public method to run Step 6: Create and Smooth TMY.
+        (Note: Name retained as 'step_4' for API compatibility, but implements Step 6)
 
         Args:
-            smoothing_config (dict, optional): A dictionary to configure the
-                smoothing process on a per-junction basis. See the docstring
-                of `_apply_smoothing` for details.
+            hours (int): The number of hours around the junction to apply smoothing.
+            s_factor (float): Smoothing factor for the spline. 0.0 for interpolation.
         """
         if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
         if self.selected_months is None:
             self._select_months_by_fs_rank()
         self._create_raw_tmy()
-        self._apply_smoothing(smoothing_config)
+        self._apply_smoothing(hours=hours, s_factor=s_factor)
         if self.save_validation_dfs:
             self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
         return self
@@ -1590,6 +1597,12 @@ class TMYGenerator:
             print("\nPersistence step was skipped. Nothing to validate.")
         else:
             raise RuntimeError("Run 'step_3_apply_persistence()' first.")
+
+    def _smooth_tmy_curve_fitting(self, hours=6, s_factor=0.0):
+        """
+        Part of Step 6: Smooths the TMY discontinuities using curve fitting (spline).
+        """
+        if self.tmy_raw is None: raise RuntimeError("Raw TMY not generated yet. Run 'step_4_create_and_smooth_tmy()' first.")
 
     def validate_step_4_final_tmy(self):
         """Prints the composition table and descriptive statistics of the final TMY."""
