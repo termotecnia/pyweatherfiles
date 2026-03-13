@@ -50,6 +50,30 @@ COLS_MET_15 = [
 
 # --- FUNCIONES DE CÁLCULO AUXILIARES ---
 
+def _calculate_variable_pressure_from_met(temp_c, rel_hum, wabs, elevation_m):
+    """
+    Ingeniería inversa: Despeja la presión atmosférica horaria a partir de la
+    Humedad Absoluta (wabs), Temperatura y Humedad Relativa del archivo .met.
+    """
+    # Si la humedad absoluta es 0 (aire extremadamente seco o error de datos),
+    # evitamos división por cero y devolvemos la presión constante por altitud.
+    if wabs <= 0 or rel_hum <= 0:
+        return _calculate_atmos_pressure(elevation_m)
+
+    # Calcular presión de vapor actual (pv)
+    e_s = 610.78 * (10 ** (7.5 * temp_c / (237.3 + temp_c)))
+    e = e_s * (rel_hum / 100.0)
+
+    # Despejar P_atm de la fórmula del Apéndice A.3
+    p_atm = e * (1.0 + (0.62198 / wabs))
+
+    # Filtro de seguridad: Si por redondeos del .met el valor es un disparate físico
+    # (fuera del rango 50,000 Pa - 110,000 Pa), usamos la presión estándar por altitud.
+    if 50000 < p_atm < 110000:
+        return p_atm
+    else:
+        return _calculate_atmos_pressure(elevation_m)
+
 def _calculate_dew_point(temp_c, rh_percent):
     if rh_percent <= 0: return temp_c
     b = 17.62
@@ -218,7 +242,11 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str) -> bool
     _set_epw_values(epw_data, 'wind_speed', df['WindSpeed'].tolist())
     _set_epw_values(epw_data, 'wind_direction', wind_direction_data)
     _set_epw_values(epw_data, 'dew_point_temperature', [_calculate_dew_point(t, rh) for t, rh in zip(df['DryBulb'], df['RelHum'])])
-    _set_epw_values(epw_data, 'atmospheric_station_pressure', [_calculate_atmos_pressure(elev)] * len(df))
+    patm_values = [
+        _calculate_variable_pressure_from_met(t, rh, w, elev)
+        for t, rh, w in zip(df['DryBulb'], df['RelHum'], df['AbsHum'])
+    ]
+    _set_epw_values(epw_data, 'atmospheric_station_pressure', patm_values)
 
     # --- CONVERSIÓN DE RADIACIÓN INFRARROJA ---
     ir_values = []

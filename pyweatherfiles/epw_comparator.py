@@ -9,6 +9,54 @@ except ImportError:
     raise ImportError("La librería 'ladybug-core' no está instalada. Por favor, instálala con: pip install ladybug-core")
 
 
+def explore_epw_structure(epw_path: str):
+    """
+    Carga un archivo EPW e imprime la estructura de su objeto y del diccionario
+    generado por .to_dict() para entender cómo acceder a sus datos.
+
+    Args:
+        epw_path (str): Ruta al archivo EPW que se desea explorar.
+    """
+    print(f"\n--- Explorando la Estructura del Archivo EPW: '{epw_path}' ---")
+    try:
+        epw = EPW(epw_path)
+    except Exception as e:
+        print(f"No se pudo cargar el archivo EPW: {e}")
+        return
+
+    print("\n[1] Intentando volcar el objeto a un diccionario con .to_dict()")
+    try:
+        epw_dict = epw.to_dict()
+        print("  -> .to_dict() se ejecutó con éxito.")
+    except Exception as e:
+        print(f"  -> .to_dict() falló con el error: {e}")
+        return
+
+    print("\n[2] Claves encontradas en el diccionario y tipo de valor asociado:")
+    if not isinstance(epw_dict, dict):
+        print(f"  -> El resultado de .to_dict() NO es un diccionario, es un: {type(epw_dict)}")
+        return
+
+    if not epw_dict:
+        print("  -> El diccionario está vacío.")
+        return
+
+    for key, value in epw_dict.items():
+        value_type = type(value)
+        value_preview = ""
+        if isinstance(value, list):
+            value_preview = f"(Lista con {len(value)} elementos)"
+        elif isinstance(value, dict):
+            value_preview = f"(Diccionario con {len(value)} claves)"
+        else:
+            value_preview = f"({str(value)[:50]}...)"  # Muestra los primeros 50 caracteres
+
+        print(f"  - Clave: '{key}'".ljust(40) + f"| Tipo: {value_type.__name__}".ljust(25) + f"| Vista Previa: {value_preview}")
+
+    print("\n--- Exploración Finalizada ---")
+    print("Por favor, usa la información de arriba para identificar la clave que contiene los datos horarios (listas de 8760 elementos).")
+
+
 def compare_epw_files(base_epw_path: str, generated_epw_path: str):
     """
     Compara dos archivos EPW, uno base y uno generado, y muestra un resumen
