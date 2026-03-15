@@ -139,7 +139,7 @@ def _get_epw_values(epw_obj, field_name):
 
 
 # --- CONVERSIÓN MET -> EPW ---
-def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str) -> bool:
+def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_999: bool = False) -> bool:
     print(f"Iniciando conversión de '{met_path}' a '{epw_path}'...")
 
     try:
@@ -289,6 +289,42 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str) -> bool
 
     _set_epw_values(epw_data, 'global_horizontal_radiation', ghi_values)
     _set_epw_values(epw_data, 'direct_normal_radiation', dni_values)
+
+    if replace_unused_with_999:
+        unused_fields = [
+            'years',
+            'extraterrestrial_horizontal_radiation',
+            'extraterrestrial_direct_normal_radiation',
+            'global_horizontal_radiation',
+            'global_horizontal_illuminance',
+            'direct_normal_illuminance',
+            'diffuse_horizontal_illuminance',
+            'zenith_luminance',
+            'total_sky_cover',
+            'opaque_sky_cover',
+            'visibility',
+            'ceiling_height',
+            'precipitable_water',
+            'aerosol_optical_depth',
+            'days_since_last_snowfall',
+            'albedo',
+            'liquid_precipitation_quantity'
+        ]
+        num_rows = len(df)
+        replacement_list = [999] * num_rows
+        
+        for field_name in unused_fields:
+            if hasattr(epw_data, field_name):
+                field_obj = getattr(epw_data, field_name)
+                if hasattr(field_obj, 'header') and hasattr(field_obj, 'values'):
+                    # Si es una DataCollection de Ladybug
+                    _set_epw_values(epw_data, field_name, replacement_list)
+                else:
+                    # Si es una propiedad simple como list/tuple (ej: years)
+                    try:
+                        setattr(epw_data, field_name, tuple(replacement_list))
+                    except Exception:
+                        pass
 
     try:
         with suppress_stdout_stderr():
