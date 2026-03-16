@@ -139,7 +139,7 @@ def _get_epw_values(epw_obj, field_name):
 
 
 # --- CONVERSIÓN MET -> EPW ---
-def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_999: bool = False) -> bool:
+def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_missing: bool = False) -> bool:
     print(f"Iniciando conversión de '{met_path}' a '{epw_path}'...")
 
     try:
@@ -290,37 +290,37 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
     _set_epw_values(epw_data, 'global_horizontal_radiation', ghi_values)
     _set_epw_values(epw_data, 'direct_normal_radiation', dni_values)
 
-    if replace_unused_with_999:
-        unused_fields = [
-            'years',
-            'extraterrestrial_horizontal_radiation',
-            'extraterrestrial_direct_normal_radiation',
-            'global_horizontal_radiation',
-            'global_horizontal_illuminance',
-            'direct_normal_illuminance',
-            'diffuse_horizontal_illuminance',
-            'zenith_luminance',
-            'total_sky_cover',
-            'opaque_sky_cover',
-            'visibility',
-            'ceiling_height',
-            'precipitable_water',
-            'aerosol_optical_depth',
-            'days_since_last_snowfall',
-            'albedo',
-            'liquid_precipitation_quantity'
-        ]
+    if replace_unused_with_missing:
+        # Solo se incluyen las variables marcadas con 'N' (No usadas por EnergyPlus)
+        unused_fields_mapping = {
+            'extraterrestrial_horizontal_radiation': 9999,
+            'extraterrestrial_direct_normal_radiation': 9999,
+            'global_horizontal_illuminance': 999999,
+            'direct_normal_illuminance': 999999,
+            'diffuse_horizontal_illuminance': 999999,
+            'zenith_luminance': 9999,
+            'total_sky_cover': 99,
+            'opaque_sky_cover': 99,
+            'visibility': 9999,
+            'ceiling_height': 99999,
+            'precipitable_water': 999,
+            'aerosol_optical_depth': 0.999,
+            'days_since_last_snowfall': 99,
+            'albedo': 999,
+            'liquid_precipitation_quantity': 99
+        }
         num_rows = len(df)
-        replacement_list = [999] * num_rows
         
-        for field_name in unused_fields:
+        for field_name, missing_val in unused_fields_mapping.items():
             if hasattr(epw_data, field_name):
                 field_obj = getattr(epw_data, field_name)
+                replacement_list = [missing_val] * num_rows
+                
                 if hasattr(field_obj, 'header') and hasattr(field_obj, 'values'):
                     # Si es una DataCollection de Ladybug
                     _set_epw_values(epw_data, field_name, replacement_list)
                 else:
-                    # Si es una propiedad simple como list/tuple (ej: years)
+                    # Si es una propiedad simple como list/tuple
                     try:
                         setattr(epw_data, field_name, tuple(replacement_list))
                     except Exception:
