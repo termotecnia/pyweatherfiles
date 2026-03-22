@@ -295,14 +295,25 @@ class HourlyEPWConverter:
             print(f"Error al guardar el EPW de salida: {e}")
             return False
 
-    def process(self, base_epw_path, output_dir=".", years=None):
+    def process(self, base_epw_path, output_dir=".", years=None, output_pattern=None, **pattern_kwargs):
         """
         Método directo ("todo en uno") que automatiza el proceso completo.
         Toma una lista de años (o todos si no se especifican), les rellena 
         huecos y genera un EPW para cada uno.
+        
+        Permite customizar el nombre de salida a través de `output_pattern`.
+        Ejemplo: output_pattern="{ciudad}_{zona_climatica}_{year}.epw", ciudad="Sevilla", zona_climatica="B4"
+        Si no se provee, el patrón por defecto es "{basename}_{year}_convertido.epw".
         """
         if years is None:
             years = self.available_years
+            
+        if output_pattern is None:
+            output_pattern = "{basename}_{year}_convertido.epw"
+            
+        # Extraemos el nombre del archivo sin extensión como el 'basename' por defecto
+        basename = os.path.splitext(os.path.basename(self.file_path))[0]
+        pattern_kwargs['basename'] = basename
             
         success_list = []
         for year in years:
@@ -314,9 +325,15 @@ class HourlyEPWConverter:
             df_year = self.get_year_data(year)
             df_filled = self.fill_missing_values(df_year)
             
-            # Formatos automáticos de salida
-            city_name = os.path.basename(self.file_path).split('_')[0].split('.')[0].upper()
-            output_path = os.path.join(output_dir, f"{city_name}_{year}_convertido.epw")
+            # Formateamos el patrón de salida dinámicamente inyectando el año de la iteración actual
+            pattern_kwargs['year'] = year
+            
+            try:
+                filename = output_pattern.format(**pattern_kwargs)
+            except KeyError as e:
+                raise ValueError(f"Falta proveer la variable en process() para el patrón de nombre: {e}")
+                
+            output_path = os.path.join(output_dir, filename)
             
             success = self.transform_to_epw(df_filled, base_epw_path, output_path)
             if success:

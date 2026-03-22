@@ -49,16 +49,19 @@ def main():
          print(f"Éxito ejecutando paso a paso para {year_to_test}. Archivo guardado: {out_epw_manual}")
          
     # ------------------------------------------------------------
-    # MÉTODO B: Ejecución general directa "todo en uno" (Bucle)
+    # MÉTODO B: Ejecución general directa "todo en uno"
     # ------------------------------------------------------------
-    print("\n\n--- MÉTODO B: EJECUCIÓN DIRECTA (Múltiples Años) ---")
+    print("\n--- MÉTODO B: EJECUCIÓN DIRECTA CON PATRÓN PERSONALIZADO (Múltiples Años) ---")
     years_to_process = [2014, 2017] # Procesamos los dos restantes de prueba
     
-    # Ejecutamos con una sola llamada la magia de todos esos
+    # Ejecutamos con una sola llamada la conversión masiva.
+    # Aquí puedes jugar con el output_pattern dictando nombres y pasando las variables que quieras.
     results = converter.process(
         base_epw_path=base_epw, 
         output_dir='d:\\Python\\pyweatherfiles\\', 
-        years=years_to_process
+        years=years_to_process,
+        output_pattern="Clima_{zona}_{basename}_{year}_Personalizado.epw",
+        zona="Centro"
     )
     print(f"\nAños convertidos exitosamente mediante proceso directo: {results}")
 
