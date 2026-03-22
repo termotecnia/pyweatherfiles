@@ -1,69 +1,54 @@
 import sys
-from pyweatherfiles.hourly_epw_converter import HourlyEPWConverter
+from pyweatherfiles.hourly_epw_converter import HourlyEPWConverter, BatchHourlyEPWConverter
 
 def main():
-    print("Inicializando convertidor y analizando archivo...")
-    # Parámetros básicos constantes para Madrid
-    lat = 40.4168
-    lon = -3.7038
-    elev = 660.0
-    tz = +1.0
+    print("--- DEMO DE LA CLASE MASIVA 'BatchHourlyEPWConverter' ---")
     
-    # 1. Creamos la instancia
-    converter = HourlyEPWConverter(
-        file_path='d:\\Python\\pyweatherfiles\\MADRID_horario.xlsx',
-        lat=lat, lon=lon, elev=elev, tz_hour=tz,
-        datetime_col='DATETIME_UTC', col_temp='Dry-bulb temperature',
-        col_dew='Dew Point temperature', col_wind='Wind speed',
-        col_ghi='GHI', col_dni='BNI/DNI'
+    # Podemos consultar en cualquier momento qué llaves son obligatorias:
+    claves_requeridas = BatchHourlyEPWConverter.get_mandatory_config_keys()
+    print(f"Claves de configuración obligatorias para cada ciudad: {claves_requeridas}")
+    print("\n---------------------------------------------------------")
+    
+    # 1. Creamos la configuración MASIVA usando el asistente automático 'suggest_config'
+    #    Le damos identificadores, y sabe buscar en las listas (o carpetas)
+    identificadores = ['MADRID']
+    
+    # Supongamos que esta es tu carpeta o lista de Excels de datos:
+    data_files = ['d:\\Python\\pyweatherfiles\\MADRID_horario.xlsx']
+    
+    # Y aquí tu carpeta o lista de EPWs que sirven como constructores base:
+    base_epw_files = ['d:\\Python\\pyweatherfiles\\Seville_Present.epw', 'd:\\Python\\pyweatherfiles\\MADRID_Present.epw']
+    
+    print("Buscando parejas y extrayendo ubicación (lat, lon, elev, tz)...")
+    cities_config = BatchHourlyEPWConverter.suggest_config(
+        identifiers=identificadores,
+        data_files=data_files,
+        base_epw_files=base_epw_files
     )
     
-    # 2. Mostramos los atributos que pidió incluir (años disponibles)
-    print("\n--- ATRIBUTOS CARGADOS AUTOMÁTICAMENTE ---")
-    print("Años disponibles detectados en el archivo:", converter.available_years)
+    if not cities_config:
+        print("No se encontró ninguna configuración válida para procesar. Saliendo...")
+        return
+        
+    # ATENCIÓN: A esta lista 'cities_config' autogenerada, puedes editarla
+    # e inyectarle variables tuyas (como 'clima' o 'zona') mediante un bucle for
+    for c in cities_config:
+        c['zona'] = 'Centro'  # Se la añadimos a todas para que la usen en el patrón
+        c['clima'] = 'C3'     # Faltaba añadir 'clima' que requiere el output_pattern
+        c['years'] = [2013]   # Para que el test tarde poco
     
-    # 3. Podemos generar y ver las estadísticas de forma independiente
-    print("\n--- ESTADÍSTICAS DEL ARCHIVO ---")
-    stats = converter.get_missing_data_stats()
-    print(stats.to_string(index=False))
-    
-    # ------------------------------------------------------------
-    # MÉTODO A: Ejecución paso a paso simulando un año específico
-    # ------------------------------------------------------------
-    print("\n--- MÉTODO A: EJECUCIÓN PASO A PASO (Elegimos el 2013) ---")
-    year_to_test = 2013
-    
-    # Extraemos el df directamente del interior de la clase
-    df_2013 = converter.get_year_data(year_to_test)
-    print("Filas iniciales:", len(df_2013))
-    
-    # Rellenamos de forma manual un paso individual
-    df_2013_filled = converter.fill_missing_values(df_2013)
-    
-    # Exportamos un EPW independiente
-    base_epw = 'd:\\Python\\pyweatherfiles\\Seville_Present.epw'
-    out_epw_manual = f'd:\\Python\\pyweatherfiles\\MADRID_{year_to_test}_paso_a_paso.epw'
-    
-    success = converter.transform_to_epw(df_2013_filled, base_epw, out_epw_manual)
-    if success:
-         print(f"Éxito ejecutando paso a paso para {year_to_test}. Archivo guardado: {out_epw_manual}")
-         
-    # ------------------------------------------------------------
-    # MÉTODO B: Ejecución general directa "todo en uno"
-    # ------------------------------------------------------------
-    print("\n--- MÉTODO B: EJECUCIÓN DIRECTA CON PATRÓN PERSONALIZADO (Múltiples Años) ---")
-    years_to_process = [2014, 2017] # Procesamos los dos restantes de prueba
-    
-    # Ejecutamos con una sola llamada la conversión masiva.
-    # Aquí puedes jugar con el output_pattern dictando nombres y pasando las variables que quieras.
-    results = converter.process(
-        base_epw_path=base_epw, 
-        output_dir='d:\\Python\\pyweatherfiles\\', 
-        years=years_to_process,
-        output_pattern="Clima_{zona}_{basename}_{year}_Personalizado.epw",
-        zona="Centro"
+    # 2. Inicializamos el convertidor MASIVO
+    batch_converter = BatchHourlyEPWConverter(
+        cities_config=cities_config,
+        output_dir='d:\\Python\\pyweatherfiles\\'
     )
-    print(f"\nAños convertidos exitosamente mediante proceso directo: {results}")
+    
+    # 4. Procesamos TODAS LAS CIUDADES con un solo patrón unificado
+    #    Observa que usamos llaves dinámicas que sacamos del diccionario ({zona}, {clima})
+    resultados = batch_converter.process_all(
+        output_pattern="BATCH_Clima_{zona}_{clima}_{basename}_{year}.epw",
+        max_interpolate_limit=24
+    )
 
 if __name__ == '__main__':
     main()

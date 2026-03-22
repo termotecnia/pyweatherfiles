@@ -295,7 +295,7 @@ class HourlyEPWConverter:
             print(f"Error al guardar el EPW de salida: {e}")
             return False
 
-    def process(self, base_epw_path, output_dir=".", years=None, output_pattern=None, **pattern_kwargs):
+    def process(self, base_epw_path, output_dir=".", years=None, output_pattern=None, max_interpolate_limit=24, **pattern_kwargs):
         """
         Método directo ("todo en uno") que automatiza el proceso completo.
         Toma una lista de años (o todos si no se especifican), les rellena 
@@ -304,6 +304,9 @@ class HourlyEPWConverter:
         Permite customizar el nombre de salida a través de `output_pattern`.
         Ejemplo: output_pattern="{ciudad}_{zona_climatica}_{year}.epw", ciudad="Sevilla", zona_climatica="B4"
         Si no se provee, el patrón por defecto es "{basename}_{year}_convertido.epw".
+        
+        También admite todos los argumentos de los métodos paso a paso:
+        - max_interpolate_limit: Límite de interpolación de llenado de huecos.
         """
         if years is None:
             years = self.available_years
@@ -323,7 +326,7 @@ class HourlyEPWConverter:
                 
             print(f"\n--- Procesando año {year} de forma directa ---")
             df_year = self.get_year_data(year)
-            df_filled = self.fill_missing_values(df_year)
+            df_filled = self.fill_missing_values(df_year, max_interpolate_limit=max_interpolate_limit)
             
             # Formateamos el patrón de salida dinámicamente inyectando el año de la iteración actual
             pattern_kwargs['year'] = year
@@ -343,3 +346,167 @@ class HourlyEPWConverter:
                 print(f"Fallo al procesar guardado de {year}.")
                 
         return success_list
+
+
+class BatchHourlyEPWConverter:
+    """
+    Clase para iterar de manera masiva sobre múltiples archivos climáticos
+    de diferentes ciudades o zonas climáticas y generar sus respectivos EPW.
+    """
+    
+    # Atributo de clase con las llaves requeridas
+    MANDATORY_KEYS = ['file_path', 'base_epw_path', 'lat', 'lon', 'elev', 'tz_hour']
+
+    @classmethod
+    def get_mandatory_config_keys(cls):
+        """
+        Imprime y devuelve la lista de llaves obligatorias que cada diccionario 
+        / fila de DataFrame debe contener en la configuración 'cities_config'.
+        """
+        print("Las llaves de configuración obligatorias para cada archivo son:")
+        for key in cls.MANDATORY_KEYS:
+            if key == 'file_path': print(f" - '{key}': Ruta al Excel u origen de datos horario.")
+            elif key == 'base_epw_path': print(f" - '{key}': Plantilla .epw a usar como base para este archivo.")
+            elif key == 'lat': print(f" - '{key}': Latitud geográfica (Ej: 40.41)")
+            elif key == 'lon': print(f" - '{key}': Longitud geográfica (Ej: -3.70)")
+            elif key == 'elev': print(f" - '{key}': Elevación en metros (Ej: 660.0)")
+            elif key == 'tz_hour': print(f" - '{key}': Huso horario respecto al UTC (Ej: 1.0)")
+        return cls.MANDATORY_KEYS
+    
+    def __init__(self, cities_config, output_dir="."):
+        """
+        cities_config: Lista de diccionarios, o un pandas DataFrame.
+          Debe contener obligatoriamente las llaves expuestas en `get_mandatory_config_keys()`.
+          - 'years': (opcional) Lista de años a procesar [2013, 2014]. Si se omite, procesa todos.
+          - Toda llave extra en el diccionario se asume como variable para formatear el 'output_pattern'.
+        """
+        if isinstance(cities_config, pd.DataFrame):
+            self.cities_config = cities_config.to_dict(orient='records')
+        else:
+            self.cities_config = cities_config
+            
+        self.output_dir = output_dir
+
+    @classmethod
+    def suggest_config(cls, identifiers, data_files, base_epw_files):
+        """
+        Genera automáticamente la lista de configuración 'cities_config' buscando 
+        coincidencias de una lista de identificadores (ej: nombres de ciudades, zonas) 
+        dentro de dos orígenes (archivos de datos y plantillas EPW).
+        Además, abre cada plantilla EPW encontrada para extraer de ella 
+        la latitud, longitud, elevación y huso horario.
+        
+        identifiers: Lista de strings, ej: ['MADRID', 'SEVILLA', 'C3']
+        data_files: Lista de rutas a los archivos .xlsx/.csv, o ruta a la carpeta.
+        base_epw_files: Lista de rutas a los archivos .epw base, o ruta a la carpeta.
+        """
+        # Permite pasar directamente la ruta a los directorios o listas de archivos
+        if isinstance(data_files, str) and os.path.isdir(data_files):
+            data_files = [os.path.join(data_files, f) for f in os.listdir(data_files) if f.endswith(('.xlsx', '.csv'))]
+        if isinstance(base_epw_files, str) and os.path.isdir(base_epw_files):
+            base_epw_files = [os.path.join(base_epw_files, f) for f in os.listdir(base_epw_files) if f.endswith('.epw')]
+            
+        suggested_config = []
+        
+        for identifier in identifiers:
+            ident_str = str(identifier).lower()
+            
+            # Buscar el archivo de datos que contenga el identificador
+            matched_data = next((f for f in data_files if ident_str in os.path.basename(f).lower()), None)
+            
+            # Buscar el EPW base que contenga el identificador
+            matched_epw = next((f for f in base_epw_files if ident_str in os.path.basename(f).lower()), None)
+            
+            if matched_data and matched_epw:
+                print(f"Match exitoso para '{identifier}':\n  -> Archivo horario: {os.path.basename(matched_data)}\n  -> Plantilla EPW: {os.path.basename(matched_epw)}")
+                try:
+                    # Extraer toda la información obligatoria desde Ladybug
+                    epw_obj = EPW(matched_epw)
+                    config = {
+                        'identifier': identifier, # Variable libre a inyectar en output_pattern
+                        'file_path': matched_data,
+                        'base_epw_path': matched_epw,
+                        'lat': float(epw_obj.location.latitude),
+                        'lon': float(epw_obj.location.longitude),
+                        'elev': float(epw_obj.location.elevation),
+                        'tz_hour': float(epw_obj.location.time_zone)
+                    }
+                    suggested_config.append(config)
+                except Exception as e:
+                    print(f"Error al extraer info geográfica del EPW base {matched_epw}: {e}")
+            else:
+                print(f"Advertencia: No se pudo hacer pareja para '{identifier}'.")
+                print(f" - Horario encontrado: {os.path.basename(matched_data) if matched_data else 'NINGUNO'}")
+                print(f" - Plantilla EPW encontrada: {os.path.basename(matched_epw) if matched_epw else 'NINGUNO'}")
+                
+        return suggested_config
+
+    def process_all(self, output_pattern=None, max_interpolate_limit=24, **global_kwargs):
+        """
+        Ejecuta el procesado iterando cada ciudad.
+        Las variables pasadas en global_kwargs se combinan con las variables individuales 
+        de cada ciudad para rellenar las llaves del output_pattern.
+        """
+        results_summary = {}
+        for config in self.cities_config:
+            
+            # Verificación estructural obligatoria
+            missing_keys = [k for k in self.MANDATORY_KEYS if k not in config]
+            if missing_keys:
+                print(f"Error: La configuración omite los atributos obligatorios {missing_keys} en:\n{config}\nIgnorando archivo...")
+                continue
+                
+            file_path = config['file_path']
+            base_epw_path = config['base_epw_path']
+            lat = config['lat']
+            lon = config['lon']
+            elev = config['elev']
+            tz_hour = config['tz_hour']
+                
+            print(f"\n=======================================================")
+            print(f"Iniciando procesamiento masivo para: {file_path}")
+            print(f"Base EPW asignada: {base_epw_path}")
+            print(f"=======================================================")
+            
+            try:
+                converter = HourlyEPWConverter(
+                    file_path=file_path, lat=lat, lon=lon, elev=elev, tz_hour=tz_hour,
+                    datetime_col=config.get('datetime_col', 'DATETIME_UTC'),
+                    col_temp=config.get('col_temp', 'Dry-bulb temperature'),
+                    col_dew=config.get('col_dew', 'Dew Point temperature'),
+                    col_wind=config.get('col_wind', 'Wind speed'),
+                    col_ghi=config.get('col_ghi', 'GHI'),
+                    col_dni=config.get('col_dni', 'BNI/DNI')
+                )
+            except Exception as e:
+                print(f"Error al inicializar conversor para {file_path}: {e}")
+                continue
+            
+            # Combinar kwargs globales con los específicos de esta ciudad
+            pattern_kwargs = global_kwargs.copy()
+            ignored_pattern_keys = self.MANDATORY_KEYS + ['years', 'datetime_col', 'col_temp', 'col_dew', 'col_wind', 'col_ghi', 'col_dni']
+            
+            for key, val in config.items():
+                if key not in ignored_pattern_keys:
+                    pattern_kwargs[key] = val
+                    
+            years_to_process = config.get('years', None)
+            
+            # Delegamos a la clase base
+            success_years = converter.process(
+                base_epw_path=base_epw_path,
+                output_dir=self.output_dir,
+                years=years_to_process,
+                output_pattern=output_pattern,
+                max_interpolate_limit=max_interpolate_limit,
+                **pattern_kwargs
+            )
+            
+            results_summary[file_path] = success_years
+            
+        print("\n=======================================================")
+        print("RESUMEN DE BATCH PROCESSING")
+        for f, yrs in results_summary.items():
+            print(f"{os.path.basename(f)} -> Años convertidos: {yrs}")
+            
+        return results_summary
