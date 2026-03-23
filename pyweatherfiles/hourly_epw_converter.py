@@ -104,7 +104,7 @@ class HourlyEPWConverter:
             raise ValueError(f"El año {year} no está disponible en este archivo.")
         return self.df[self.df[self.datetime_col].dt.year == year].copy()
 
-    def fill_missing_values(self, df_year, max_interpolate_limit=24, profile_method='monthly', window_weeks=2):
+    def fill_missing_values(self, df_year, max_interpolate_limit=24, profile_method='window', window_weeks=2):
         """
         Rellena los valores faltantes en un dataframe aislado (ej. de 1 año).
         
