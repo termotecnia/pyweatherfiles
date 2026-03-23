@@ -104,13 +104,14 @@ class HourlyEPWConverter:
             raise ValueError(f"El año {year} no está disponible en este archivo.")
         return self.df[self.df[self.datetime_col].dt.year == year].copy()
 
-    def fill_missing_values(self, df_year, max_interpolate_limit=24):
+    def fill_missing_values(self, df_year, max_interpolate_limit=24, profile_method='monthly', window_weeks=2):
         """
         Rellena los valores faltantes en un dataframe aislado (ej. de 1 año).
         
         Método:
         1. Interpolación lineal para huecos pequeños y medianos.
-        2. Perfil típico basado en la mediana de ese mismo mes/hora a lo largo de los demás datos.
+        2. Perfil típico basado en la mediana de ese mismo mes/hora a lo largo de los demás datos ('monthly'),
+           o en una ventana temporal de un número de semanas parametrizable ('window').
         3. Mediana global como fallback de seguridad extrema.
         """
         df_filled = df_year.copy()
@@ -122,20 +123,51 @@ class HourlyEPWConverter:
         for col in cols_to_fill:
             df_filled[col] = df_filled[col].interpolate(method='linear', limit=max_interpolate_limit)
             
-        # 2. Perfiles horarios-mensuales (mediana agrupada)
-        df_filled['_month'] = df_filled[self.datetime_col].dt.month
+        # 2. Perfiles horarios (mensual o por ventana)
         df_filled['_hour'] = df_filled[self.datetime_col].dt.hour
+        if profile_method == 'monthly':
+            df_filled['_month'] = df_filled[self.datetime_col].dt.month
+            df_filled['_weekday'] = df_filled[self.datetime_col].dt.weekday
+            group_cols = ['_month', '_weekday', '_hour']
+        elif profile_method == 'window':
+            df_filled['_weekday'] = df_filled[self.datetime_col].dt.weekday
+            group_cols = ['_weekday', '_hour']
+            
+            window_elements = 2 * window_weeks + 1
+            pad_size = window_weeks
+            
+            def circular_rolling_median(x):
+                vals = x.values
+                n = len(vals)
+                if n == 0:
+                    return x
+                if n <= window_elements:
+                    return pd.Series(x.median(), index=x.index)
+                    
+                padded = np.concatenate([vals[-pad_size:], vals, vals[:pad_size]])
+                rolled = pd.Series(padded).rolling(window=window_elements, center=True, min_periods=1).median()
+                return pd.Series(rolled.iloc[pad_size : pad_size + n].values, index=x.index)
         
         for col in cols_to_fill:
             if df_filled[col].isnull().any():
-                median_profile = df_filled.groupby(['_month', '_hour'])[col].transform('median')
+                if profile_method == 'monthly':
+                    median_profile = df_filled.groupby(group_cols)[col].transform('median')
+                elif profile_method == 'window':
+                    median_profile = df_filled.groupby(group_cols)[col].transform(circular_rolling_median)
+                else:
+                    raise ValueError("parameter 'profile_method' must be 'monthly' or 'window'")
+                    
                 df_filled[col] = df_filled[col].fillna(median_profile)
                 
                 # 3. Fallback en caso extremo
                 if df_filled[col].isnull().any():
                     df_filled[col] = df_filled[col].fillna(df_filled[col].median())
                     
-        df_filled = df_filled.drop(columns=['_month', '_hour'])
+        if '_month' in df_filled.columns:
+            df_filled = df_filled.drop(columns=['_month'])
+        if '_weekday' in df_filled.columns:
+            df_filled = df_filled.drop(columns=['_weekday'])
+        df_filled = df_filled.drop(columns=['_hour'])
         return df_filled
 
     def _calculate_rh(self, tdb, tdp):
@@ -168,7 +200,7 @@ class HourlyEPWConverter:
         else:
             field.values = tuple(new_vals) if isinstance(field.values, tuple) else list(new_vals)
 
-    def transform_to_epw(self, df_year_filled, base_epw_path, output_epw_path):
+    def transform_to_epw(self, df_year_filled, base_epw_path, output_epw_path, remove_leap_day=True):
         """
         Traslada los valores del DataFrame a un archivo .epw que sirve de base,
         realizando cálculos (DHI, Psicometría, Atmosférica) y desactivando las variables obsoletas.
@@ -178,13 +210,17 @@ class HourlyEPWConverter:
 
         # Filtro de bisiestos (Feb 29)
         is_leap_day = (df_y[self.datetime_col].dt.month == 2) & (df_y[self.datetime_col].dt.day == 29)
-        if is_leap_day.any():
+        has_leap_day = is_leap_day.any()
+        
+        if remove_leap_day and has_leap_day:
             df_y = df_y[~is_leap_day].reset_index(drop=True)
+            has_leap_day = False
             
-        if len(df_y) < 8760:
-            print(f"Advertencia: El año proporcionado solo tiene {len(df_y)} horas disponibles.")
-        elif len(df_y) > 8760:
-            df_y = df_y.head(8760)
+        expected_len = 8784 if has_leap_day else 8760
+        if len(df_y) < expected_len:
+            print(f"Advertencia: El año proporcionado solo tiene {len(df_y)} horas disponibles (se esperaban {expected_len}).")
+        elif len(df_y) > expected_len:
+            df_y = df_y.head(expected_len)
 
         # Carga EPW Base
         try:
@@ -202,7 +238,7 @@ class HourlyEPWConverter:
         
         try:
             epw_data._analysis_period = AnalysisPeriod(st_month=1, st_day=1, st_hour=1, end_month=12, end_day=31, end_hour=24)
-            epw_data._is_leap_year = False
+            epw_data._is_leap_year = bool(has_leap_day)
         except Exception:
             pass
 
@@ -295,7 +331,8 @@ class HourlyEPWConverter:
             print(f"Error al guardar el EPW de salida: {e}")
             return False
 
-    def process(self, base_epw_path, output_dir=".", years=None, output_pattern=None, max_interpolate_limit=24, **pattern_kwargs):
+    def process(self, base_epw_path, output_dir=".", years=None, output_pattern=None, max_interpolate_limit=24, 
+                profile_method='monthly', window_weeks=2, remove_leap_day=True, **pattern_kwargs):
         """
         Método directo ("todo en uno") que automatiza el proceso completo.
         Toma una lista de años (o todos si no se especifican), les rellena 
@@ -307,6 +344,9 @@ class HourlyEPWConverter:
         
         También admite todos los argumentos de los métodos paso a paso:
         - max_interpolate_limit: Límite de interpolación de llenado de huecos.
+        - profile_method: Método para perfiles base en caso de huecos grandes ('monthly' o 'window').
+        - window_weeks: Semanas antes y después para profile_method='window'.
+        - remove_leap_day: Si True, elimina el 29 de febrero de los años bisiestos (por defecto True).
         """
         if years is None:
             years = self.available_years
@@ -326,7 +366,8 @@ class HourlyEPWConverter:
                 
             print(f"\n--- Procesando año {year} de forma directa ---")
             df_year = self.get_year_data(year)
-            df_filled = self.fill_missing_values(df_year, max_interpolate_limit=max_interpolate_limit)
+            df_filled = self.fill_missing_values(df_year, max_interpolate_limit=max_interpolate_limit, 
+                                                 profile_method=profile_method, window_weeks=window_weeks)
             
             # Formateamos el patrón de salida dinámicamente inyectando el año de la iteración actual
             pattern_kwargs['year'] = year
@@ -338,7 +379,7 @@ class HourlyEPWConverter:
                 
             output_path = os.path.join(output_dir, filename)
             
-            success = self.transform_to_epw(df_filled, base_epw_path, output_path)
+            success = self.transform_to_epw(df_filled, base_epw_path, output_path, remove_leap_day=remove_leap_day)
             if success:
                 print(f"¡Éxito! Año {year} guardado en: {output_path}")
                 success_list.append(year)
@@ -441,11 +482,12 @@ class BatchHourlyEPWConverter:
                 
         return suggested_config
 
-    def process_all(self, output_pattern=None, max_interpolate_limit=24, **global_kwargs):
+    def process_all(self, output_pattern=None, max_interpolate_limit=24, profile_method='monthly', window_weeks=2, remove_leap_day=True, **global_kwargs):
         """
         Ejecuta el procesado iterando cada ciudad.
         Las variables pasadas en global_kwargs se combinan con las variables individuales 
         de cada ciudad para rellenar las llaves del output_pattern.
+        Acepta configuración como profile_method, window_weeks, remove_leap_day.
         """
         results_summary = {}
         for config in self.cities_config:
@@ -499,6 +541,9 @@ class BatchHourlyEPWConverter:
                 years=years_to_process,
                 output_pattern=output_pattern,
                 max_interpolate_limit=max_interpolate_limit,
+                profile_method=profile_method,
+                window_weeks=window_weeks,
+                remove_leap_day=remove_leap_day,
                 **pattern_kwargs
             )
             
