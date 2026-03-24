@@ -10,6 +10,11 @@ try:
 except ImportError:
     raise ImportError("La librería 'ladybug-core' no está instalada.")
 
+try:
+    import pvlib
+except ImportError:
+    raise ImportError("La librería 'pvlib' no está instalada.")
+
 
 class HourlyEPWConverter:
     """
@@ -80,7 +85,18 @@ class HourlyEPWConverter:
                 'Horas_Totales': len(df_year),
             }
             
+            col_limits = {}
+            for col in cols_to_check:
+                if col in [self.col_temp, self.col_dew, self.col_ghi, self.col_dni]: col_limits[col] = 24
+                elif col == self.col_wind: col_limits[col] = 3
+                elif 'pressure' in col.lower(): col_limits[col] = 72
+                elif 'dir' in col.lower(): col_limits[col] = 2
+                elif 'speed' in col.lower(): col_limits[col] = 3
+                elif 'rh' in col.lower() or 'humidity' in col.lower(): col_limits[col] = 24
+                else: col_limits[col] = 24
+
             missing_total_sum = 0
+            is_valid = True
             for col in cols_to_check:
                 is_nan = df_year[col].isnull()
                 total_missing = is_nan.sum()
@@ -90,10 +106,14 @@ class HourlyEPWConverter:
                 consec = is_nan.groupby((~is_nan).cumsum()).sum()
                 max_consec = int(consec.max()) if len(consec) > 0 else 0
                 
+                if max_consec > col_limits.get(col, 24):
+                    is_valid = False
+                
                 stat[f'{col}_Faltantes'] = total_missing
                 stat[f'{col}_Max_Consecutivos'] = max_consec
                 
             stat['Total_Faltantes'] = missing_total_sum
+            stat['Valido_Para_EPW'] = is_valid
             stats.append(stat)
             
         return pd.DataFrame(stats)
@@ -104,12 +124,27 @@ class HourlyEPWConverter:
             raise ValueError(f"El año {year} no está disponible en este archivo.")
         return self.df[self.df[self.datetime_col].dt.year == year].copy()
 
+    def _gap_size(self, series):
+        is_nan = series.isna()
+        gap_id = (~is_nan).cumsum()
+        return is_nan.groupby(gap_id).transform('sum').where(is_nan, 0)
+
+    def _spline_limit(self, series, max_gap):
+        s = series.copy()
+        gaps = self._gap_size(s)
+        mask_gap = (gaps > 0) & (gaps <= max_gap)
+        if not mask_gap.any():
+            return s
+        s_spline = s.interpolate(method='spline', order=3, limit=max_gap, limit_direction='both')
+        s.loc[mask_gap] = s_spline.loc[mask_gap]
+        return s
+
     def fill_missing_values(self, df_year, max_interpolate_limit=24, profile_method='window', window_weeks=2):
         """
         Rellena los valores faltantes en un dataframe aislado (ej. de 1 año).
         
         Método:
-        1. Interpolación lineal para huecos pequeños y medianos.
+        1. Interpolaciones específicas por variable (lineal, spline o modelo clearsky).
         2. Perfil típico basado en la mediana de ese mismo mes/hora a lo largo de los demás datos ('monthly'),
            o en una ventana temporal de un número de semanas parametrizable ('window').
         3. Mediana global como fallback de seguridad extrema.
@@ -119,9 +154,44 @@ class HourlyEPWConverter:
         cols_to_fill = [c for c in df_filled.columns if c != self.datetime_col]
         df_filled = df_filled.sort_values(by=self.datetime_col).reset_index(drop=True)
         
-        # 1. Interpolación lineal
+        # 1. Rellenos específicos según variable
+        for col in [self.col_temp, self.col_dew]:
+            if col in df_filled.columns:
+                df_filled[col] = self._spline_limit(df_filled[col], max_gap=24)
+                
+        if self.col_wind in df_filled.columns:
+            df_filled[self.col_wind] = df_filled[self.col_wind].interpolate(method='linear', limit=3)
+            
+        has_solar = self.col_ghi in df_filled.columns or self.col_dni in df_filled.columns
+        if has_solar:
+            location = pvlib.location.Location(self.lat, self.lon, tz='UTC', altitude=self.elev)
+            times_utc = pd.DatetimeIndex(df_filled[self.datetime_col])
+            if times_utc.tz is None:
+                times_utc = times_utc.tz_localize('UTC')
+            cs = location.get_clearsky(times_utc)
+            GHIc = pd.Series(cs['ghi'].values, index=df_filled.index)
+            BNIc = pd.Series(cs['dni'].values, index=df_filled.index)
+            es_dia = GHIc > 5
+            
+            solar_cols = []
+            if self.col_ghi in df_filled.columns: solar_cols.append((self.col_ghi, GHIc))
+            if self.col_dni in df_filled.columns: solar_cols.append((self.col_dni, BNIc))
+            
+            for col, ref in solar_cols:
+                df_filled[col] = df_filled[col].interpolate(method='linear', limit=3)
+                mask_medio = self._gap_size(df_filled[col]).between(3, 24) & es_dia
+                if mask_medio.any():
+                    kt = (df_filled[col] / ref.replace(0, np.nan)).clip(0, 1.2)
+                    kt_med = kt.rolling(24, min_periods=6, center=True).median()
+                    df_filled.loc[mask_medio, col] = (ref[mask_medio] * kt_med[mask_medio]).clip(lower=0)
+                df_filled.loc[~es_dia, col] = df_filled.loc[~es_dia, col].fillna(0)
+
         for col in cols_to_fill:
-            df_filled[col] = df_filled[col].interpolate(method='linear', limit=max_interpolate_limit)
+            if col not in [self.col_temp, self.col_dew, self.col_wind, self.col_ghi, self.col_dni]:
+                limit = 24
+                if 'pressure' in col.lower(): limit = 72
+                elif 'dir' in col.lower(): limit = 2
+                df_filled[col] = df_filled[col].interpolate(method='linear', limit=limit)
             
         # 2. Perfiles horarios (mensual o por ventana)
         df_filled['_hour'] = df_filled[self.datetime_col].dt.hour
@@ -365,6 +435,14 @@ class HourlyEPWConverter:
                 continue
                 
             print(f"\n--- Procesando año {year} de forma directa ---")
+            
+            # Verificación de validación de huecos máximos consecutivos
+            stats_df = self.get_missing_data_stats()
+            year_stat = stats_df[stats_df['Año'] == year].iloc[0]
+            if not year_stat['Valido_Para_EPW']:
+                print(f"Descartando año {year} porque excede los huecos máximos consecutivos permitidos.")
+                continue
+
             df_year = self.get_year_data(year)
             df_filled = self.fill_missing_values(df_year, max_interpolate_limit=max_interpolate_limit, 
                                                  profile_method=profile_method, window_weeks=window_weeks)
