@@ -28,7 +28,10 @@ class HourlyEPWConverter:
                  col_dew='Dew Point temperature', 
                  col_wind='Wind speed', 
                  col_ghi='GHI', 
-                 col_dni='BNI/DNI'):
+                 col_dni='BNI/DNI',
+                 col_rh=None,
+                 col_dhi=None,
+                 col_bhi=None):
         
         # Atributos geográficos
         self.file_path = file_path
@@ -44,6 +47,9 @@ class HourlyEPWConverter:
         self.col_wind = col_wind
         self.col_ghi = col_ghi
         self.col_dni = col_dni
+        self.col_rh = col_rh
+        self.col_dhi = col_dhi
+        self.col_bhi = col_bhi
         
         # Atributos de datos
         self.df = None
@@ -53,7 +59,8 @@ class HourlyEPWConverter:
         self._load_file()
 
     def _load_file(self):
-        """Lee el archivo climático y almacena el DataFrame y los años disponibles."""
+        """Lee el archivo climático, reindexando a horas completas para asegurar
+        continuidad temporal (elimina saltos de hora que confunden la interpolación)."""
         if getattr(self, "file_path", "").endswith('.xlsx'):
             self.df = pd.read_excel(self.file_path)
         else:
@@ -61,9 +68,16 @@ class HourlyEPWConverter:
             
         if not pd.api.types.is_datetime64_any_dtype(self.df[self.datetime_col]):
             self.df[self.datetime_col] = pd.to_datetime(self.df[self.datetime_col])
-            
-        # Ordenar cronológicamente
-        self.df = self.df.sort_values(by=self.datetime_col).reset_index(drop=True)
+
+        # --- FIX 1: Reindexar a horas completas ---
+        # Si en el Excel original falta la fila entera de una hora (p.ej. pasa de
+        # 01:00 a 03:00 sin la fila 02:00), Pandas cuenta "filas" y no "horas" al
+        # interpolar. El reindex inserta esas filas vacías (NaN) antes de rellenar.
+        self.df = self.df.set_index(self.datetime_col).sort_index()
+        full_index = pd.date_range(self.df.index.min(), self.df.index.max(), freq='h')
+        self.df = self.df.reindex(full_index)
+        self.df.index.name = self.datetime_col
+        self.df = self.df.reset_index()
         
         # Guardar en atributo los años disponibles
         self.available_years = sorted(self.df[self.datetime_col].dt.year.unique().tolist())
@@ -87,12 +101,14 @@ class HourlyEPWConverter:
             
             col_limits = {}
             for col in cols_to_check:
-                if col in [self.col_temp, self.col_dew, self.col_ghi, self.col_dni]: col_limits[col] = 24
+                # FIX 2: el límite de temperatura es 12h (no 24h)
+                if col in [self.col_temp, self.col_dew]: col_limits[col] = 12
+                elif col in [self.col_ghi, self.col_dni, self.col_dhi, self.col_bhi]: col_limits[col] = 24
                 elif col == self.col_wind: col_limits[col] = 3
                 elif 'pressure' in col.lower(): col_limits[col] = 72
                 elif 'dir' in col.lower(): col_limits[col] = 2
                 elif 'speed' in col.lower(): col_limits[col] = 3
-                elif 'rh' in col.lower() or 'humidity' in col.lower(): col_limits[col] = 24
+                elif col == self.col_rh or (col is not None and ('rh' in str(col).lower() or 'humidity' in str(col).lower())): col_limits[col] = 24
                 else: col_limits[col] = 24
 
             missing_total_sum = 0
@@ -155,13 +171,31 @@ class HourlyEPWConverter:
         df_filled = df_filled.sort_values(by=self.datetime_col).reset_index(drop=True)
         
         # 1. Rellenos específicos según variable
+
+        # FIX 2: spline cúbico con límite 12h para temperaturas
         for col in [self.col_temp, self.col_dew]:
             if col in df_filled.columns:
-                df_filled[col] = self._spline_limit(df_filled[col], max_gap=24)
-                
+                df_filled[col] = self._spline_limit(df_filled[col], max_gap=12)
+
+        # FIX 4: Humedad relativa — primero por psicrometría donde hay T y Td,
+        #         luego interpolación lineal ≤24h para los huecos restantes
+        if self.col_rh and self.col_rh in df_filled.columns:
+            if self.col_temp in df_filled.columns and self.col_dew in df_filled.columns:
+                mask_rh = (df_filled[self.col_rh].isna() &
+                           df_filled[self.col_temp].notna() &
+                           df_filled[self.col_dew].notna())
+                T  = df_filled.loc[mask_rh, self.col_temp]
+                Td = df_filled.loc[mask_rh, self.col_dew]
+                df_filled.loc[mask_rh, self.col_rh] = (
+                    100 * np.exp(17.625 * Td / (243.04 + Td)) /
+                          np.exp(17.625 * T  / (243.04 + T ))
+                ).clip(0, 100)
+            df_filled[self.col_rh] = df_filled[self.col_rh].interpolate(method='linear', limit=24)
+
         if self.col_wind in df_filled.columns:
             df_filled[self.col_wind] = df_filled[self.col_wind].interpolate(method='linear', limit=3)
-            
+
+        # FIX 3: solar — GHI, DNI/BNI y DHI con kt-clearsky; BHI = GHI - DHI
         has_solar = self.col_ghi in df_filled.columns or self.col_dni in df_filled.columns
         if has_solar:
             location = pvlib.location.Location(self.lat, self.lon, tz='UTC', altitude=self.elev)
@@ -171,12 +205,15 @@ class HourlyEPWConverter:
             cs = location.get_clearsky(times_utc)
             GHIc = pd.Series(cs['ghi'].values, index=df_filled.index)
             BNIc = pd.Series(cs['dni'].values, index=df_filled.index)
+            DHIc = pd.Series(cs['dhi'].values, index=df_filled.index)
             es_dia = GHIc > 5
-            
+
             solar_cols = []
             if self.col_ghi in df_filled.columns: solar_cols.append((self.col_ghi, GHIc))
             if self.col_dni in df_filled.columns: solar_cols.append((self.col_dni, BNIc))
-            
+            if self.col_dhi and self.col_dhi in df_filled.columns:
+                solar_cols.append((self.col_dhi, DHIc))
+
             for col, ref in solar_cols:
                 df_filled[col] = df_filled[col].interpolate(method='linear', limit=3)
                 mask_medio = self._gap_size(df_filled[col]).between(3, 24) & es_dia
@@ -186,11 +223,18 @@ class HourlyEPWConverter:
                     df_filled.loc[mask_medio, col] = (ref[mask_medio] * kt_med[mask_medio]).clip(lower=0)
                 df_filled.loc[~es_dia, col] = df_filled.loc[~es_dia, col].fillna(0)
 
+            # BHI = GHI - DHI (calculado tras rellenar ambas)
+            if (self.col_bhi and self.col_bhi in df_filled.columns and
+                    self.col_ghi in df_filled.columns and self.col_dhi and self.col_dhi in df_filled.columns):
+                df_filled[self.col_bhi] = (df_filled[self.col_ghi] - df_filled[self.col_dhi]).clip(lower=0)
+
         for col in cols_to_fill:
-            if col not in [self.col_temp, self.col_dew, self.col_wind, self.col_ghi, self.col_dni]:
+            skip = [self.col_temp, self.col_dew, self.col_wind, self.col_ghi,
+                    self.col_dni, self.col_rh, self.col_dhi, self.col_bhi]
+            if col not in skip:
                 limit = 24
-                if 'pressure' in col.lower(): limit = 72
-                elif 'dir' in col.lower(): limit = 2
+                if 'pressure' in str(col).lower(): limit = 72
+                elif 'dir' in str(col).lower(): limit = 2
                 df_filled[col] = df_filled[col].interpolate(method='linear', limit=limit)
             
         # 2. Perfiles horarios (mensual o por ventana)
@@ -437,9 +481,11 @@ class HourlyEPWConverter:
             print(f"\n--- Procesando año {year} de forma directa ---")
             
             # Verificación de validación de huecos máximos consecutivos
+            # (se recalcula una sola vez fuera del bucle si ya fue llamado antes,
+            #  pero aquí lo dejamos inline para que process() sea autocontenido)
             stats_df = self.get_missing_data_stats()
-            year_stat = stats_df[stats_df['Año'] == year].iloc[0]
-            if not year_stat['Valido_Para_EPW']:
+            year_row = stats_df[stats_df['Año'] == year]
+            if year_row.empty or not year_row.iloc[0]['Valido_Para_EPW']:
                 print(f"Descartando año {year} porque excede los huecos máximos consecutivos permitidos.")
                 continue
 
@@ -465,6 +511,121 @@ class HourlyEPWConverter:
                 print(f"Fallo al procesar guardado de {year}.")
                 
         return success_list
+
+    # ------------------------------------------------------------------
+    # FIX 5: Estadísticas avanzadas de huecos (portadas de Relleno_Datos_faltantes_TMY3.py)
+    # ------------------------------------------------------------------
+    def get_gap_report(self, df_filled_dict=None):
+        """
+        Genera un informe detallado de huecos antes y (opcionalmente) después del relleno.
+
+        Parámetros
+        ----------
+        df_filled_dict : dict {year: df_filled} opcional.
+            Si se pasa, compara el estado antes vs. después y mide cuántos huecos
+            fueron rellenados, cuántos parcialmente y cuántos siguen vacíos.
+            Si no se pasa, sólo analiza el estado original.
+
+        Devuelve
+        --------
+        dict con claves:
+            'annual_stats'  – DataFrame con huecos por año y variable
+            'top_gaps'      – DataFrame con los 10 huecos más largos de toda la serie
+        """
+        LIMITS = {}
+        for col in self.df.columns:
+            if col == self.datetime_col: continue
+            if col in [self.col_temp, self.col_dew]:        LIMITS[col] = 12
+            elif col in [self.col_ghi, self.col_dni,
+                         self.col_dhi, self.col_bhi]:       LIMITS[col] = 24
+            elif col == self.col_wind:                       LIMITS[col] = 3
+            elif col == self.col_rh:                         LIMITS[col] = 24
+            elif 'pressure' in str(col).lower():             LIMITS[col] = 72
+            elif 'dir' in str(col).lower():                  LIMITS[col] = 2
+            elif 'speed' in str(col).lower():                LIMITS[col] = 3
+            else:                                            LIMITS[col] = 24
+
+        cols_trabajo = [c for c in self.df.columns if c != self.datetime_col]
+        df_orig = self.df.set_index(self.datetime_col)
+
+        # ── estadísticas anuales ──────────────────────────────────────
+        annual_rows = []
+        top_gap_rows = []
+
+        for col in cols_trabajo:
+            if col not in df_orig.columns: continue
+            s = df_orig[col]
+            is_nan = s.isna()
+            if not is_nan.any(): continue
+
+            gap_id = (~is_nan).cumsum()
+            gap_id_nan = gap_id[is_nan]          # solo IDs de grupos NaN
+            gap_sizes  = is_nan.groupby(gap_id).sum()
+            gap_sizes  = gap_sizes[gap_sizes.index.isin(gap_id_nan.unique())]
+            gap_starts = s[is_nan].groupby(gap_id_nan).apply(lambda x: x.index[0])
+            gap_ends   = s[is_nan].groupby(gap_id_nan).apply(lambda x: x.index[-1])
+
+            gaps_info = pd.DataFrame({
+                'size':  gap_sizes.values,
+                'start': gap_starts.values,
+                'end':   gap_ends.values
+            })
+            gaps_info['year']  = pd.DatetimeIndex(gaps_info['start']).year
+            gaps_info['month'] = pd.DatetimeIndex(gaps_info['start']).month
+            limite = LIMITS.get(col, 24)
+
+            for yr, grp in gaps_info.groupby('year'):
+                total_huecos = len(grp)
+                h_orig = int(grp['size'].sum())
+                h_rellenas = 0
+                h_vacias   = h_orig
+
+                if df_filled_dict and yr in df_filled_dict:
+                    df_f = df_filled_dict[yr].set_index(self.datetime_col)
+                    if col in df_f.columns:
+                        mask_was_nan = is_nan.reindex(df_f.index, fill_value=False)
+                        h_vacias   = int(df_f.loc[mask_was_nan, col].isna().sum())
+                        h_rellenas = h_orig - h_vacias
+
+                max_hueco = int(grp['size'].max())
+                annual_rows.append({
+                    'Año': yr, 'Variable': col,
+                    'Total_Huecos': total_huecos,
+                    'Horas_Orig_Faltan': h_orig,
+                    'Horas_Rellenadas': h_rellenas,
+                    'Horas_Siguen_Vacias': h_vacias,
+                    'Max_Hueco_h': max_hueco,
+                    'Limite_h': limite,
+                    'Supera_Limite': max_hueco > limite,
+                })
+
+                # top gaps
+                for _, row in grp.iterrows():
+                    estado = 'RELLENADO' if int(row['size']) <= limite else f'NO RELLENADO (>{limite}h)'
+                    top_gap_rows.append({
+                        'Variable': col, 'Año': yr, 'Mes': int(row['month']),
+                        'Max_hueco_horas': int(row['size']),
+                        'Inicio': row['start'], 'Fin': row['end'],
+                        'Estado_Relleno': estado
+                    })
+
+        annual_stats = pd.DataFrame(annual_rows)
+        top_gaps = pd.DataFrame(top_gap_rows)
+        if not top_gaps.empty:
+            top_gaps = top_gaps.nlargest(10, 'Max_hueco_horas')
+
+        return {'annual_stats': annual_stats, 'top_gaps': top_gaps}
+
+    def save_gap_report_excel(self, output_path, df_filled_dict=None):
+        """Llama a get_gap_report() y vuelca los resultados en un Excel multi-hoja."""
+        report = self.get_gap_report(df_filled_dict=df_filled_dict)
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            if not report['annual_stats'].empty:
+                report['annual_stats'].to_excel(writer, sheet_name='stats_anuales', index=False)
+            if not report['top_gaps'].empty:
+                report['top_gaps'].to_excel(writer, sheet_name='top_10_huecos', index=False)
+        print(f"Informe de huecos guardado en: {output_path}")
+        return report
 
 
 class BatchHourlyEPWConverter:
