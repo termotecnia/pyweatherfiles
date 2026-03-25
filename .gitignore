@@ -37,3 +37,4 @@ ENV/
 
 # Data
 onedrive_backup/
+/pyweatherfiles_backup/
