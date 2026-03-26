@@ -19,12 +19,21 @@ class HourlyEPWConverter:
     """
     
     def __init__(self, file_path, lat, lon, elev, tz_hour,
-                 datetime_col='time', # Ajustado al default del ClimateProcessor
-                 col_temp='Dry-bulb', 
-                 col_dew='Dew Point', 
-                 col_wind='WindSpeed', 
-                 col_ghi='GHI', 
-                 col_dni='BNI'):
+                 datetime_col='time', 
+                 col_temp='Dry-bulb temperature', 
+                 col_dew='Dew Point temperature', 
+                 col_wind='Wind Speed', 
+                 col_ghi='Global Horizontal Irradiance ', 
+                 col_dni='Beam Normal Irradiance ',
+                 col_rh='Relative Humidity',
+                 col_pres='Pressure',
+                 col_wind_dir='Wind Direction',
+                 col_dhi='Diffuse Horizontal Irradiance',
+                 col_cloud_cover='Total Cloud Cover',
+                 col_irh='IRh',
+                 column_mapping=None,
+                 preserve_extra=False,
+                 remove_leap_day=True):
         
         # Atributos geográficos
         self.file_path = file_path
@@ -32,14 +41,40 @@ class HourlyEPWConverter:
         self.lon = lon
         self.elev = elev
         self.tz_hour = tz_hour
+        self.preserve_extra = preserve_extra
+        self.remove_leap_day = remove_leap_day
         
         # Mapeo de columnas (se pueden ajustar al instanciar)
-        self.datetime_col = datetime_col
-        self.col_temp = col_temp
-        self.col_dew = col_dew
-        self.col_wind = col_wind
-        self.col_ghi = col_ghi
-        self.col_dni = col_dni
+        self.col_mapping = {
+            'datetime': datetime_col,
+            'temp': col_temp,
+            'dew': col_dew,
+            'wind_speed': col_wind,
+            'ghi': col_ghi,
+            'dni': col_dni,
+            'rh': col_rh,
+            'pres': col_pres,
+            'wind_dir': col_wind_dir,
+            'dhi': col_dhi,
+            'cloud_cover': col_cloud_cover,
+            'irh': col_irh
+        }
+        
+        if column_mapping:
+            self.col_mapping.update(column_mapping)
+            
+        self.datetime_col = self.col_mapping['datetime']
+        self.col_temp = self.col_mapping['temp']
+        self.col_dew = self.col_mapping['dew']
+        self.col_wind = self.col_mapping['wind_speed']
+        self.col_ghi = self.col_mapping['ghi']
+        self.col_dni = self.col_mapping['dni']
+        self.col_rh = self.col_mapping['rh']
+        self.col_pres = self.col_mapping['pres']
+        self.col_wind_dir = self.col_mapping['wind_dir']
+        self.col_dhi = self.col_mapping['dhi']
+        self.col_cloud_cover = self.col_mapping['cloud_cover']
+        self.col_irh = self.col_mapping['irh']
         
         # Atributos de datos
         self.df = None
@@ -61,8 +96,15 @@ class HourlyEPWConverter:
         # Ordenar cronológicamente
         self.df = self.df.sort_values(by=self.datetime_col).reset_index(drop=True)
         
+        # Conversiones condicionales de unidades
+        if self.col_wind in self.df.columns:
+            self.df[self.col_wind] = pd.to_numeric(self.df[self.col_wind], errors='coerce') / 3.6
+            
+        if self.col_pres in self.df.columns:
+            self.df[self.col_pres] = pd.to_numeric(self.df[self.col_pres], errors='coerce') * 100.0
+            
         # Guardar en atributo los años disponibles
-        self.available_years = sorted(self.df[self.datetime_col].dt.year.unique().tolist())
+        self.available_years = sorted(self.df[self.datetime_col].dt.year.dropna().unique().tolist())
 
     def get_year_data(self, year):
         """Devuelve un DataFrame aislado con los datos de un año específico."""
@@ -108,15 +150,27 @@ class HourlyEPWConverter:
         df_y = df_year.copy()
         df_y = df_y.sort_values(by=self.datetime_col).reset_index(drop=True)
 
-        # Filtro de bisiestos (Feb 29) - EnergyPlus usa siempre 8760 horas
+        # Filtro de bisiestos (Feb 29) - EnergyPlus usa típicamente 8760 horas
+        is_leap_year = False
         is_leap_day = (df_y[self.datetime_col].dt.month == 2) & (df_y[self.datetime_col].dt.day == 29)
+        
         if is_leap_day.any():
-            df_y = df_y[~is_leap_day].reset_index(drop=True)
+            is_leap_year = True
             
-        if len(df_y) < 8760:
-            print(f"Advertencia: El año proporcionado solo tiene {len(df_y)} horas disponibles.")
-        elif len(df_y) > 8760:
-            df_y = df_y.head(8760)
+        if self.remove_leap_day and is_leap_year:
+            df_y = df_y[~is_leap_day].reset_index(drop=True)
+            is_leap_year = False # Al removerlo, deja de considerarse bisiesto para la salida
+            
+        if is_leap_year:
+            if len(df_y) < 8784:
+                print(f"Advertencia: El año bisiesto proporcionado solo tiene {len(df_y)} horas disponibles.")
+            elif len(df_y) > 8784:
+                df_y = df_y.head(8784)
+        else:
+            if len(df_y) < 8760:
+                print(f"Advertencia: El año proporcionado solo tiene {len(df_y)} horas disponibles.")
+            elif len(df_y) > 8760:
+                df_y = df_y.head(8760)
 
         # Carga EPW Base
         try:
@@ -133,8 +187,15 @@ class HourlyEPWConverter:
         epw_data.comments_1 = f"Convertido automáticamente desde archivo horario a partir de plantilla {os.path.basename(base_epw_path)}"
         
         try:
-            epw_data._analysis_period = AnalysisPeriod(st_month=1, st_day=1, st_hour=1, end_month=12, end_day=31, end_hour=24)
-            epw_data._is_leap_year = False
+            if is_leap_year:
+                try:
+                    epw_data._analysis_period = AnalysisPeriod(st_month=1, st_day=1, st_hour=1, end_month=12, end_day=31, end_hour=24, is_leap_year=True)
+                except Exception:
+                    epw_data._analysis_period = AnalysisPeriod(st_month=1, st_day=1, st_hour=1, end_month=12, end_day=31, end_hour=24)
+                epw_data._is_leap_year = True
+            else:
+                epw_data._analysis_period = AnalysisPeriod(st_month=1, st_day=1, st_hour=1, end_month=12, end_day=31, end_hour=24)
+                epw_data._is_leap_year = False
         except Exception:
             pass
 
@@ -146,33 +207,47 @@ class HourlyEPWConverter:
         dni = df_y[self.col_dni].tolist()
         dates = df_y[self.datetime_col].tolist()
 
-        wind_dir = [0] * len(df_y)
-        rel_hum =[self._calculate_rh(tdb, tdp) for tdb, tdp in zip(t_db, t_dp)]
-        p_atm = [self._calculate_atmos_pressure()] * len(df_y)
+        if self.col_wind_dir in df_y.columns:
+            wind_dir = df_y[self.col_wind_dir].tolist()
+        else:
+            wind_dir = [0] * len(df_y)
+            
+        if self.col_rh in df_y.columns:
+            rel_hum = df_y[self.col_rh].tolist()
+        else:
+            rel_hum =[self._calculate_rh(tdb, tdp) for tdb, tdp in zip(t_db, t_dp)]
+            
+        if self.col_pres in df_y.columns:
+            p_atm = df_y[self.col_pres].tolist()
+        else:
+            p_atm = [self._calculate_atmos_pressure()] * len(df_y)
 
-        # Cálculo de Irradiancia Difusa (DHI) empleando Sunpath
-        sp = Sunpath(latitude=self.lat, longitude=self.lon, time_zone=self.tz_hour)
-        dhi_values =[]
-        
-        for i in range(len(df_y)):
-            dt = pd.to_datetime(dates[i])
-            m, d, h = dt.month, dt.day, dt.hour 
+        # Cálculo de Irradiancia Difusa (DHI)
+        if self.col_dhi in df_y.columns:
+            dhi_values = df_y[self.col_dhi].tolist()
+        else:
+            sp = Sunpath(latitude=self.lat, longitude=self.lon, time_zone=self.tz_hour)
+            dhi_values =[]
             
-            calc_hour = float(h) + 0.5
-            if calc_hour >= 24.0:
-                calc_hour -= 24.0
+            for i in range(len(df_y)):
+                dt = pd.to_datetime(dates[i])
+                m, d, h = dt.month, dt.day, dt.hour 
                 
-            sun = sp.calculate_sun(month=m, day=d, hour=calc_hour)
-            zenith_deg = 90.0 - sun.altitude
-            cos_zenith = math.cos(math.radians(zenith_deg))
-            
-            val_ghi, val_dni = ghi[i], dni[i]
-            if cos_zenith <= 0.01:
-                val_dhi = val_ghi
-            else:
-                val_dhi = val_ghi - val_dni * cos_zenith
+                calc_hour = float(h) + 0.5
+                if calc_hour >= 24.0:
+                    calc_hour -= 24.0
+                    
+                sun = sp.calculate_sun(month=m, day=d, hour=calc_hour)
+                zenith_deg = 90.0 - sun.altitude
+                cos_zenith = math.cos(math.radians(zenith_deg))
                 
-            dhi_values.append(max(0.0, float(val_dhi)))
+                val_ghi, val_dni = ghi[i], dni[i]
+                if cos_zenith <= 0.01:
+                    val_dhi = val_ghi
+                else:
+                    val_dhi = val_ghi - val_dni * cos_zenith
+                    
+                dhi_values.append(max(0.0, float(val_dhi)))
 
         # Inyección de datos al objeto Ladybug
         self._set_epw_values(epw_data, 'dry_bulb_temperature', t_db)
@@ -184,6 +259,15 @@ class HourlyEPWConverter:
         self._set_epw_values(epw_data, 'direct_normal_radiation', dni)
         self._set_epw_values(epw_data, 'diffuse_horizontal_radiation', dhi_values)
         self._set_epw_values(epw_data, 'atmospheric_station_pressure', p_atm)
+
+        # Variables extra
+        if self.col_cloud_cover in df_y.columns:
+            cloud_cover = df_y[self.col_cloud_cover].tolist()
+            self._set_epw_values(epw_data, 'total_sky_cover', cloud_cover)
+            
+        if self.col_irh in df_y.columns:
+            irh_vals = df_y[self.col_irh].tolist()
+            self._set_epw_values(epw_data, 'horizontal_infrared_radiation_intensity', irh_vals)
 
         # Desactivación de variables obsoletas de EnergyPlus
         unused_fields_mapping = {
@@ -203,6 +287,11 @@ class HourlyEPWConverter:
             'albedo': 999,
             'liquid_precipitation_quantity': 99
         }
+        
+        if self.preserve_extra and self.col_cloud_cover in df_y.columns:
+            if 'total_sky_cover' in unused_fields_mapping:
+                del unused_fields_mapping['total_sky_cover']
+
         num_rows = len(df_y)
         for field_name, missing_val in unused_fields_mapping.items():
             if hasattr(epw_data, field_name):
@@ -225,12 +314,15 @@ class HourlyEPWConverter:
             print(f"Error al guardar el EPW de salida: {e}")
             return False
 
-    def process(self, base_epw_path, output_dir=".", years=None):
+    def process(self, base_epw_path, output_dir=".", years=None, remove_leap_day=None):
         """
         Método directo que automatiza el proceso de conversión.
         Toma una lista de años (o todos si no se especifican) y genera un EPW para cada uno
         a partir del archivo que ya viene rellenado.
         """
+        if remove_leap_day is not None:
+            self.remove_leap_day = remove_leap_day
+            
         if years is None:
             years = self.available_years
             
