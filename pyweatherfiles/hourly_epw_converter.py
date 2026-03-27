@@ -18,7 +18,7 @@ class HourlyEPWConverter:
     y exportarlos a formato EPW inhabilitando las variables no requeridas (obsoletas).
     """
     
-    def __init__(self, file_path, lat, lon, elev, tz_hour,
+    def __init__(self, file_path, base_epw_path, lat=None, lon=None, elev=None, tz_hour=None,
                  datetime_col='time', 
                  col_temp='Dry-bulb temperature', 
                  col_dew='Dew Point temperature', 
@@ -37,10 +37,27 @@ class HourlyEPWConverter:
         
         # Atributos geográficos
         self.file_path = file_path
-        self.lat = lat
-        self.lon = lon
-        self.elev = elev
-        self.tz_hour = tz_hour
+        self.base_epw_path = base_epw_path
+        
+        extracted_lat, extracted_lon, extracted_elev, extracted_tz = None, None, None, None
+        if lat is None or lon is None or elev is None or tz_hour is None:
+            try:
+                epw_data = EPW(self.base_epw_path)
+                extracted_lat = float(epw_data.location.latitude)
+                extracted_lon = float(epw_data.location.longitude)
+                extracted_elev = float(epw_data.location.elevation)
+                extracted_tz = float(epw_data.location.time_zone)
+            except Exception as e:
+                print(f"Advertencia: No se pudieron extraer datos base de '{self.base_epw_path}': {e}")
+                
+        self.lat = lat if lat is not None else extracted_lat
+        self.lon = lon if lon is not None else extracted_lon
+        self.elev = elev if elev is not None else extracted_elev
+        self.tz_hour = tz_hour if tz_hour is not None else extracted_tz
+        
+        if None in (self.lat, self.lon, self.elev, self.tz_hour):
+            raise ValueError("No se pudieron determinar todos los parámetros geográficos (lat, lon, elev, tz_hour). Introdúzcalos manualmente.")
+            
         self.preserve_extra = preserve_extra
         self.remove_leap_day = remove_leap_day
         
@@ -143,11 +160,12 @@ class HourlyEPWConverter:
         else:
             field.values = tuple(new_vals) if isinstance(field.values, tuple) else list(new_vals)
 
-    def transform_to_epw(self, df_year, base_epw_path, output_epw_path):
+    def transform_to_epw(self, df_year, output_epw_path, base_epw_path=None):
         """
         Traslada los valores del DataFrame a un archivo .epw que sirve de base,
         realizando cálculos (DHI, Psicometría, Atmosférica) y desactivando las variables obsoletas.
         """
+        base_epw_path = base_epw_path or self.base_epw_path
         df_y = df_year.copy()
         df_y = df_y.sort_values(by=self.datetime_col).reset_index(drop=True)
 
@@ -315,12 +333,13 @@ class HourlyEPWConverter:
             print(f"Error al guardar el EPW de salida: {e}")
             return False
 
-    def process(self, base_epw_path, output_dir=".", years=None, remove_leap_day=None, output_pattern=None, **kwargs):
+    def process(self, output_dir=".", years=None, remove_leap_day=None, output_pattern=None, base_epw_path=None, **kwargs):
         """
         Método directo que automatiza el proceso de conversión.
         Toma una lista de años (o todos si no se especifican) y genera un EPW para cada uno
         a partir del archivo que ya viene rellenado.
         """
+        base_epw_path = base_epw_path or self.base_epw_path
         if remove_leap_day is not None:
             self.remove_leap_day = remove_leap_day
             
@@ -353,7 +372,7 @@ class HourlyEPWConverter:
             output_path = os.path.join(output_dir, filename)
             
             # Pasamos directamente el df_year asumiendo que ya no tiene nulos
-            success = self.transform_to_epw(df_year, base_epw_path, output_path)
+            success = self.transform_to_epw(df_year, output_path, base_epw_path=base_epw_path)
             if success:
                 print(f"¡Éxito! Año {year} guardado en: {output_path}")
                 success_list.append(year)
@@ -370,7 +389,7 @@ class BatchHourlyEPWConverter:
     """
 
     # Atributo de clase con las llaves requeridas
-    MANDATORY_KEYS = ['file_path', 'base_epw_path', 'lat', 'lon', 'elev', 'tz_hour']
+    MANDATORY_KEYS = ['file_path', 'base_epw_path']
 
     @classmethod
     def get_mandatory_config_keys(cls):
@@ -384,14 +403,7 @@ class BatchHourlyEPWConverter:
                 print(f" - '{key}': Ruta al Excel u origen de datos horario.")
             elif key == 'base_epw_path':
                 print(f" - '{key}': Plantilla .epw a usar como base para este archivo.")
-            elif key == 'lat':
-                print(f" - '{key}': Latitud geográfica (Ej: 40.41)")
-            elif key == 'lon':
-                print(f" - '{key}': Longitud geográfica (Ej: -3.70)")
-            elif key == 'elev':
-                print(f" - '{key}': Elevación en metros (Ej: 660.0)")
-            elif key == 'tz_hour':
-                print(f" - '{key}': Huso horario respecto al UTC (Ej: 1.0)")
+        print("Las llaves opcionales (pero recomendables si no se pueden extraer del EPW de base) son: 'lat', 'lon', 'elev', 'tz_hour'.")
         return cls.MANDATORY_KEYS
 
     def __init__(self, cities_config, output_dir="."):
@@ -480,10 +492,10 @@ class BatchHourlyEPWConverter:
 
             file_path = config['file_path']
             base_epw_path = config['base_epw_path']
-            lat = config['lat']
-            lon = config['lon']
-            elev = config['elev']
-            tz_hour = config['tz_hour']
+            lat = config.get('lat')
+            lon = config.get('lon')
+            elev = config.get('elev')
+            tz_hour = config.get('tz_hour')
 
             print(f"\n=======================================================")
             print(f"Iniciando procesamiento masivo para: {file_path}")
@@ -492,8 +504,13 @@ class BatchHourlyEPWConverter:
 
             # Preparar argumentos opcionales a pasar al converter base
             kwargs_for_converter = {
-                'file_path': file_path, 'lat': lat, 'lon': lon, 'elev': elev, 'tz_hour': tz_hour
+                'file_path': file_path, 'base_epw_path': base_epw_path
             }
+            if lat is not None: kwargs_for_converter['lat'] = lat
+            if lon is not None: kwargs_for_converter['lon'] = lon
+            if elev is not None: kwargs_for_converter['elev'] = elev
+            if tz_hour is not None: kwargs_for_converter['tz_hour'] = tz_hour
+
             optional_keys = [
                 'datetime_col', 'col_temp', 'col_dew', 'col_wind', 'col_ghi', 'col_dni',
                 'col_rh', 'col_pres', 'col_wind_dir', 'col_dhi', 'col_cloud_cover', 'col_irh',

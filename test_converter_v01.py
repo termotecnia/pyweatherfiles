@@ -58,7 +58,9 @@ cities_config = BatchHourlyEPWConverter.suggest_config(
 
 converter = BatchHourlyEPWConverter(cities_config=cities_config)
 
-converter.process_all()
+converter.process_all(
+    output_pattern='{city}_{year}.epw', city='madrid'
+)
 
 
 ##
