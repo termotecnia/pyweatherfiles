@@ -34,7 +34,16 @@ class TMYGenerator:
     weather data, using one of several selectable methodologies.
     """
 
-    def __init__(self, file_path, cdf_method='daily', years_to_include=None, weights=None, column_mapping=None, data_frequency='hourly', weighting_method='sandia', save_validation_dfs=True, hourly_file_path=None, missing_data_threshold=0.9, plotting_position_method='hazen'):
+    def __init__(self, file_path, cdf_method='daily', years_to_include=None, weights=None, 
+                 column_mapping=None, data_frequency='hourly', weighting_method='sandia', 
+                 save_validation_dfs=True, hourly_file_path=None, missing_data_threshold=0.9, 
+                 plotting_position_method='hazen',
+                 datetime_col='time',
+                 col_temp='T_air',
+                 col_dew='T_dew',
+                 col_wind='Wind_speed',
+                 col_ghi='GHI',
+                 col_dni='DNI'):
         """
         Initializes the TMYGenerator.
 
@@ -55,6 +64,12 @@ class TMYGenerator:
             missing_data_threshold (float, optional): Threshold for missing data to exclude a month. Default is 0.9.
             plotting_position_method (str, optional): The method for calculating CDF plotting positions.
                 Must be one of: 'california', 'hazen', 'weibull'. Default is 'hazen'.
+            datetime_col (str, optional): Name of the datetime column. Default is 'time'.
+            col_temp (str, optional): Name of the air temperature column. Default is 'T_air'.
+            col_dew (str, optional): Name of the dew point temperature column. Default is 'T_dew'.
+            col_wind (str, optional): Name of the wind speed column. Default is 'Wind_speed'.
+            col_ghi (str, optional): Name of the global horizontal irradiance column. Default is 'GHI'.
+            col_dni (str, optional): Name of the direct normal irradiance column. Default is 'DNI'.
         """
         self.file_path = file_path
         self.hourly_file_path = hourly_file_path
@@ -122,8 +137,20 @@ class TMYGenerator:
         else:
             self.weights = weights
 
+        # Base mapping from explicit column arguments
+        self.base_mapping = {
+            datetime_col: 'time',
+            col_temp: 'T_air',
+            col_dew: 'T_dew',
+            col_wind: 'Wind_speed',
+            col_ghi: 'GHI',
+            col_dni: 'DNI'
+        }
+        # Only keep entries where the name actually differs from the target
+        self.base_mapping = {k: v for k, v in self.base_mapping.items() if k != v}
+
         default_mapping = {'temp': 'T_air', 'dwpt': 'T_dew', 'wspd': 'Wind_speed'}
-        self.column_mapping = {**default_mapping, **(column_mapping or {})}
+        self.column_mapping = {**self.base_mapping, **default_mapping, **(column_mapping or {})}
 
         self.df_hourly = None
         self.df_daily = None
@@ -326,10 +353,12 @@ class TMYGenerator:
                 print("\nWARNING: 'GHI' not found in hourly file. Creating placeholder column of zeros.")
                 df_hourly_source['GHI'] = 0.0
             
-            # Store hourly data
-            self.df_hourly = df_hourly_source[['T_air', 'T_dew', 'Wind_speed', 'GHI']].copy()
-            if 'DNI' in df_hourly_source.columns:
-                self.df_hourly['DNI'] = df_hourly_source['DNI']
+            # Store hourly data — keep ALL columns from the source file so that
+            # extra variables are available for export in export_tmy().
+            # Core columns (T_air, T_dew, Wind_speed, GHI) are already validated above.
+            self.df_hourly = df_hourly_source.copy()
+            # Ensure GHI placeholder is present if it was just added
+            # (already done above, but copy() will carry it over)
             
             # --- FIX: Clip negative irradiance and wind values to 0 ---
             for col in ['GHI', 'DNI', 'Wind_speed']:
@@ -1450,12 +1479,55 @@ class TMYGenerator:
                      print(f"WARNING: Negative values detected in '{col}' before export. Clipping to 0.")
                      self.tmy_final[col] = self.tmy_final[col].clip(lower=0)
 
+        tmy_to_export = self.tmy_final.copy()
+
+        # --- Append extra columns from df_hourly (variables not already in tmy_final) ---
+        if self.df_hourly is not None and self.selected_months is not None:
+            core_cols = set(tmy_to_export.columns)
+            extra_cols = [c for c in self.df_hourly.columns if c not in core_cols]
+            if extra_cols:
+                print(f"Appending {len(extra_cols)} extra column(s) from hourly source: {extra_cols}")
+                TMY_YEAR = 2000
+                extra_pieces = []
+                for month in range(1, 13):
+                    year = int(self.selected_months[month])
+                    start_date = f"{year}-{month:02d}-01"
+                    end_date = pd.Timestamp(start_date) + pd.offsets.MonthEnd(0)
+                    slice_data = self.df_hourly.loc[
+                        start_date:f"{end_date.date()} 23:00:00", extra_cols
+                    ].copy()
+                    if month == 2:
+                        slice_data = slice_data[slice_data.index.day != 29]
+                    slice_data.index = slice_data.index.map(lambda t: t.replace(year=TMY_YEAR))
+                    extra_pieces.append(slice_data)
+
+                df_extra = pd.concat(extra_pieces)
+                if not df_extra.index.is_unique:
+                    df_extra = df_extra[~df_extra.index.duplicated()]
+
+                # Align index to tmy_to_export (handles minor gaps)
+                df_extra = df_extra.reindex(tmy_to_export.index)
+                tmy_to_export = pd.concat([tmy_to_export, df_extra], axis=1)
+
+        # --- Restore original column names from the source file ---
+        # Use only base_mapping (user-specified col_* args) to invert, NOT the full column_mapping
+        # which also contains legacy shortcuts (temp→T_air, dwpt→T_dew, wspd→Wind_speed) that
+        # would overwrite the correct original names when the dict is inverted.
+        inverse_mapping = {v: k for k, v in self.base_mapping.items()}
+        # Only rename columns that actually exist in the dataframe
+        rename_cols = {k: v for k, v in inverse_mapping.items() if k in tmy_to_export.columns}
+        if rename_cols:
+            tmy_to_export = tmy_to_export.rename(columns=rename_cols)
+        # Also restore the index name if 'time' was mapped from a different column name
+        original_time_name = inverse_mapping.get('time', 'time')
+        tmy_to_export.index.name = original_time_name
+
         print(f"Exporting TMY to '{output_path}'...")
         if extension in ['.csv', '.tmy']:
-            self.tmy_final.to_csv(output_path)
+            tmy_to_export.to_csv(output_path)
         elif extension == '.xlsx':
             try:
-                tmy_for_excel = self.tmy_final.copy()
+                tmy_for_excel = tmy_to_export.copy()
                 tmy_for_excel.index = tmy_for_excel.index.tz_localize(None)
                 tmy_for_excel.to_excel(output_path)
             except ImportError:
