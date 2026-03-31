@@ -75,21 +75,21 @@ from besos.eppy_funcs import get_building
 #
 # )
 
-run_energyplus(
-    building_path='SF_Detached_D_min_South.idf',
-    epw='madrid_2018.epw',
-    out_dir='eplus_results_long-term'
-)
+# run_energyplus(
+#     building_path='SF_Detached_D_min_South.idf',
+#     epw='madrid_2018.epw',
+#     out_dir='eplus_results_long-term'
+# )
 
 
 run_energyplus(
     building_path='SF_Detached_D_min_South.idf',
     epw='madrid_tmy.epw',
-    out_dir='eplus_results_tmy'
+    out_dir='eplus_results_tmy_3'
 )
 
-run_energyplus(
-    building_path='SF_Detached_D_min_South.idf',
-    epw='madrid_met.epw',
-    out_dir='eplus_results_met'
-)
+# run_energyplus(
+#     building_path='SF_Detached_D_min_South.idf',
+#     epw='madrid_met.epw',
+#     out_dir='eplus_results_met'
+# )
