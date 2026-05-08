@@ -1265,7 +1265,7 @@ class EpwBatchAnalyzer:
         self,
         epw_paths: List[str],
         setpoint_source: Union[str, Dict],
-        epw_variables: Optional[List[str]] = None,
+        epw_variables: Optional[Union[List[str], Dict[str, Union[str, List[str]]]]] = None,
         night_hours: Optional[List[int]] = None,
         zone_name: Optional[str] = None,
         mode: str = 'both',
@@ -1282,8 +1282,31 @@ class EpwBatchAnalyzer:
         epw_variables : list of str, optional
             EPW attribute names to include as climate columns.
             Defaults to ``['global_horizontal_radiation']``.
-            Available names are listed in
-            :attr:`DegreeHoursCalculator._EPW_ATTRS`.
+        epw_variables : list of str  *or*  dict, optional
+            Climate variables to include as monthly columns.
+
+            **List form** (backward-compatible)::
+
+                ['global_horizontal_radiation', 'wind_speed']
+
+            One column per variable.  Aggregation is auto-detected:
+            *sum* for radiation/energy variables, *mean* for the rest.
+
+            **Dict form** — explicit aggregation(s) per variable::
+
+                {
+                    'global_horizontal_radiation': 'sum',
+                    'dry_bulb_temperature': ['mean', 'max', 'min'],
+                    'wind_speed': 'mean',
+                }
+
+            When multiple aggregations are requested the column names become
+            ``<variable>_<aggfunc>`` (e.g. ``dry_bulb_temperature_mean``).
+            Supported aggregation strings:
+            ``'sum'``, ``'mean'``, ``'max'``, ``'min'``, ``'std'``.
+
+            Defaults to ``{'global_horizontal_radiation': 'sum'}``.
+            Available variable names: :attr:`DegreeHoursCalculator._EPW_ATTRS`.
         night_hours : list of int, optional
             Hours of the day for the second degree-hour calculation.
             Defaults to ``[0, 1, 2, 3, 4, 5, 6, 7]`` (00:00–07:59).
@@ -1297,16 +1320,59 @@ class EpwBatchAnalyzer:
         if not epw_paths:
             raise ValueError("epw_paths must contain at least one file path.")
 
-        self.epw_paths      = list(epw_paths)
-        self.setpoint_source = setpoint_source
-        self.epw_variables  = epw_variables or ['global_horizontal_radiation']
-        self.night_hours    = night_hours if night_hours is not None else list(range(8))
-        self.zone_name      = zone_name
-        self.mode           = mode
-        self.year           = year
+        self.epw_paths       = list(epw_paths)
+        self.setpoint_source  = setpoint_source
+        self.epw_variables    = epw_variables   # stored as-is; resolved in run()
+        self.night_hours      = night_hours if night_hours is not None else list(range(8))
+        self.zone_name        = zone_name
+        self.mode             = mode
+        self.year             = year
 
         self.results: Optional[pd.DataFrame] = None
         self.calculators: Dict[str, 'DegreeHoursCalculator'] = {}
+
+    # -------------------------------------------------------------------------
+
+    def _resolve_epw_variables(
+        self,
+    ) -> Dict[str, List[str]]:
+        """
+        Normalise ``self.epw_variables`` to the canonical internal format::
+
+            {variable_name: [aggfunc, ...]}
+
+        ``'auto'`` is a sentinel meaning "pick sum or mean based on variable
+        type" (used when the caller supplied a plain list).
+
+        Returns
+        -------
+        dict
+            ``{var: ['aggfunc1', 'aggfunc2', ...]}``
+        """
+        raw = self.epw_variables
+
+        # Default when nothing is specified
+        if raw is None:
+            return {'global_horizontal_radiation': ['sum']}
+
+        # Plain list  → auto-detect aggregation, single column per variable
+        if isinstance(raw, list):
+            return {var: ['auto'] for var in raw}
+
+        # Dict form  → normalise values to lists
+        if isinstance(raw, dict):
+            resolved: Dict[str, List[str]] = {}
+            for var, agg in raw.items():
+                if isinstance(agg, str):
+                    resolved[var] = [agg]
+                else:
+                    resolved[var] = list(agg)
+            return resolved
+
+        raise TypeError(
+            "epw_variables must be a list of strings or a dict "
+            "{variable: aggfunc | [aggfunc, ...]}."
+        )
 
     # -------------------------------------------------------------------------
 
@@ -1363,18 +1429,31 @@ class EpwBatchAnalyzer:
             for col in res_night.columns:
                 cols[f'{col}_{h_label}'] = res_night[col]
 
-            # --- EPW climate variables --------------------------------------
-            for var in self.epw_variables:
+            # --- EPW climate variables: apply one or more aggregations ------
+            var_spec = self._resolve_epw_variables()
+            for var, aggfuncs in var_spec.items():
                 if var not in calc.epw_data.columns:
                     print(f"[WARNING] Variable '{var}' not in EPW data for {epw_name}.")
                     continue
-                series = calc.epw_data[var]
-                # Sum for energy/radiation variables; mean for the rest
-                if var in _RADIATION_VARS:
-                    monthly = series.resample('ME').sum()
-                else:
-                    monthly = series.resample('ME').mean()
-                cols[var] = monthly
+
+                series  = calc.epw_data[var]
+                # Add suffix to column name when multiple aggfuncs or dict API
+                use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
+
+                for agg in aggfuncs:
+                    if agg == 'auto':
+                        # Auto-detect: sum for radiation/energy, mean otherwise
+                        monthly  = (
+                            series.resample('ME').sum()
+                            if var in _RADIATION_VARS
+                            else series.resample('ME').mean()
+                        )
+                        col_name = var   # no suffix in auto / list mode
+                    else:
+                        monthly  = series.resample('ME').agg(agg)
+                        col_name = f'{var}_{agg}' if use_suffix else var
+
+                    cols[col_name] = monthly
 
             # Align to month numbers (1-12) as index
             epw_df = pd.DataFrame(cols)
