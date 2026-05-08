@@ -1266,7 +1266,7 @@ class EpwBatchAnalyzer:
         epw_paths: List[str],
         setpoint_source: Union[str, Dict],
         epw_variables: Optional[Union[List[str], Dict[str, Union[str, List[str]]]]] = None,
-        night_hours: Optional[List[int]] = None,
+        hours2: Optional[List[int]] = None,
         zone_name: Optional[str] = None,
         mode: str = 'both',
         year: Optional[int] = None,
@@ -1279,9 +1279,6 @@ class EpwBatchAnalyzer:
         setpoint_source : str or dict
             IDF file path or custom setpoint configuration dict passed
             directly to :meth:`DegreeHoursCalculator.calculate`.
-        epw_variables : list of str, optional
-            EPW attribute names to include as climate columns.
-            Defaults to ``['global_horizontal_radiation']``.
         epw_variables : list of str  *or*  dict, optional
             Climate variables to include as monthly columns.
 
@@ -1307,9 +1304,11 @@ class EpwBatchAnalyzer:
 
             Defaults to ``{'global_horizontal_radiation': 'sum'}``.
             Available variable names: :attr:`DegreeHoursCalculator._EPW_ATTRS`.
-        night_hours : list of int, optional
-            Hours of the day for the second degree-hour calculation.
-            Defaults to ``[0, 1, 2, 3, 4, 5, 6, 7]`` (00:00–07:59).
+        hours2 : list of int, optional
+            Second set of hours for the degree-hour calculation
+            (any subset of 0-23). Defaults to ``[0..7]`` (00:00–07:59).
+            The column label is derived automatically from the provided values
+            (e.g. ``heating_dh_0-8h``).
         zone_name : str, optional
             Zone/Space name forwarded to :meth:`DegreeHoursCalculator.calculate`.
         mode : str
@@ -1323,7 +1322,7 @@ class EpwBatchAnalyzer:
         self.epw_paths       = list(epw_paths)
         self.setpoint_source  = setpoint_source
         self.epw_variables    = epw_variables   # stored as-is; resolved in run()
-        self.night_hours      = night_hours if night_hours is not None else list(range(8))
+        self.hours2           = hours2 if hours2 is not None else list(range(8))
         self.zone_name        = zone_name
         self.mode             = mode
         self.year             = year
@@ -1389,7 +1388,7 @@ class EpwBatchAnalyzer:
         all_frames: Dict[str, pd.DataFrame] = {}
 
         # Label for the custom hour range (e.g. '0-8h')
-        h_label = f"{self.night_hours[0]}-{self.night_hours[-1] + 1}h"
+        h_label = f"{self.hours2[0]}-{self.hours2[-1] + 1}h"
 
         for epw_path in self.epw_paths:
             if not os.path.exists(epw_path):
@@ -1412,10 +1411,10 @@ class EpwBatchAnalyzer:
             )['monthly']
 
             # --- Degree-hours: custom hour range ----------------------------
-            res_night = calc.calculate(
+            res2 = calc.calculate(
                 self.setpoint_source,
                 frequency='monthly',
-                hours=self.night_hours,
+                hours=self.hours2,
                 mode=self.mode,
                 zone_name=self.zone_name,
             )['monthly']
@@ -1426,8 +1425,8 @@ class EpwBatchAnalyzer:
             for col in res_24h.columns:
                 cols[f'{col}_24h'] = res_24h[col]
 
-            for col in res_night.columns:
-                cols[f'{col}_{h_label}'] = res_night[col]
+            for col in res2.columns:
+                cols[f'{col}_{h_label}'] = res2[col]
 
             # --- EPW climate variables: apply one or more aggregations ------
             var_spec = self._resolve_epw_variables()
