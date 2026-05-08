@@ -142,6 +142,65 @@ class DegreeHoursCalculator:
         self.result_daily:   Optional[pd.DataFrame] = None
         self.result_monthly: Optional[pd.DataFrame] = None
 
+        # Hourly DataFrame with all available EPW climate variables
+        self.epw_data: pd.DataFrame = self._build_epw_dataframe()
+
+    # =========================================================================
+    # EPW data helpers
+    # =========================================================================
+
+    # Ladybug EPW attribute names to expose in epw_data
+    _EPW_ATTRS: List[str] = [
+        'dry_bulb_temperature',
+        'dew_point_temperature',
+        'relative_humidity',
+        'atmospheric_pressure',
+        'global_horizontal_radiation',
+        'direct_normal_radiation',
+        'diffuse_horizontal_radiation',
+        'global_horizontal_illuminance',
+        'direct_normal_illuminance',
+        'diffuse_horizontal_illuminance',
+        'zenith_luminance',
+        'wind_direction',
+        'wind_speed',
+        'total_sky_cover',
+        'opaque_sky_cover',
+        'visibility',
+        'ceiling_height',
+        'horizontal_infrared_radiation_intensity',
+        'precipitable_water',
+        'aerosol_optical_depth',
+        'snow_depth',
+        'liquid_precipitation_depth',
+    ]
+
+    def _build_epw_dataframe(self) -> pd.DataFrame:
+        """
+        Build a DataFrame with all available EPW hourly variables.
+
+        Returns
+        -------
+        pd.DataFrame
+            Hourly DataFrame indexed by the same DatetimeIndex as
+            ``self.temperatures``. Columns are ladybug EPW attribute names
+            (e.g. ``'global_horizontal_radiation'``). Only attributes that
+            exist on the EPW object *and* have the expected length are included.
+        """
+        data: Dict[str, list] = {}
+        n = len(self.temperatures)
+        for attr in self._EPW_ATTRS:
+            obj = getattr(self._epw, attr, None)
+            if obj is None:
+                continue
+            try:
+                vals = list(obj.values)
+                if len(vals) == n:
+                    data[attr] = vals
+            except Exception:
+                pass
+        return pd.DataFrame(data, index=self.temperatures.index)
+
     # =========================================================================
     # IDF loading
     # =========================================================================
@@ -1157,4 +1216,212 @@ class DegreeHoursCalculator:
 
         abs_path = os.path.abspath(output_path)
         print(f"[INFO] Resultados exportados a: {abs_path}")
+        return abs_path
+
+
+# =============================================================================
+# EpwBatchAnalyzer
+# =============================================================================
+
+# Variables whose monthly aggregate is a SUM (energy); all others use MEAN
+_RADIATION_VARS = frozenset({
+    'global_horizontal_radiation',
+    'direct_normal_radiation',
+    'diffuse_horizontal_radiation',
+    'global_horizontal_illuminance',
+    'direct_normal_illuminance',
+    'diffuse_horizontal_illuminance',
+    'zenith_luminance',
+    'horizontal_infrared_radiation_intensity',
+    'liquid_precipitation_depth',
+})
+
+
+class EpwBatchAnalyzer:
+    """
+    Run :class:`DegreeHoursCalculator` over multiple EPW files and compile
+    a comparative monthly summary table.
+
+    For each EPW the following columns are computed:
+
+    - **Heating / cooling degree-hours (all 24 h)** — ``heating_dh_24h``,
+      ``cooling_dh_24h``.
+    - **Heating / cooling degree-hours (custom hour range)** — e.g.
+      ``heating_dh_0-8h``, ``cooling_dh_0-8h``.
+    - **EPW climate variables** (monthly sum for radiation/illuminance,
+      monthly mean for the rest) — column name = EPW attribute name.
+
+    Attributes
+    ----------
+    results : pd.DataFrame or None
+        MultiIndex-column DataFrame ``(epw_name, variable)`` with months
+        1-12 as index. Populated after calling :meth:`run`.
+    calculators : dict
+        Maps EPW base name → :class:`DegreeHoursCalculator` instance,
+        giving access to hourly data and individual results after :meth:`run`.
+    """
+
+    def __init__(
+        self,
+        epw_paths: List[str],
+        setpoint_source: Union[str, Dict],
+        epw_variables: Optional[List[str]] = None,
+        night_hours: Optional[List[int]] = None,
+        zone_name: Optional[str] = None,
+        mode: str = 'both',
+        year: Optional[int] = None,
+    ):
+        """
+        Parameters
+        ----------
+        epw_paths : list of str
+            Paths to the EPW files to analyse.
+        setpoint_source : str or dict
+            IDF file path or custom setpoint configuration dict passed
+            directly to :meth:`DegreeHoursCalculator.calculate`.
+        epw_variables : list of str, optional
+            EPW attribute names to include as climate columns.
+            Defaults to ``['global_horizontal_radiation']``.
+            Available names are listed in
+            :attr:`DegreeHoursCalculator._EPW_ATTRS`.
+        night_hours : list of int, optional
+            Hours of the day for the second degree-hour calculation.
+            Defaults to ``[0, 1, 2, 3, 4, 5, 6, 7]`` (00:00–07:59).
+        zone_name : str, optional
+            Zone/Space name forwarded to :meth:`DegreeHoursCalculator.calculate`.
+        mode : str
+            ``'heating'``, ``'cooling'``, or ``'both'`` (default).
+        year : int, optional
+            Year to assign to EPW data (overrides EPW header).
+        """
+        if not epw_paths:
+            raise ValueError("epw_paths must contain at least one file path.")
+
+        self.epw_paths      = list(epw_paths)
+        self.setpoint_source = setpoint_source
+        self.epw_variables  = epw_variables or ['global_horizontal_radiation']
+        self.night_hours    = night_hours if night_hours is not None else list(range(8))
+        self.zone_name      = zone_name
+        self.mode           = mode
+        self.year           = year
+
+        self.results: Optional[pd.DataFrame] = None
+        self.calculators: Dict[str, 'DegreeHoursCalculator'] = {}
+
+    # -------------------------------------------------------------------------
+
+    def run(self) -> pd.DataFrame:
+        """
+        Execute the analysis for every EPW file.
+
+        Returns
+        -------
+        pd.DataFrame
+            Monthly summary table with a two-level column MultiIndex:
+            ``(epw_name, variable)``.  The index contains month numbers 1-12.
+        """
+        all_frames: Dict[str, pd.DataFrame] = {}
+
+        # Label for the custom hour range (e.g. '0-8h')
+        h_label = f"{self.night_hours[0]}-{self.night_hours[-1] + 1}h"
+
+        for epw_path in self.epw_paths:
+            if not os.path.exists(epw_path):
+                print(f"[WARNING] EPW not found, skipping: {epw_path}")
+                continue
+
+            epw_name = os.path.splitext(os.path.basename(epw_path))[0]
+            print(f"\n{'='*60}\n[BATCH] {epw_name}\n{'='*60}")
+
+            calc = DegreeHoursCalculator(epw_path, year=self.year)
+            self.calculators[epw_name] = calc
+
+            # --- Degree-hours: all 24 hours ---------------------------------
+            res_24h = calc.calculate(
+                self.setpoint_source,
+                frequency='monthly',
+                hours=None,
+                mode=self.mode,
+                zone_name=self.zone_name,
+            )['monthly']
+
+            # --- Degree-hours: custom hour range ----------------------------
+            res_night = calc.calculate(
+                self.setpoint_source,
+                frequency='monthly',
+                hours=self.night_hours,
+                mode=self.mode,
+                zone_name=self.zone_name,
+            )['monthly']
+
+            # Build per-EPW column dictionary
+            cols: Dict[str, pd.Series] = {}
+
+            for col in res_24h.columns:
+                cols[f'{col}_24h'] = res_24h[col]
+
+            for col in res_night.columns:
+                cols[f'{col}_{h_label}'] = res_night[col]
+
+            # --- EPW climate variables --------------------------------------
+            for var in self.epw_variables:
+                if var not in calc.epw_data.columns:
+                    print(f"[WARNING] Variable '{var}' not in EPW data for {epw_name}.")
+                    continue
+                series = calc.epw_data[var]
+                # Sum for energy/radiation variables; mean for the rest
+                if var in _RADIATION_VARS:
+                    monthly = series.resample('ME').sum()
+                else:
+                    monthly = series.resample('ME').mean()
+                cols[var] = monthly
+
+            # Align to month numbers (1-12) as index
+            epw_df = pd.DataFrame(cols)
+            epw_df.index = epw_df.index.month
+            epw_df.index.name = 'month'
+
+            all_frames[epw_name] = epw_df
+
+        if not all_frames:
+            raise RuntimeError("No EPW files could be processed.")
+
+        # Concatenate into a MultiIndex-column DataFrame
+        self.results = pd.concat(all_frames, axis=1)
+        self.results.columns.names = ['epw', 'variable']
+        print("\n[BATCH] Análisis completado.")
+        return self.results
+
+    # -------------------------------------------------------------------------
+
+    def export(self, output_path: str = 'batch_degree_hours.xlsx') -> str:
+        """
+        Export :attr:`results` to an Excel file.
+
+        One sheet per EPW plus a combined ``'all_epws'`` sheet.
+
+        Parameters
+        ----------
+        output_path : str
+            Destination file path.
+
+        Returns
+        -------
+        str
+            Absolute path to the saved file.
+        """
+        if self.results is None:
+            raise ValueError("No results to export. Call run() first.")
+
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            # Combined sheet
+            self.results.to_excel(writer, sheet_name='all_epws')
+            # Individual sheet per EPW
+            for epw_name in self.results.columns.get_level_values('epw').unique():
+                df = self.results[epw_name]
+                sheet = epw_name[:31]   # Excel sheet name limit = 31 chars
+                df.to_excel(writer, sheet_name=sheet)
+
+        abs_path = os.path.abspath(output_path)
+        print(f"[INFO] Results exported to: {abs_path}")
         return abs_path
