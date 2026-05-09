@@ -1341,10 +1341,8 @@ class EpwBatchAnalyzer:
             Defaults to ``{'global_horizontal_radiation': 'sum'}``.
             Available variable names: :attr:`DegreeHoursCalculator._EPW_ATTRS`.
         hours : list of int, optional
-            Second set of hours for the degree-hour calculation
-            (any subset of 0-23). Defaults to ``[0..7]`` (00:00–07:59).
-            The column label is derived automatically from the provided values
-            (e.g. ``heating_dh_0-8h``).
+            Hours for the degree-hour calculation (any subset of 0-23).
+            Defaults to ``None`` (all 24 hours).
         zone_name : str, optional
             Zone/Space name forwarded to :meth:`DegreeHoursCalculator.calculate`.
         mode : str
@@ -1365,7 +1363,7 @@ class EpwBatchAnalyzer:
         self.epw_paths        = list(epw_paths)
         self.setpoint_source  = setpoint_source
         self.epw_variables    = epw_variables   # stored as-is; resolved in run()
-        self.hours          = hours if hours is not None else list(range(8))
+        self.hours            = hours
         self.zone_name        = zone_name
         self.mode             = mode
         self.year             = year
@@ -1440,8 +1438,6 @@ class EpwBatchAnalyzer:
             f: {} for f in self.frequencies
         }
 
-        # Label for the custom hour range (e.g. '0-8h')
-        h_label = f"{self.hours[0]}-{self.hours[-1] + 1}h"
 
         for epw_path in self.epw_paths:
             if not os.path.exists(epw_path):
@@ -1454,19 +1450,8 @@ class EpwBatchAnalyzer:
             calc = DegreeHoursCalculator(epw_path, year=self.year)
             self.calculators[epw_name] = calc
 
-            # --- Degree-hours: all 24 hours ---------------------------------
-            res_24h_dict = calc.calculate(
-                self.setpoint_source,
-                frequency=self.frequencies,
-                hours=None,
-                mode=self.mode,
-                zone_name=self.zone_name,
-                start_date=self.start_date,
-                end_date=self.end_date,
-            )
-
-            # --- Degree-hours: custom hour range ----------------------------
-            res2_dict = calc.calculate(
+            # --- Degree-hours calculation -----------------------------------
+            res_dict = calc.calculate(
                 self.setpoint_source,
                 frequency=self.frequencies,
                 hours=self.hours,
@@ -1499,13 +1484,9 @@ class EpwBatchAnalyzer:
             for freq in self.frequencies:
                 cols: Dict[str, pd.Series] = {}
                 
-                res_24h = res_24h_dict[freq]
-                for col in res_24h.columns:
-                    cols[f'{col}_24h'] = res_24h[col]
-                    
-                res2 = res2_dict[freq]
-                for col in res2.columns:
-                    cols[f'{col}_{h_label}'] = res2[col]
+                res = res_dict[freq]
+                for col in res.columns:
+                    cols[col] = res[col]
 
                 # Process climate variables
                 freq_code = {'hourly': 'h', 'daily': 'D', 'monthly': 'ME', 'yearly': 'YE'}[freq]
