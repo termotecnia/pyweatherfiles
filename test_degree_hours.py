@@ -20,9 +20,9 @@ try:
         'invierno': 21.0,
         'verano': 26.0,
         'transicion': 23.5,
-        'fechas_invierno': ('2024-01-01', '2024-03-20'),
-        'fechas_transicion': ('2024-03-21', '2024-06-20'),
-        'fechas_verano': ('2024-06-21', '2024-09-22'),
+        'fechas_invierno': ('01-01', '03-20'),
+        'fechas_transicion': ('03-21', '06-20'),
+        'fechas_verano': ('06-21', '09-22'),
     }
 
     # Look for an available EPW file
@@ -52,8 +52,7 @@ try:
             epw_path=epw_path,
             setpoint_source=setpoints_config,
             frequency='monthly',
-            mode='both',
-            year=2024
+            mode='both'
         )
         print(f"\nResultados mensuales:\n{result_monthly}\n")
 
@@ -62,8 +61,7 @@ try:
             epw_path=epw_path,
             setpoint_source=setpoints_config,
             frequency='daily',
-            mode='both',
-            year=2024
+            mode='both'
         )
         print(f"Primeros 10 días:\n{result_daily.head(10)}\n")
 
@@ -73,8 +71,7 @@ try:
             setpoint_source=setpoints_config,
             frequency='hourly',
             hours=[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-            mode='cooling',
-            year=2024
+            mode='cooling'
         )
         print(f"Primeras 24 horas (solo enfriamiento, 8-18h):\n{result_hourly.head(24)}\n")
 
@@ -102,8 +99,8 @@ try:
             'verano': {'weekday': 26, 'weekend': 28}
         },
         'periodos': {
-            'invierno': ('2024-01-01', '2024-04-30'),
-            'verano': ('2024-05-01', '2024-12-31')
+            'invierno': ('01-01', '04-30'),
+            'verano': ('05-01', '12-31')
         }
     }
 
@@ -113,8 +110,7 @@ try:
             epw_path=epw_path,
             setpoint_source=setpoints_weekly,
             frequency='monthly',
-            mode='both',
-            year=2024
+            mode='both'
         )
         print(f"\nResultados mensuales (patrones semanales):\n{result}\n")
         print("[PASS] TEST 2 completado exitosamente")
@@ -129,4 +125,10 @@ except Exception as e:
 print("\n" + "="*70)
 print("PRUEBAS FINALIZADAS")
 print("="*70)
+
+
+
+
+
+
 

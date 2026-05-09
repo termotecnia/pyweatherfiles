@@ -997,9 +997,9 @@ class DegreeHoursCalculator:
                 mask = (idx >= sd) | (idx <= ed)
                 
             if hdh is not None:
-                hdh.loc[~mask] = 0.0
+                hdh = hdh.loc[mask]
             if cdh is not None:
-                cdh.loc[~mask] = 0.0
+                cdh = cdh.loc[mask]
 
         # ------------------------------------------------------------------
         # Aggregate and store
@@ -1299,7 +1299,7 @@ class EpwBatchAnalyzer:
         epw_paths: List[str],
         setpoint_source: Union[str, Dict],
         epw_variables: Optional[Union[List[str], Dict[str, Union[str, List[str]]]]] = None,
-        hours2: Optional[List[int]] = None,
+        hours: Optional[List[int]] = None,
         zone_name: Optional[str] = None,
         mode: str = 'both',
         year: Optional[int] = None,
@@ -1340,7 +1340,7 @@ class EpwBatchAnalyzer:
 
             Defaults to ``{'global_horizontal_radiation': 'sum'}``.
             Available variable names: :attr:`DegreeHoursCalculator._EPW_ATTRS`.
-        hours2 : list of int, optional
+        hours : list of int, optional
             Second set of hours for the degree-hour calculation
             (any subset of 0-23). Defaults to ``[0..7]`` (00:00–07:59).
             The column label is derived automatically from the provided values
@@ -1365,7 +1365,7 @@ class EpwBatchAnalyzer:
         self.epw_paths        = list(epw_paths)
         self.setpoint_source  = setpoint_source
         self.epw_variables    = epw_variables   # stored as-is; resolved in run()
-        self.hours2           = hours2 if hours2 is not None else list(range(8))
+        self.hours          = hours if hours is not None else list(range(8))
         self.zone_name        = zone_name
         self.mode             = mode
         self.year             = year
@@ -1441,7 +1441,7 @@ class EpwBatchAnalyzer:
         }
 
         # Label for the custom hour range (e.g. '0-8h')
-        h_label = f"{self.hours2[0]}-{self.hours2[-1] + 1}h"
+        h_label = f"{self.hours[0]}-{self.hours[-1] + 1}h"
 
         for epw_path in self.epw_paths:
             if not os.path.exists(epw_path):
@@ -1469,7 +1469,7 @@ class EpwBatchAnalyzer:
             res2_dict = calc.calculate(
                 self.setpoint_source,
                 frequency=self.frequencies,
-                hours=self.hours2,
+                hours=self.hours,
                 mode=self.mode,
                 zone_name=self.zone_name,
                 start_date=self.start_date,
@@ -1518,7 +1518,7 @@ class EpwBatchAnalyzer:
 
                     series = calc.epw_data[var].copy()
                     if mask is not None:
-                        series.loc[~mask] = np.nan
+                        series = series.loc[mask]
 
                     use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
 

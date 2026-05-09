@@ -65,8 +65,9 @@ if os.path.exists(epw_path):
     print(f"Retorna Series con {len(setpoints_only)} valores")
     print(f"Mín: {setpoints_only.min()}, Máx: {setpoints_only.max()}")
 
-    print("\n✅ Todos los tests completados exitosamente!\n")
+    print("\n[OK] Todos los tests completados exitosamente!\n")
 
 else:
     print(f"EPW no encontrado: {epw_path}")
+
 
