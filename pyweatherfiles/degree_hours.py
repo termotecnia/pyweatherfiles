@@ -141,6 +141,7 @@ class DegreeHoursCalculator:
         self.result_hourly:  Optional[pd.DataFrame] = None
         self.result_daily:   Optional[pd.DataFrame] = None
         self.result_monthly: Optional[pd.DataFrame] = None
+        self.result_yearly:  Optional[pd.DataFrame] = None
 
         # Hourly DataFrame with all available EPW climate variables
         self.epw_data: pd.DataFrame = self._build_epw_dataframe()
@@ -868,6 +869,8 @@ class DegreeHoursCalculator:
         hours: Optional[List[int]] = None,
         mode: str = 'both',
         zone_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> Dict[str, pd.DataFrame]:
         """
         Calculate degree hours from the EPW loaded in the constructor.
@@ -890,6 +893,10 @@ class DegreeHoursCalculator:
             processed and the **mean setpoint** across zones is used.
             If specified and not found, a ``ValueError`` is raised listing
             available names.
+        start_date : str, optional
+            Start date in ``'DD/MM'`` format. Data outside the period is set to 0.
+        end_date : str, optional
+            End date in ``'DD/MM'`` format.
 
         Returns
         -------
@@ -904,7 +911,7 @@ class DegreeHoursCalculator:
         if isinstance(frequency, str):
             frequency = [frequency]
 
-        valid_freqs = {'hourly', 'daily', 'monthly'}
+        valid_freqs = {'hourly', 'daily', 'monthly', 'yearly'}
         bad = set(frequency) - valid_freqs
         if bad:
             raise ValueError(f"Frecuencias no válidas: {bad}. Usa: {valid_freqs}")
@@ -973,6 +980,27 @@ class DegreeHoursCalculator:
             c_avail_r = c_avail.reindex(cdh.index, fill_value=1.0)
             cdh = cdh * c_avail_r
 
+        # Apply date period filter if specified
+        if start_date or end_date:
+            idx = self.temperatures.index
+            sd_str = start_date or "01/01"
+            ed_str = end_date or "31/12"
+            try:
+                sd = pd.to_datetime(f"{self.year}/{sd_str}", format="%Y/%d/%m")
+                ed = pd.to_datetime(f"{self.year}/{ed_str}", format="%Y/%d/%m") + pd.Timedelta(days=1, microseconds=-1)
+            except Exception as e:
+                raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
+            
+            if sd <= ed:
+                mask = (idx >= sd) & (idx <= ed)
+            else:
+                mask = (idx >= sd) | (idx <= ed)
+                
+            if hdh is not None:
+                hdh.loc[~mask] = 0.0
+            if cdh is not None:
+                cdh.loc[~mask] = 0.0
+
         # ------------------------------------------------------------------
         # Aggregate and store
         # ------------------------------------------------------------------
@@ -989,6 +1017,10 @@ class DegreeHoursCalculator:
         if 'monthly' in frequency:
             self.result_monthly = self._build_result_df(hdh, cdh, mode, agg_freq='ME')
             results['monthly'] = self.result_monthly
+
+        if 'yearly' in frequency:
+            self.result_yearly = self._build_result_df(hdh, cdh, mode, agg_freq='YE')
+            results['yearly'] = self.result_yearly
 
         print("[INFO] Cálculo completado.")
         for freq_key, df in results.items():
@@ -1203,6 +1235,7 @@ class DegreeHoursCalculator:
             'hourly':  self.result_hourly,
             'daily':   self.result_daily,
             'monthly': self.result_monthly,
+            'yearly':  self.result_yearly,
         }
         available = {k: v for k, v in sheets.items() if v is not None}
         if not available:
@@ -1266,10 +1299,13 @@ class EpwBatchAnalyzer:
         epw_paths: List[str],
         setpoint_source: Union[str, Dict],
         epw_variables: Optional[Union[List[str], Dict[str, Union[str, List[str]]]]] = None,
-        hours: Optional[List[int]] = None,
+        hours2: Optional[List[int]] = None,
         zone_name: Optional[str] = None,
         mode: str = 'both',
         year: Optional[int] = None,
+        frequencies: Optional[Union[str, List[str]]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ):
         """
         Parameters
@@ -1304,7 +1340,7 @@ class EpwBatchAnalyzer:
 
             Defaults to ``{'global_horizontal_radiation': 'sum'}``.
             Available variable names: :attr:`DegreeHoursCalculator._EPW_ATTRS`.
-        hours : list of int, optional
+        hours2 : list of int, optional
             Second set of hours for the degree-hour calculation
             (any subset of 0-23). Defaults to ``[0..7]`` (00:00–07:59).
             The column label is derived automatically from the provided values
@@ -1315,19 +1351,32 @@ class EpwBatchAnalyzer:
             ``'heating'``, ``'cooling'``, or ``'both'`` (default).
         year : int, optional
             Year to assign to EPW data (overrides EPW header).
+        frequencies : str or list of str, optional
+            Frequencies to compute: ``'hourly'``, ``'daily'``, ``'monthly'``, ``'yearly'``.
+            Defaults to ``['monthly']``.
+        start_date : str, optional
+            Start date in ``'DD/MM'`` format to restrict calculations.
+        end_date : str, optional
+            End date in ``'DD/MM'`` format to restrict calculations.
         """
         if not epw_paths:
             raise ValueError("epw_paths must contain at least one file path.")
 
-        self.epw_paths       = list(epw_paths)
+        self.epw_paths        = list(epw_paths)
         self.setpoint_source  = setpoint_source
         self.epw_variables    = epw_variables   # stored as-is; resolved in run()
-        self.hours2           = hours if hours is not None else list(range(8))
+        self.hours2           = hours2 if hours2 is not None else list(range(8))
         self.zone_name        = zone_name
         self.mode             = mode
         self.year             = year
+        self.start_date       = start_date
+        self.end_date         = end_date
 
-        self.results: Optional[pd.DataFrame] = None
+        if frequencies is None:
+            frequencies = ['monthly']
+        self.frequencies = [frequencies] if isinstance(frequencies, str) else list(frequencies)
+
+        self.results: Optional[Dict[str, pd.DataFrame]] = None
         self.calculators: Dict[str, 'DegreeHoursCalculator'] = {}
 
     # -------------------------------------------------------------------------
@@ -1375,17 +1424,21 @@ class EpwBatchAnalyzer:
 
     # -------------------------------------------------------------------------
 
-    def run(self) -> pd.DataFrame:
+    def run(self) -> Dict[str, pd.DataFrame]:
         """
         Execute the analysis for every EPW file.
 
         Returns
         -------
-        pd.DataFrame
-            Monthly summary table with a two-level column MultiIndex:
-            ``(epw_name, variable)``.  The index contains month numbers 1-12.
+        dict
+            A dictionary mapping each frequency to its corresponding summary
+            DataFrame with a two-level column MultiIndex: ``(epw_name, variable)``.
         """
-        all_frames: Dict[str, pd.DataFrame] = {}
+        # Store dataframes grouped by frequency and then by EPW
+        # Structure: {freq: {epw_name: dataframe}}
+        all_frames_by_freq: Dict[str, Dict[str, pd.DataFrame]] = {
+            f: {} for f in self.frequencies
+        }
 
         # Label for the custom hour range (e.g. '0-8h')
         h_label = f"{self.hours2[0]}-{self.hours2[-1] + 1}h"
@@ -1402,71 +1455,120 @@ class EpwBatchAnalyzer:
             self.calculators[epw_name] = calc
 
             # --- Degree-hours: all 24 hours ---------------------------------
-            res_24h = calc.calculate(
+            res_24h_dict = calc.calculate(
                 self.setpoint_source,
-                frequency='monthly',
+                frequency=self.frequencies,
                 hours=None,
                 mode=self.mode,
                 zone_name=self.zone_name,
-            )['monthly']
+                start_date=self.start_date,
+                end_date=self.end_date,
+            )
 
             # --- Degree-hours: custom hour range ----------------------------
-            res2 = calc.calculate(
+            res2_dict = calc.calculate(
                 self.setpoint_source,
-                frequency='monthly',
+                frequency=self.frequencies,
                 hours=self.hours2,
                 mode=self.mode,
                 zone_name=self.zone_name,
-            )['monthly']
+                start_date=self.start_date,
+                end_date=self.end_date,
+            )
 
-            # Build per-EPW column dictionary
-            cols: Dict[str, pd.Series] = {}
-
-            for col in res_24h.columns:
-                cols[f'{col}_24h'] = res_24h[col]
-
-            for col in res2.columns:
-                cols[f'{col}_{h_label}'] = res2[col]
-
-            # --- EPW climate variables: apply one or more aggregations ------
+            # --- Process EPW climate variables and build DataFrames ---------
             var_spec = self._resolve_epw_variables()
-            for var, aggfuncs in var_spec.items():
-                if var not in calc.epw_data.columns:
-                    print(f"[WARNING] Variable '{var}' not in EPW data for {epw_name}.")
-                    continue
 
-                series  = calc.epw_data[var]
-                # Add suffix to column name when multiple aggfuncs or dict API
-                use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
+            # Optional mask for EPW variables
+            mask = None
+            if self.start_date or self.end_date:
+                idx = calc.temperatures.index
+                sd_str = self.start_date or "01/01"
+                ed_str = self.end_date or "31/12"
+                try:
+                    sd = pd.to_datetime(f"{calc.year}/{sd_str}", format="%Y/%d/%m")
+                    ed = pd.to_datetime(f"{calc.year}/{ed_str}", format="%Y/%d/%m") + pd.Timedelta(days=1, microseconds=-1)
+                except Exception as e:
+                    raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
+                
+                if sd <= ed:
+                    mask = (idx >= sd) & (idx <= ed)
+                else:
+                    mask = (idx >= sd) | (idx <= ed)
 
-                for agg in aggfuncs:
-                    if agg == 'auto':
-                        # Auto-detect: sum for radiation/energy, mean otherwise
-                        monthly  = (
-                            series.resample('ME').sum()
-                            if var in _RADIATION_VARS
-                            else series.resample('ME').mean()
-                        )
-                        col_name = var   # no suffix in auto / list mode
-                    else:
-                        monthly  = series.resample('ME').agg(agg)
-                        col_name = f'{var}_{agg}' if use_suffix else var
+            for freq in self.frequencies:
+                cols: Dict[str, pd.Series] = {}
+                
+                res_24h = res_24h_dict[freq]
+                for col in res_24h.columns:
+                    cols[f'{col}_24h'] = res_24h[col]
+                    
+                res2 = res2_dict[freq]
+                for col in res2.columns:
+                    cols[f'{col}_{h_label}'] = res2[col]
 
-                    cols[col_name] = monthly
+                # Process climate variables
+                freq_code = {'hourly': 'h', 'daily': 'D', 'monthly': 'ME', 'yearly': 'YE'}[freq]
 
-            # Align to month numbers (1-12) as index
-            epw_df = pd.DataFrame(cols)
-            epw_df.index = epw_df.index.month
-            epw_df.index.name = 'month'
+                for var, aggfuncs in var_spec.items():
+                    if var not in calc.epw_data.columns:
+                        if freq == self.frequencies[0]:  # Only print warning once
+                            print(f"[WARNING] Variable '{var}' not in EPW data for {epw_name}.")
+                        continue
 
-            all_frames[epw_name] = epw_df
+                    series = calc.epw_data[var].copy()
+                    if mask is not None:
+                        series.loc[~mask] = np.nan
 
-        if not all_frames:
+                    use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
+
+                    for agg in aggfuncs:
+                        if agg == 'auto':
+                            if freq_code == 'h':
+                                aggregated = series
+                            else:
+                                aggregated = (
+                                    series.resample(freq_code).sum()
+                                    if var in _RADIATION_VARS
+                                    else series.resample(freq_code).mean()
+                                )
+                            col_name = var
+                        else:
+                            if freq_code == 'h':
+                                # Without resampling, aggregation function doesn't make much sense, 
+                                # but we pass it as-is (e.g. cumulative, though typically not used for hourly)
+                                aggregated = series
+                            else:
+                                aggregated = series.resample(freq_code).agg(agg)
+                            col_name = f'{var}_{agg}' if use_suffix else var
+
+                        cols[col_name] = aggregated
+
+                epw_df = pd.DataFrame(cols)
+                
+                # Align indices based on frequency
+                if freq == 'monthly':
+                    epw_df.index = epw_df.index.month
+                    epw_df.index.name = 'month'
+                elif freq == 'yearly':
+                    epw_df.index = epw_df.index.year
+                    epw_df.index.name = 'year'
+                else:
+                    epw_df.index.name = 'datetime'
+
+                all_frames_by_freq[freq][epw_name] = epw_df
+
+        if not any(all_frames_by_freq.values()):
             raise RuntimeError("No EPW files could be processed.")
 
-        # Concatenate into a MultiIndex-column DataFrame
-        self.results = pd.concat(all_frames, axis=1)
-        self.results.columns.names = ['epw', 'variable']
+        # Concatenate into MultiIndex-column DataFrames
+        self.results = {}
+        for freq, frames in all_frames_by_freq.items():
+            if frames:
+                df_concat = pd.concat(frames, axis=1)
+                df_concat.columns.names = ['epw', 'variable']
+                self.results[freq] = df_concat
+
         print("\n[BATCH] Análisis completado.")
         return self.results
 
@@ -1476,7 +1578,9 @@ class EpwBatchAnalyzer:
         """
         Export :attr:`results` to an Excel file.
 
-        One sheet per EPW plus a combined ``'all_epws'`` sheet.
+        For each frequency requested, a combined sheet ``'all_epws_<freq>'`` is 
+        created. If only one frequency is present, it may create individual 
+        sheets per EPW (legacy behavior) or group them cleanly.
 
         Parameters
         ----------
@@ -1488,17 +1592,21 @@ class EpwBatchAnalyzer:
         str
             Absolute path to the saved file.
         """
-        if self.results is None:
+        if not self.results:
             raise ValueError("No results to export. Call run() first.")
 
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # Combined sheet
-            self.results.to_excel(writer, sheet_name='all_epws')
-            # Individual sheet per EPW
-            for epw_name in self.results.columns.get_level_values('epw').unique():
-                df = self.results[epw_name]
-                sheet = epw_name[:31]   # Excel sheet name limit = 31 chars
-                df.to_excel(writer, sheet_name=sheet)
+            for freq, df in self.results.items():
+                # Combined sheet for the frequency
+                df.to_excel(writer, sheet_name=f'all_epws_{freq}'[:31])
+                
+                # If there's only one frequency, also create individual EPW sheets 
+                # (backward compatible layout)
+                if len(self.results) == 1:
+                    for epw_name in df.columns.get_level_values('epw').unique():
+                        epw_df = df[epw_name]
+                        sheet = epw_name[:31]
+                        epw_df.to_excel(writer, sheet_name=sheet)
 
         abs_path = os.path.abspath(output_path)
         print(f"[INFO] Results exported to: {abs_path}")
