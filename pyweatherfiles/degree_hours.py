@@ -1139,9 +1139,12 @@ class DegreeHoursCalculator:
                     w = int(v)
                     masks.append(s.index.isocalendar().week == w)
                 elif period == 'day':
-                    date_str = str(v)
+                    date_str = str(v).replace('/', '-')
                     try:
-                        d = pd.Timestamp(date_str).date()
+                        if len(date_str.split('-')) == 2:
+                            d = pd.Timestamp(f'{self.year}-{date_str}').date()
+                        else:
+                            d = pd.Timestamp(date_str).date()
                     except Exception:
                         d = pd.Timestamp(f'{self.year}-{date_str}').date()
                     masks.append(pd.Series(s.index.date == d, index=s.index))
