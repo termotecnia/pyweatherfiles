@@ -1304,7 +1304,7 @@ class EpwBatchAnalyzer:
         epw_paths: List[str],
         setpoint_source: Union[str, Dict],
         epw_variables: Optional[Union[List[str], Dict[str, Union[str, List[str]]]]] = None,
-        hours: Optional[List[int]] = None,
+        hours: Optional[Union[List[int], List[List[int]], Dict[str, List[int]]]] = None,
         zone_name: Optional[str] = None,
         mode: str = 'both',
         year: Optional[int] = None,
@@ -1345,8 +1345,10 @@ class EpwBatchAnalyzer:
 
             Defaults to ``{'global_horizontal_radiation': 'sum'}``.
             Available variable names: :attr:`DegreeHoursCalculator._EPW_ATTRS`.
-        hours : list of int, optional
+        hours : list of int, list of lists of int, dict, optional
             Hours for the degree-hour calculation (any subset of 0-23).
+            Can be a single list, a list of lists for multiple scenarios,
+            or a dict mapping scenario labels to hour lists.
             Defaults to ``None`` (all 24 hours).
         zone_name : str, optional
             Zone/Space name forwarded to :meth:`DegreeHoursCalculator.calculate`.
@@ -1383,6 +1385,39 @@ class EpwBatchAnalyzer:
         self.calculators: Dict[str, 'DegreeHoursCalculator'] = {}
 
     # -------------------------------------------------------------------------
+
+    def _resolve_hours(self) -> Dict[str, Optional[List[int]]]:
+        """
+        Normalise ``self.hours`` to the canonical internal format::
+            {label: list_of_hours_or_None}
+        """
+        raw = self.hours
+        
+        if raw is None:
+            return {'24h': None}
+            
+        if isinstance(raw, dict):
+            return raw
+            
+        if isinstance(raw, list):
+            if all(isinstance(x, int) for x in raw):
+                label = f"{raw[0]}-{raw[-1]+1}h" if raw else "empty"
+                return {label: raw}  # type: ignore
+                
+            if all(isinstance(x, list) for x in raw):
+                res = {}
+                for h_list in raw:
+                    if not h_list:
+                        res["empty"] = []
+                        continue
+                    if len(h_list) > 1 and h_list == list(range(min(h_list), max(h_list)+1)):
+                        label = f"{h_list[0]}-{h_list[-1]+1}h"
+                    else:
+                        label = "_".join(map(str, h_list)) + "h"
+                    res[label] = h_list
+                return res
+
+        raise TypeError("hours must be a list of ints, a list of lists, or a dict.")
 
     def _resolve_epw_variables(
         self,
@@ -1442,7 +1477,7 @@ class EpwBatchAnalyzer:
         all_frames_by_freq: Dict[str, Dict[str, pd.DataFrame]] = {
             f: {} for f in self.frequencies
         }
-
+        hours_dict = self._resolve_hours()
 
         for epw_path in self.epw_paths:
             if not os.path.exists(epw_path):
@@ -1454,85 +1489,87 @@ class EpwBatchAnalyzer:
 
             calc = DegreeHoursCalculator(epw_path, year=self.year)
             self.calculators[epw_name] = calc
-
-            # --- Degree-hours calculation -----------------------------------
-            res_dict = calc.calculate(
-                self.setpoint_source,
-                frequency=self.frequencies,
-                hours=self.hours,
-                mode=self.mode,
-                zone_name=self.zone_name,
-                start_date=self.start_date,
-                end_date=self.end_date,
-            )
-
-            # --- Process EPW climate variables and build DataFrames ---------
             var_spec = self._resolve_epw_variables()
 
-            # Optional mask for EPW variables
-            idx = calc.temperatures.index
-            mask = pd.Series(True, index=idx)
-            if self.start_date or self.end_date:
-                sd_str = self.start_date or "01/01"
-                ed_str = self.end_date or "31/12"
-                try:
-                    sd = pd.to_datetime(f"{calc.year}/{sd_str}", format="%Y/%d/%m")
-                    ed = pd.to_datetime(f"{calc.year}/{ed_str}", format="%Y/%d/%m") + pd.Timedelta(days=1, microseconds=-1)
-                except Exception as e:
-                    raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
-                
-                if sd <= ed:
-                    mask = mask & ((idx >= sd) & (idx <= ed))
-                else:
-                    mask = mask & ((idx >= sd) | (idx <= ed))
+            freq_cols: Dict[str, Dict[str, pd.Series]] = {f: {} for f in self.frequencies}
 
-            if self.hours is not None:
-                mask = mask & idx.hour.isin(self.hours)
+            for h_label, h_list in hours_dict.items():
+                # --- Degree-hours calculation -----------------------------------
+                res_dict = calc.calculate(
+                    self.setpoint_source,
+                    frequency=self.frequencies,
+                    hours=h_list,
+                    mode=self.mode,
+                    zone_name=self.zone_name,
+                    start_date=self.start_date,
+                    end_date=self.end_date,
+                )
+
+                # Optional mask for EPW variables
+                idx = calc.temperatures.index
+                mask = pd.Series(True, index=idx)
+                if self.start_date or self.end_date:
+                    sd_str = self.start_date or "01/01"
+                    ed_str = self.end_date or "31/12"
+                    try:
+                        sd = pd.to_datetime(f"{calc.year}/{sd_str}", format="%Y/%d/%m")
+                        ed = pd.to_datetime(f"{calc.year}/{ed_str}", format="%Y/%d/%m") + pd.Timedelta(days=1, microseconds=-1)
+                    except Exception as e:
+                        raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
+                    
+                    if sd <= ed:
+                        mask = mask & ((idx >= sd) & (idx <= ed))
+                    else:
+                        mask = mask & ((idx >= sd) | (idx <= ed))
+
+                if h_list is not None:
+                    mask = mask & idx.hour.isin(h_list)
+
+                for freq in self.frequencies:
+                    # Degree hours for this scenario
+                    res = res_dict[freq]
+                    for col in res.columns:
+                        col_name = f"{col}_{h_label}"
+                        freq_cols[freq][col_name] = res[col]
+
+                    # Process climate variables
+                    freq_code = {'hourly': 'h', 'daily': 'D', 'monthly': 'ME', 'yearly': 'YE'}[freq]
+
+                    for var, aggfuncs in var_spec.items():
+                        if var not in calc.epw_data.columns:
+                            if freq == self.frequencies[0] and h_label == list(hours_dict.keys())[0]:  
+                                print(f"[WARNING] Variable '{var}' not in EPW data for {epw_name}.")
+                            continue
+
+                        series = calc.epw_data[var].copy()
+                        series = series.loc[mask]
+
+                        use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
+
+                        for agg in aggfuncs:
+                            if agg == 'auto':
+                                if freq_code == 'h':
+                                    aggregated = series
+                                else:
+                                    aggregated = (
+                                        series.resample(freq_code).sum()
+                                        if var in _RADIATION_VARS
+                                        else series.resample(freq_code).mean()
+                                    )
+                                col_name = var
+                            else:
+                                if freq_code == 'h':
+                                    aggregated = series
+                                else:
+                                    aggregated = series.resample(freq_code).agg(agg)
+                                col_name = f'{var}_{agg}' if use_suffix else var
+
+                            # Append hour scenario label
+                            col_name = f"{col_name}_{h_label}"
+                            freq_cols[freq][col_name] = aggregated
 
             for freq in self.frequencies:
-                cols: Dict[str, pd.Series] = {}
-                
-                res = res_dict[freq]
-                for col in res.columns:
-                    cols[col] = res[col]
-
-                # Process climate variables
-                freq_code = {'hourly': 'h', 'daily': 'D', 'monthly': 'ME', 'yearly': 'YE'}[freq]
-
-                for var, aggfuncs in var_spec.items():
-                    if var not in calc.epw_data.columns:
-                        if freq == self.frequencies[0]:  # Only print warning once
-                            print(f"[WARNING] Variable '{var}' not in EPW data for {epw_name}.")
-                        continue
-
-                    series = calc.epw_data[var].copy()
-                    series = series.loc[mask]
-
-                    use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
-
-                    for agg in aggfuncs:
-                        if agg == 'auto':
-                            if freq_code == 'h':
-                                aggregated = series
-                            else:
-                                aggregated = (
-                                    series.resample(freq_code).sum()
-                                    if var in _RADIATION_VARS
-                                    else series.resample(freq_code).mean()
-                                )
-                            col_name = var
-                        else:
-                            if freq_code == 'h':
-                                # Without resampling, aggregation function doesn't make much sense, 
-                                # but we pass it as-is (e.g. cumulative, though typically not used for hourly)
-                                aggregated = series
-                            else:
-                                aggregated = series.resample(freq_code).agg(agg)
-                            col_name = f'{var}_{agg}' if use_suffix else var
-
-                        cols[col_name] = aggregated
-
-                epw_df = pd.DataFrame(cols)
+                epw_df = pd.DataFrame(freq_cols[freq])
                 
                 # Align indices based on frequency
                 if freq == 'monthly':
