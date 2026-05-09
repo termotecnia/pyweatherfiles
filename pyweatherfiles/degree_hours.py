@@ -980,9 +980,11 @@ class DegreeHoursCalculator:
             c_avail_r = c_avail.reindex(cdh.index, fill_value=1.0)
             cdh = cdh * c_avail_r
 
-        # Apply date period filter if specified
+        # Apply date period and hours filter to slice the DataFrames
+        idx = self.temperatures.index
+        mask = pd.Series(True, index=idx)
+
         if start_date or end_date:
-            idx = self.temperatures.index
             sd_str = start_date or "01/01"
             ed_str = end_date or "31/12"
             try:
@@ -992,14 +994,17 @@ class DegreeHoursCalculator:
                 raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
             
             if sd <= ed:
-                mask = (idx >= sd) & (idx <= ed)
+                mask = mask & ((idx >= sd) & (idx <= ed))
             else:
-                mask = (idx >= sd) | (idx <= ed)
+                mask = mask & ((idx >= sd) | (idx <= ed))
+
+        if hours is not None:
+            mask = mask & idx.hour.isin(hours)
                 
-            if hdh is not None:
-                hdh = hdh.loc[mask]
-            if cdh is not None:
-                cdh = cdh.loc[mask]
+        if hdh is not None:
+            hdh = hdh.loc[mask]
+        if cdh is not None:
+            cdh = cdh.loc[mask]
 
         # ------------------------------------------------------------------
         # Aggregate and store
@@ -1465,9 +1470,9 @@ class EpwBatchAnalyzer:
             var_spec = self._resolve_epw_variables()
 
             # Optional mask for EPW variables
-            mask = None
+            idx = calc.temperatures.index
+            mask = pd.Series(True, index=idx)
             if self.start_date or self.end_date:
-                idx = calc.temperatures.index
                 sd_str = self.start_date or "01/01"
                 ed_str = self.end_date or "31/12"
                 try:
@@ -1477,9 +1482,12 @@ class EpwBatchAnalyzer:
                     raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
                 
                 if sd <= ed:
-                    mask = (idx >= sd) & (idx <= ed)
+                    mask = mask & ((idx >= sd) & (idx <= ed))
                 else:
-                    mask = (idx >= sd) | (idx <= ed)
+                    mask = mask & ((idx >= sd) | (idx <= ed))
+
+            if self.hours is not None:
+                mask = mask & idx.hour.isin(self.hours)
 
             for freq in self.frequencies:
                 cols: Dict[str, pd.Series] = {}
@@ -1498,8 +1506,7 @@ class EpwBatchAnalyzer:
                         continue
 
                     series = calc.epw_data[var].copy()
-                    if mask is not None:
-                        series = series.loc[mask]
+                    series = series.loc[mask]
 
                     use_suffix = len(aggfuncs) > 1 or isinstance(self.epw_variables, dict)
 
