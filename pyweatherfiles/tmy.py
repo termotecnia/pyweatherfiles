@@ -1,9 +1,27 @@
 # -*- coding: utf-8 -*-
 """
 ==============================================================================
-      COMPLETE SCRIPT FOR TMY GENERATION (VERSION 4.08 - Unified Method)
+      COMPLETE SCRIPT FOR TMY GENERATION (VERSION 4.09 - Unified Method)
 ==============================================================================
 Methodology: Sandia TMY3, with selectable CDF calculation methods.
+
+v4.09 Changelog:
+- Added `get_candidate_stats(month)`: returns a DataFrame with T_air and
+  GHI statistics (mean, diff vs. long-term, percentile) for each of the
+  top-5 candidate years of a given month.
+- Added `analyze_selection(months, temp_diff_threshold)`: audits the TMY
+  month selection, flags months where the selected year deviates from the
+  long-term temperature mean beyond the given threshold.
+- Added `correct_selection_by_temperature(months, temp_diff_threshold,
+  regenerate)`: automatically replaces anomalous selections with the
+  top-5 candidate that minimises |T_mean - T_mean_LT| and optionally
+  regenerates the TMY in-place.
+- Added `plot_monthly_trend(months, variable)`: plots the long-term yearly
+  trend for each month with TMY-selected year highlighted by a star.
+- Added `plot_monthly_series(months, variable)`: overlays daily series for
+  all years on the same axes, highlighting the TMY-selected year in red.
+- Added `compare_tmy_versions(other_tmy_df, ...)`: side-by-side comparison
+  of two TMY DataFrames for specified months.
 
 v4.08 Changelog:
 - The `plot_smoothing_comparison` method now displays the `hours` and `s_factor`
@@ -2637,3 +2655,509 @@ class TMYGenerator:
             'missing_exact': missing_exact,
             'time_valid': time_ok
         }
+
+    # ==========================================================================
+    #   ANALYSIS & CORRECTION METHODS  (v4.09)
+    # ==========================================================================
+
+    def _get_daily_t_col(self):
+        """Returns the daily temperature column name available in df_daily."""
+        for col in ('T_air_mean', 'T_air'):
+            if self.df_daily is not None and col in self.df_daily.columns:
+                return col
+        return None
+
+    def _get_daily_ghi_col(self):
+        """Returns the daily GHI column name available in df_daily."""
+        for col in ('GHI_sum', 'GHI'):
+            if self.df_daily is not None and col in self.df_daily.columns:
+                return col
+        return None
+
+    def get_candidate_stats(self, month):
+        """
+        Returns a DataFrame with temperature and GHI statistics for each of
+        the top-5 candidate years (after Proximity Ranking) for a given month.
+
+        Columns returned:
+            Prox_Rank, Year, FS_Score, T_mean, T_diff_vs_LT,
+            T_pctil, GHI_mean, GHI_diff_vs_LT, GHI_pctil
+
+        Args:
+            month (int): Month to analyse (1-12).
+
+        Returns:
+            pd.DataFrame or None if data are not yet computed.
+        """
+        if self.candidate_months is None:
+            raise RuntimeError("Run step_2_select_candidate_months() first.")
+
+        t_col  = self._get_daily_t_col()
+        ghi_col = self._get_daily_ghi_col()
+
+        candidates = self.candidate_months.get(month, [])
+        if not candidates:
+            print(f"No candidates found for month {month}.")
+            return None
+
+        lt_data = self.df_daily[self.df_daily.index.month == month]
+        lt_t_mean   = lt_data[t_col].mean()   if t_col  else np.nan
+        lt_ghi_mean = lt_data[ghi_col].mean() if ghi_col else np.nan
+
+        yearly_t   = lt_data.groupby(lt_data.index.year)[t_col].mean()   if t_col  else None
+        yearly_ghi = lt_data.groupby(lt_data.index.year)[ghi_col].mean() if ghi_col else None
+
+        rows = []
+        for rank, yr in enumerate(candidates):
+            yr_data = lt_data[lt_data.index.year == yr]
+
+            fs_val = next(
+                (item.get('Total_W_FS', np.nan)
+                 for item in self.fs_ranking_results.get(month, [])
+                 if item['year'] == yr),
+                np.nan
+            )
+
+            t_mean  = yr_data[t_col].mean()   if t_col  and not yr_data.empty else np.nan
+            t_diff  = t_mean - lt_t_mean
+            t_pctil = float((yearly_t < t_mean).mean() * 100) if yearly_t is not None else np.nan
+
+            ghi_mean  = yr_data[ghi_col].mean()   if ghi_col and not yr_data.empty else np.nan
+            ghi_diff  = ghi_mean - lt_ghi_mean
+            ghi_pctil = float((yearly_ghi < ghi_mean).mean() * 100) if yearly_ghi is not None else np.nan
+
+            is_selected = (self.selected_months or {}).get(month) == yr
+
+            rows.append({
+                'Prox_Rank':       rank + 1,
+                'Year':            yr,
+                'FS_Score':        fs_val,
+                'T_mean':          t_mean,
+                'T_diff_vs_LT':    t_diff,
+                'T_pctil':         t_pctil,
+                'GHI_mean':        ghi_mean,
+                'GHI_diff_vs_LT':  ghi_diff,
+                'GHI_pctil':       ghi_pctil,
+                'Is_Selected':     is_selected,
+            })
+
+        return pd.DataFrame(rows)
+
+    def analyze_selection(self, months=None, temp_diff_threshold=1.0, verbose=True):
+        """
+        Analyses the TMY month selection for the specified months, identifying
+        potentially anomalous years where the selected year's mean temperature
+        deviates significantly from the long-term mean.
+
+        Args:
+            months (list of int, optional): Months to analyse. Defaults to all
+                12 months.
+            temp_diff_threshold (float): Absolute temperature difference (°C)
+                above which a selection is flagged as potentially anomalous.
+                Default is 1.0 °C.
+            verbose (bool): If True, prints a formatted report to stdout.
+
+        Returns:
+            pd.DataFrame: Summary table with one row per analysed month.
+                Columns: Month, Month_Num, Selected_Year, FS_Rank_of_5,
+                T_mean_LT, T_mean_Selected, T_diff, T_pctil, Flagged
+        """
+        if self.selected_months is None:
+            raise RuntimeError("Run generate_tmy() or step_3_apply_persistence() first.")
+        if self.candidate_months is None:
+            raise RuntimeError("Run step_2_select_candidate_months() first.")
+
+        t_col = self._get_daily_t_col()
+        if t_col is None:
+            raise RuntimeError("Temperature column not found in df_daily.")
+
+        if months is None:
+            months = list(range(1, 13))
+
+        rows = []
+        for month in months:
+            selected_year = self.selected_months.get(month)
+            candidates    = self.candidate_months.get(month, [])
+            month_name    = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+
+            lt_data  = self.df_daily[self.df_daily.index.month == month]
+            lt_mean  = lt_data[t_col].mean()
+
+            yearly_means = lt_data.groupby(lt_data.index.year)[t_col].mean()
+            sel_data = lt_data[lt_data.index.year == selected_year]
+            sel_mean = sel_data[t_col].mean() if not sel_data.empty else np.nan
+            diff     = sel_mean - lt_mean
+            pctil    = float((yearly_means < sel_mean).mean() * 100)
+
+            # Rank of the selected year within the top-5 candidate list
+            fs_rank_in_5 = (candidates.index(selected_year) + 1) if selected_year in candidates else None
+
+            flagged = abs(diff) > temp_diff_threshold
+
+            rows.append({
+                'Month':              month_name,
+                'Month_Num':          month,
+                'Selected_Year':      selected_year,
+                'FS_Rank_of_5':       fs_rank_in_5,
+                'T_mean_LT':          round(lt_mean, 2),
+                'T_mean_Selected':    round(sel_mean, 2),
+                'T_diff':             round(diff, 2),
+                'T_pctil':            round(pctil, 1),
+                'Flagged':            flagged,
+            })
+
+        df_result = pd.DataFrame(rows)
+
+        if verbose:
+            print("\n" + "=" * 74)
+            print(f"  TMY SELECTION ANALYSIS  (threshold = |{temp_diff_threshold}| °C)")
+            print("=" * 74)
+            fmt = "{:<12} {:>6} {:>8}  {:>9}  {:>9}  {:>8}  {:>8}  {}"
+            print(fmt.format(
+                "Month", "Year", "FS_Rank", "T_LT(°C)", "T_Sel(°C)", "Diff(°C)", "Pctil(%)", "Flag"
+            ))
+            print("-" * 74)
+            for _, row in df_result.iterrows():
+                flag_str = " *** ANOMALOUS" if row['Flagged'] else ""
+                print(fmt.format(
+                    row['Month'],
+                    int(row['Selected_Year']) if pd.notna(row['Selected_Year']) else "N/A",
+                    f"#{int(row['FS_Rank_of_5'])}" if row['FS_Rank_of_5'] else "N/A",
+                    f"{row['T_mean_LT']:.2f}",
+                    f"{row['T_mean_Selected']:.2f}",
+                    f"{row['T_diff']:+.2f}",
+                    f"{row['T_pctil']:.0f}",
+                    flag_str,
+                ))
+            flagged_count = df_result['Flagged'].sum()
+            print("=" * 74)
+            print(f"  Flagged months: {flagged_count}")
+            if flagged_count:
+                flagged_names = df_result[df_result['Flagged']]['Month'].tolist()
+                print(f"  -> {', '.join(flagged_names)}")
+            print()
+
+        return df_result
+
+    def correct_selection_by_temperature(self, months=None, temp_diff_threshold=1.0,
+                                          regenerate=True, verbose=True):
+        """
+        For each specified month where the currently selected year's temperature
+        deviates from the long-term mean by more than *temp_diff_threshold* °C,
+        replaces it with the top-5 candidate that minimises |T_mean - T_mean_LT|.
+
+        After overriding selected_months, optionally regenerates and smooths the
+        TMY (raw → smoothed) in-place.
+
+        Args:
+            months (list of int, optional): Months to check. Defaults to all 12.
+            temp_diff_threshold (float): Correction is applied when
+                |T_selected - T_LT| > threshold. Default 1.0 °C.
+            regenerate (bool): If True (default), regenerates the TMY after
+                correction (calls _create_raw_tmy + _apply_smoothing).
+            verbose (bool): Print a correction report.
+
+        Returns:
+            dict: {month_num: {'original': year, 'corrected': year,
+                               'orig_diff': float, 'new_diff': float}}
+                  Only months that were actually corrected are included.
+        """
+        if self.selected_months is None:
+            raise RuntimeError("Run generate_tmy() first.")
+        if self.candidate_months is None:
+            raise RuntimeError("Candidate months not available. Run step_2_select_candidate_months() first.")
+
+        t_col = self._get_daily_t_col()
+        if t_col is None:
+            raise RuntimeError("Temperature column not found in df_daily.")
+
+        if months is None:
+            months = list(range(1, 13))
+
+        corrections = {}
+
+        for month in months:
+            candidates    = self.candidate_months.get(month, [])
+            original_year = self.selected_months.get(month)
+            lt_data       = self.df_daily[self.df_daily.index.month == month]
+            lt_mean       = lt_data[t_col].mean()
+
+            sel_data  = lt_data[lt_data.index.year == original_year]
+            orig_mean = sel_data[t_col].mean() if not sel_data.empty else np.nan
+            orig_diff = abs(orig_mean - lt_mean)
+
+            if orig_diff <= temp_diff_threshold:
+                continue  # Within tolerance – no correction needed
+
+            # Evaluate all candidates
+            best_year = original_year
+            best_diff = orig_diff
+            for yr in candidates:
+                yr_data  = lt_data[lt_data.index.year == yr]
+                yr_mean  = yr_data[t_col].mean() if not yr_data.empty else np.nan
+                yr_diff  = abs(yr_mean - lt_mean)
+                if yr_diff < best_diff:
+                    best_diff = yr_diff
+                    best_year = yr
+
+            if best_year != original_year:
+                self.selected_months[month] = best_year
+                corrections[month] = {
+                    'original':  original_year,
+                    'corrected': best_year,
+                    'orig_diff': orig_diff,
+                    'new_diff':  best_diff,
+                }
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print(f"  CORRECTION REPORT  (threshold = |{temp_diff_threshold}| °C)")
+            print("=" * 60)
+            if corrections:
+                for month, info in corrections.items():
+                    month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+                    print(f"  {month_name:<12}  {info['original']} -> {info['corrected']}"
+                          f"   |diff|: {info['orig_diff']:.2f} -> {info['new_diff']:.2f} °C")
+            else:
+                print("  No corrections needed within the specified months.")
+            print("=" * 60 + "\n")
+
+        if corrections and regenerate:
+            print("Regenerating TMY with corrected selection...")
+            self._create_raw_tmy()
+            self._apply_smoothing()
+            # Refresh composition table
+            if self.save_validation_dfs:
+                self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
+            print("TMY regenerated successfully.")
+
+        return corrections
+
+    def plot_monthly_trend(self, months=None, variable=None, figsize=(14, 5),
+                           title=None, show=True):
+        """
+        Plots the long-term temporal trend of the monthly mean for the
+        specified months, highlighting the year(s) selected for the TMY with
+        a star marker and drawing the linear trend line.
+
+        Args:
+            months (list of int, optional): Months to include.
+                Defaults to [6, 7, 8] (boreal summer).
+            variable (str, optional): Column in df_daily to plot.
+                Defaults to the temperature column (T_air_mean or T_air).
+            figsize (tuple): Figure size. Default (14, 5).
+            title (str, optional): Custom figure title.
+            show (bool): If True (default), calls plt.show().
+
+        Returns:
+            matplotlib.figure.Figure
+        """
+        if self.df_daily is None:
+            raise RuntimeError("Run step_1_load_and_prepare_data() first.")
+
+        if months is None:
+            months = [6, 7, 8]
+
+        col = variable or self._get_daily_t_col()
+        if col is None or col not in self.df_daily.columns:
+            raise ValueError(f"Variable '{col}' not found in df_daily. "
+                             f"Available: {self.df_daily.columns.tolist()}")
+
+        fig, ax = plt.subplots(figsize=figsize)
+        colors = plt.cm.tab10(np.linspace(0, 0.6, len(months)))
+
+        for color, month in zip(colors, months):
+            month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+            lt_data    = self.df_daily[self.df_daily.index.month == month]
+            yearly_mean = lt_data.groupby(lt_data.index.year)[col].mean()
+
+            ax.plot(yearly_mean.index, yearly_mean.values,
+                    marker='o', color=color, linewidth=1.5, alpha=0.85,
+                    label=month_name)
+
+            # Star for TMY-selected year
+            selected_year = (self.selected_months or {}).get(month)
+            if selected_year is not None and selected_year in yearly_mean.index:
+                ax.scatter([selected_year], [yearly_mean[selected_year]],
+                           s=200, marker='*', color=color, zorder=6,
+                           label=f'TMY {month_name} ({selected_year})')
+
+        # Overall linear trend across all specified months
+        summer_data = self.df_daily[self.df_daily.index.month.isin(months)]
+        if col in summer_data.columns and len(summer_data) > 1:
+            yearly_all = summer_data.groupby(summer_data.index.year)[col].mean()
+            z = np.polyfit(yearly_all.index, yearly_all.values, 1)
+            p = np.poly1d(z)
+            ax.plot(yearly_all.index, p(yearly_all.index),
+                    'k--', linewidth=2,
+                    label=f'Trend ({z[0]:+.3f} °C/yr)')
+
+        ax.set_xlabel('Year')
+        ax.set_ylabel(col.replace('_', ' '))
+        ax.set_title(title or f'Long-term monthly mean trend — {col}\n'
+                              f'(★ = TMY selected year)')
+        ax.legend(fontsize=9, ncol=2)
+        ax.grid(True, linestyle=':', alpha=0.7)
+        plt.tight_layout()
+        if show:
+            plt.show()
+        return fig
+
+    def plot_monthly_series(self, months=None, variable=None, figsize=(20, 6),
+                            title=None, show=True):
+        """
+        For each specified month, plots the daily series of *variable* for
+        every year in the dataset.  The TMY-selected year is drawn in red with
+        a thicker line; all other years are drawn in light blue.  The long-term
+        daily mean (averaged across all years) is overlaid as a black dashed
+        line.
+
+        Args:
+            months (list of int, optional): Months to plot. Default [6, 7, 8].
+            variable (str, optional): Column in df_daily. Defaults to
+                temperature (T_air_mean or T_air).
+            figsize (tuple): Figure size. Default (20, 6).
+            title (str, optional): Custom super-title.
+            show (bool): If True (default), calls plt.show().
+
+        Returns:
+            matplotlib.figure.Figure
+        """
+        if self.df_daily is None:
+            raise RuntimeError("Run step_1_load_and_prepare_data() first.")
+
+        if months is None:
+            months = [6, 7, 8]
+
+        col = variable or self._get_daily_t_col()
+        if col is None or col not in self.df_daily.columns:
+            raise ValueError(f"Variable '{col}' not found in df_daily.")
+
+        n = len(months)
+        fig, axes = plt.subplots(1, n, figsize=figsize, sharey=True)
+        if n == 1:
+            axes = [axes]
+
+        for ax, month in zip(axes, months):
+            month_name    = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+            selected_year = (self.selected_months or {}).get(month)
+            lt_data       = self.df_daily[self.df_daily.index.month == month]
+            all_years     = sorted(lt_data.index.year.unique())
+            colors        = plt.cm.Blues(np.linspace(0.25, 0.75, len(all_years)))
+
+            for yr, clr in zip(all_years, colors):
+                yr_data = lt_data[lt_data.index.year == yr]
+                if yr_data.empty:
+                    continue
+                is_sel  = (yr == selected_year)
+                ax.plot(yr_data.index.day, yr_data[col].values,
+                        color='tomato' if is_sel else clr,
+                        linewidth=2.5 if is_sel else 0.7,
+                        alpha=1.0 if is_sel else 0.35,
+                        label=str(yr) if is_sel else None)
+
+            # Long-term daily mean
+            lt_daily_mean = lt_data.groupby(lt_data.index.day)[col].mean()
+            ax.plot(lt_daily_mean.index, lt_daily_mean.values,
+                    'k--', linewidth=2.0, label='Long-term mean')
+
+            ax.set_title(f'{month_name}  (TMY → {selected_year})', fontsize=12)
+            ax.set_xlabel('Day of month')
+            ax.set_ylabel(col.replace('_', ' '))
+            ax.legend(fontsize=9)
+            ax.grid(True, linestyle=':', alpha=0.6)
+
+        fig.suptitle(title or f'Daily {col} — all years vs. TMY selected year', fontsize=13)
+        plt.tight_layout()
+        if show:
+            plt.show()
+        return fig
+
+    def compare_tmy_versions(self, other_tmy_df, months=None, variable=None,
+                              label_self='TMY (current)', label_other='TMY (other)',
+                              figsize=(20, 6), title=None, show=True):
+        """
+        Plots a side-by-side comparison of two TMY versions for the specified
+        months.  Useful for visualising the effect of a correction applied with
+        ``correct_selection_by_temperature()``.
+
+        Args:
+            other_tmy_df (pd.DataFrame): The second TMY to compare against.
+                Must have a DatetimeIndex and a column named *variable*.
+            months (list of int, optional): Months to compare. Default [6,7,8].
+            variable (str, optional): Column to compare. If None, the
+                temperature column is auto-detected from the current TMY.
+            label_self (str): Legend label for ``self.tmy_final``.
+            label_other (str): Legend label for ``other_tmy_df``.
+            figsize (tuple): Figure size.
+            title (str, optional): Custom super-title.
+            show (bool): If True (default), calls plt.show().
+
+        Returns:
+            matplotlib.figure.Figure
+        """
+        if self.tmy_final is None:
+            raise RuntimeError("No TMY available on this instance. "
+                               "Run generate_tmy() or step_4_create_and_smooth_tmy() first.")
+
+        if months is None:
+            months = [6, 7, 8]
+
+        # Auto-detect variable: try to match a temperature column
+        if variable is None:
+            # Try common names in tmy_final
+            for cand in ('T_air', 'Dry-bulb temperature', 'T_air_mean'):
+                if cand in self.tmy_final.columns:
+                    variable = cand
+                    break
+            if variable is None:
+                variable = self.tmy_final.columns[0]
+            print(f"Auto-detected variable for comparison: '{variable}'")
+
+        # Verify column exists in both DataFrames
+        if variable not in self.tmy_final.columns:
+            raise ValueError(f"'{variable}' not found in current TMY columns: "
+                             f"{self.tmy_final.columns.tolist()}")
+        if variable not in other_tmy_df.columns:
+            raise ValueError(f"'{variable}' not found in other_tmy_df columns: "
+                             f"{other_tmy_df.columns.tolist()}")
+
+        t_col     = self._get_daily_t_col()
+        n         = len(months)
+        fig, axes = plt.subplots(1, n, figsize=figsize, sharey=True)
+        if n == 1:
+            axes = [axes]
+
+        for ax, month in zip(axes, months):
+            month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+
+            self_month  = self.tmy_final[self.tmy_final.index.month == month][variable]
+            other_month = other_tmy_df[other_tmy_df.index.month == month][variable]
+
+            # Resample to daily mean for cleaner visualisation
+            self_daily  = self_month.resample('D').mean()
+            other_daily = other_month.resample('D').mean()
+
+            ax.plot(self_daily.index.day,  self_daily.values,
+                    color='tomato',    linewidth=2.0, label=label_self)
+            ax.plot(other_daily.index.day, other_daily.values,
+                    color='steelblue', linewidth=2.0, linestyle='--', label=label_other)
+
+            # Long-term mean reference
+            if t_col is not None and self.df_daily is not None:
+                lt_mean = self.df_daily[self.df_daily.index.month == month][t_col].mean()
+                ax.axhline(lt_mean, color='black', linestyle=':', linewidth=1.5,
+                           label=f'Long-term mean ({lt_mean:.1f} °C)')
+
+            ax.set_title(month_name, fontsize=12)
+            ax.set_xlabel('Day of month')
+            ax.set_ylabel(variable.replace('_', ' '))
+            ax.legend(fontsize=9)
+            ax.grid(True, linestyle=':', alpha=0.6)
+
+        fig.suptitle(title or f'TMY Comparison — {variable}\n'
+                              f'{label_self} vs. {label_other}', fontsize=13)
+        plt.tight_layout()
+        if show:
+            plt.show()
+        return fig
