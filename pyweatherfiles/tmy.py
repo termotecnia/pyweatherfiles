@@ -3070,7 +3070,7 @@ class TMYGenerator:
 
         Args:
             months (list of int, optional): Months to include.
-                Defaults to [6, 7, 8] (boreal summer).
+                Defaults to all months (1 to 12).
             variable (str, optional): Column in df_daily to plot.
                 Defaults to the temperature column (T_air_mean or T_air).
             figsize (tuple): Figure size. Default (14, 5).
@@ -3084,7 +3084,7 @@ class TMYGenerator:
             raise RuntimeError("Run step_1_load_and_prepare_data() first.")
 
         if months is None:
-            months = [6, 7, 8]
+            months = list(range(1, 13))
 
         col = variable or self._get_daily_t_col()
         if col is None or col not in self.df_daily.columns:
@@ -3141,7 +3141,7 @@ class TMYGenerator:
         line.
 
         Args:
-            months (list of int, optional): Months to plot. Default [6, 7, 8].
+            months (list of int, optional): Months to plot. Defaults to all months (1 to 12).
             variable (str, optional): Column in df_daily. Defaults to
                 temperature (T_air_mean or T_air).
             figsize (tuple): Figure size. Default (20, 6).
@@ -3155,7 +3155,7 @@ class TMYGenerator:
             raise RuntimeError("Run step_1_load_and_prepare_data() first.")
 
         if months is None:
-            months = [6, 7, 8]
+            months = list(range(1, 13))
 
         col = variable or self._get_daily_t_col()
         if col is None or col not in self.df_daily.columns:
@@ -3212,7 +3212,7 @@ class TMYGenerator:
         Args:
             other_tmy_df (pd.DataFrame): The second TMY to compare against.
                 Must have a DatetimeIndex and a column named *variable*.
-            months (list of int, optional): Months to compare. Default [6,7,8].
+            months (list of int, optional): Months to compare. Defaults to all months (1 to 12).
             variable (str, optional): Column to compare. If None, the
                 temperature column is auto-detected from the current TMY.
             label_self (str): Legend label for ``self.tmy_final``.
@@ -3229,7 +3229,7 @@ class TMYGenerator:
                                "Run generate_tmy() or step_4_create_and_smooth_tmy() first.")
 
         if months is None:
-            months = [6, 7, 8]
+            months = list(range(1, 13))
 
         # Auto-detect variable: try to match a temperature column
         if variable is None:
