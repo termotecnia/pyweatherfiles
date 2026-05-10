@@ -673,8 +673,13 @@ class TMYGenerator:
             
             lt_t_mean = lt_data_month[t_col].mean()
             lt_t_median = lt_data_month[t_col].median()
+            lt_t_std = lt_data_month[t_col].std()
+            if pd.isna(lt_t_std) or lt_t_std == 0: lt_t_std = 1.0
+
             lt_ghi_mean = lt_data_month[ghi_col].mean()
             lt_ghi_median = lt_data_month[ghi_col].median()
+            lt_ghi_std = lt_data_month[ghi_col].std()
+            if pd.isna(lt_ghi_std) or lt_ghi_std == 0: lt_ghi_std = 1.0
             
             ranking_details = []
             
@@ -691,14 +696,20 @@ class TMYGenerator:
                 c_ghi_mean = cand_data[ghi_col].mean()
                 c_ghi_median = cand_data[ghi_col].median()
                 
-                # Deviations (Errors)
+                # Deviations (Absolute Errors)
                 err_t_mean = abs(c_t_mean - lt_t_mean)
                 err_t_median = abs(c_t_median - lt_t_median)
                 err_ghi_mean = abs(c_ghi_mean - lt_ghi_mean)
                 err_ghi_median = abs(c_ghi_median - lt_ghi_median)
+
+                # Normalized Deviations (by long-term standard deviation)
+                n_err_t_mean = err_t_mean / lt_t_std
+                n_err_t_median = err_t_median / lt_t_std
+                n_err_ghi_mean = err_ghi_mean / lt_ghi_std
+                n_err_ghi_median = err_ghi_median / lt_ghi_std
                 
-                # Ranking Value = Max of the 4 errors
-                max_error = max(err_t_mean, err_t_median, err_ghi_mean, err_ghi_median)
+                # Ranking Value = Max of the 4 normalized errors
+                max_error = max(n_err_t_mean, n_err_t_median, n_err_ghi_mean, n_err_ghi_median)
                 
                 ranking_details.append({
                     'Year': year,
@@ -706,7 +717,8 @@ class TMYGenerator:
                     'Err_T_Mean': err_t_mean,
                     'Err_T_Med': err_t_median,
                     'Err_GHI_Mean': err_ghi_mean,
-                    'Err_GHI_Med': err_ghi_median
+                    'Err_GHI_Med': err_ghi_median,
+                    'Norm_Max_Error': max_error
                 })
             
             # Sort candidates by Max_Error (Ascending)
@@ -3135,7 +3147,7 @@ class TMYGenerator:
                     else:
                         lbl = 'Other Candidates' if not other_cands_plotted else None
                         ax.scatter([c_yr], [yearly_mean[c_yr]],
-                                   s=60, marker='o', edgecolors='grey', facecolors='none', zorder=4,
+                                   s=60, marker='o', edgecolors='red', facecolors='none', zorder=4,
                                    label=lbl)
                         other_cands_plotted = True
 
