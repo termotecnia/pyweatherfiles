@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 ==============================================================================
-      COMPLETE SCRIPT FOR TMY GENERATION (VERSION 4.09 - Unified Method)
+      COMPLETE SCRIPT FOR TMY GENERATION (VERSION 4.10 - Unified Method)
 ==============================================================================
 Methodology: Sandia TMY3, with selectable CDF calculation methods.
+
+v4.10 Changelog:
+- Refactored public step methods to align precisely with Sandia 7-step process (`sandia_step_1` to `sandia_step_7`).
+- Added fine-grained validation dataframes (`validation_step1` to `validation_step6`).
+- Deprecated old `step_1` through `step_4` methods (they now wrap the new methods and emit warnings).
+- Fixed the previous discrepancy where `validation_st2_summary_fs_ranking` actually contained candidates in proximity order. Now `validation_step2` is strict FS order, and `validation_step3` contains the proximity order.
 
 v4.09 Changelog:
 - Added `get_candidate_stats(month)`: returns a DataFrame with T_air and
@@ -40,6 +46,8 @@ import numpy as np
 from scipy.interpolate import CubicSpline, UnivariateSpline
 import matplotlib.pyplot as plt
 import os
+import warnings
+import copy
 
 
 # ==============================================================================
@@ -180,14 +188,68 @@ class TMYGenerator:
         self.persistence_thresholds = None
         self.min_run_length = None
 
-        self.validation_st2_df_fs_ranking_by_month = {}
-        self.validation_st2_summary_fs_ranking = None
-        self.validation_st3_df_persistence_decision = {}
-        self.validation_st3_persistence_sequential_details = None # Dictionary for sequential method details
-        self.validation_st3_persistence_score_details = None # Dictionary for score method details
-        self.validation_st4_df_tmy_composition = None
+        self.validation_step2_fs_ranking_by_month = {}
+        self.validation_step2_summary_fs_ranking = None
+        self.validation_step3_proximity_ranking = None
+        self.validation_step4_df_persistence_decision = {}
+        self.validation_step4_persistence_sequential_details = None
+        self.validation_step4_persistence_score_details = None
+        self.validation_step5_selected_months_summary = None
+        self.validation_step6_tmy_composition = None
+        self.candidate_months_pre_proximity = None
         self.smoothing_config = None  # Attribute to store the used smoothing config
         self.save_validation_dfs = save_validation_dfs
+
+    # --- BACKWARD COMPATIBILITY PROPERTIES ---
+
+    @property
+    def validation_st2_df_fs_ranking_by_month(self):
+        return self.validation_step2_fs_ranking_by_month
+
+    @validation_st2_df_fs_ranking_by_month.setter
+    def validation_st2_df_fs_ranking_by_month(self, value):
+        self.validation_step2_fs_ranking_by_month = value
+
+    @property
+    def validation_st2_summary_fs_ranking(self):
+        # Maps to proximity ranking since originally it stored the top 5 in proximity order
+        return self.validation_step3_proximity_ranking
+
+    @validation_st2_summary_fs_ranking.setter
+    def validation_st2_summary_fs_ranking(self, value):
+        self.validation_step3_proximity_ranking = value
+
+    @property
+    def validation_st3_df_persistence_decision(self):
+        return self.validation_step4_df_persistence_decision
+
+    @validation_st3_df_persistence_decision.setter
+    def validation_st3_df_persistence_decision(self, value):
+        self.validation_step4_df_persistence_decision = value
+
+    @property
+    def validation_st3_persistence_sequential_details(self):
+        return self.validation_step4_persistence_sequential_details
+
+    @validation_st3_persistence_sequential_details.setter
+    def validation_st3_persistence_sequential_details(self, value):
+        self.validation_step4_persistence_sequential_details = value
+
+    @property
+    def validation_st3_persistence_score_details(self):
+        return self.validation_step4_persistence_score_details
+
+    @validation_st3_persistence_score_details.setter
+    def validation_st3_persistence_score_details(self, value):
+        self.validation_step4_persistence_score_details = value
+
+    @property
+    def validation_st4_df_tmy_composition(self):
+        return self.validation_step6_tmy_composition
+
+    @validation_st4_df_tmy_composition.setter
+    def validation_st4_df_tmy_composition(self, value):
+        self.validation_step6_tmy_composition = value
 
     # --- PRIVATE METHODS (INTERNAL LOGIC) ---
 
@@ -500,12 +562,9 @@ class TMYGenerator:
 
         return df_ranking[ordered_columns]
 
-    def _select_candidate_months(self, completeness_threshold=None):
+    def _run_fs_selection(self, completeness_threshold=None):
         """
-        Step 2 & 3: Selects candidate months (FS) and applies Proximity Ranking.
-        
         Step 2: Selects top 5 candidate months based on FS statistic.
-        Step 3: Re-ranks these 5 candidates based on Proximity methodology.
         """
         if completeness_threshold is None:
             completeness_threshold = self.missing_data_threshold
@@ -529,7 +588,7 @@ class TMYGenerator:
             if self.save_validation_dfs:
                 # Generate detailed table
                 df_full_ranking = self._generate_ranking_table_for_month(month, analysis_df)
-                self.validation_st2_df_fs_ranking_by_month[month] = df_full_ranking
+                self.validation_step2_fs_ranking_by_month[month] = df_full_ranking
 
                 # Extract the simple list for candidate selection from this detailed table
                 # Filter based on completeness if necessary?
@@ -568,10 +627,7 @@ class TMYGenerator:
             candidate_months[month] = [res['year'] for res in top_5]
             print(f"  Month {month}: Selected candidates -> {candidate_months[month]}")
 
-        # Call Proximity Ranking (Step 3) immediately after selection
-        self._apply_proximity_ranking(candidate_months)
-
-        self.candidate_months = candidate_months
+        self.candidate_months_pre_proximity = candidate_months
 
         if self.excluded_months:
             print("\n" + "="*50)
@@ -584,7 +640,7 @@ class TMYGenerator:
         if self.save_validation_dfs:
             self._generate_summary_fs_ranking()
 
-    def _apply_proximity_ranking(self, candidate_months):
+    def _run_proximity_ranking(self):
         """
         Step 3: Proximity Ranking (Sawaqed et al. 2005)
         Re-orders the top 5 candidates based on the deviation of their monthly
@@ -601,10 +657,15 @@ class TMYGenerator:
 
         if t_col not in self.df_daily.columns or ghi_col not in self.df_daily.columns:
             print(f"  WARNING: Proximity ranking requires Temp and GHI. Found {self.df_daily.columns.tolist()}. Skipping re-ordering.")
+            self.candidate_months = self.candidate_months_pre_proximity
+            if self.save_validation_dfs:
+                self.validation_step3_proximity_ranking = self.validation_step2_summary_fs_ranking
             return
 
+        candidate_months = {}
+
         for month in range(1, 13):
-            candidates = candidate_months.get(month, [])
+            candidates = self.candidate_months_pre_proximity.get(month, [])
             if not candidates: continue
             
             # Long-term stats for the month (using all available years in df_daily)
@@ -672,6 +733,11 @@ class TMYGenerator:
             
             print(f"  Month {month}: Re-ordered by Proximity -> {sorted_candidates}")
 
+        self.candidate_months = candidate_months
+
+        if self.save_validation_dfs:
+            self._generate_proximity_summary()
+
     def _generate_summary_fs_ranking(self):
         """Generates the summary dataframe of Top 5 candidates for all months."""
         all_months_data = []
@@ -706,7 +772,31 @@ class TMYGenerator:
         ordered_columns.extend(['Total_W_FS', 'Rank'])
 
         df_summary = pd.DataFrame(all_months_data)[ordered_columns].set_index(['Month', 'Year'])
-        self.validation_st2_summary_fs_ranking = df_summary
+        self.validation_step2_summary_fs_ranking = df_summary
+
+    def _generate_proximity_summary(self):
+        """Generates the summary dataframe of Top 5 candidates ordered by Proximity."""
+        all_months_data = []
+        for month in range(1, 13):
+            month_name = pd.to_datetime(f'2000-{month}-01').strftime('%B')
+            top_5_data = self.fs_ranking_results.get(month, [])
+            for rank, item in enumerate(top_5_data):
+                row = {
+                    'Month': month_name, 
+                    'Year': item['Year'], 
+                    'Prox_Rank': rank + 1,
+                    'Max_Error': item.get('Max_Error', np.nan),
+                    'Err_T_Mean': item.get('Err_T_Mean', np.nan),
+                    'Err_T_Med': item.get('Err_T_Med', np.nan),
+                    'Err_GHI_Mean': item.get('Err_GHI_Mean', np.nan),
+                    'Err_GHI_Med': item.get('Err_GHI_Med', np.nan),
+                    'Total_W_FS': item.get('Total_W_FS', np.nan)
+                }
+                all_months_data.append(row)
+        
+        if all_months_data:
+            df_summary = pd.DataFrame(all_months_data).set_index(['Month', 'Year'])
+            self.validation_step3_proximity_ranking = df_summary
 
     def _calculate_run_stats(self, series, upper_threshold, lower_threshold, min_run_length):
         """Calculates the frequency and maximum duration of persistence runs."""
@@ -735,8 +825,8 @@ class TMYGenerator:
         selected_months = {}
         persistence_decisions_list = []
         if self.save_validation_dfs:
-            self.validation_st3_persistence_score_details = {}
-            self.validation_st3_persistence_sequential_details = None
+            self.validation_step4_persistence_score_details = {}
+            self.validation_step4_persistence_sequential_details = None
 
         for month in range(1, 13):
             candidates = self.candidate_months.get(month, [])
@@ -799,7 +889,7 @@ class TMYGenerator:
             df_decision['Year'] = df_decision['Year'].astype(int)
 
             if self.save_validation_dfs:
-                self.validation_st3_persistence_score_details[month] = df_decision.copy()
+                self.validation_step4_persistence_score_details[month] = df_decision.copy()
                 
                 # Also populate the old fallback for backward compatibility if needed, 
                 # but adding 'Month' column as expected by validate_persistence_selection fallback
@@ -812,7 +902,7 @@ class TMYGenerator:
             print(f"  Month {month}: Selected Year -> {int(best_choice)} (Score: {df_decision.iloc[0]['Score']:.4f})")
 
         if self.save_validation_dfs and persistence_decisions_list:
-            self.validation_st3_df_persistence_decision = pd.concat(persistence_decisions_list, ignore_index=True)
+            self.validation_step4_df_persistence_decision = pd.concat(persistence_decisions_list, ignore_index=True)
 
         self.selected_months = selected_months
 
@@ -875,9 +965,9 @@ class TMYGenerator:
         print("\nApplying persistence criteria (Step 4) and Final Selection (Step 5)...")
         selected_months = {}
         if self.save_validation_dfs:
-            self.validation_st3_persistence_sequential_details = {}
-            self.validation_st3_persistence_score_details = None
-            self.validation_st3_df_persistence_decision = None 
+            self.validation_step4_persistence_sequential_details = {}
+            self.validation_step4_persistence_score_details = None
+            self.validation_step4_df_persistence_decision = None 
 
         for month in range(1, 13):
             candidates_years = self.candidate_months.get(month, [])
@@ -1110,7 +1200,7 @@ class TMYGenerator:
                 'Decision': decisions.get(stat['Year'], "")
             })
         df = pd.DataFrame(month_details).sort_values('Prox_Rank')
-        self.validation_st3_persistence_sequential_details[month] = df
+        self.validation_step4_persistence_sequential_details[month] = df
 
 
 
@@ -1309,25 +1399,42 @@ class TMYGenerator:
 
     # --- PUBLIC WORKFLOWS ---
 
-    def step_1_load_and_prepare_data(self):
-        """Public method to run Step 1: Data loading and preparation."""
+    def sandia_step_1_load_and_prepare(self):
+        """Step 1: Data loading and preparation."""
         self._load_and_prepare_real_data()
 
         if self.data_frequency == 'daily':
             if len(self.df_daily.index.year.unique()) < 5:
                 raise ValueError("The filtered dataset contains fewer than 5 years of data.")
-            return self
-
-    def step_2_select_candidate_months(self, completeness_threshold=None):
-        """Public method to run Step 2: Candidate month selection using FS statistics."""
-        if self.df_hourly is None and self.df_daily is None: raise RuntimeError("Run step_1_load_and_prepare_data() first.")
-        self._select_candidate_months(completeness_threshold=completeness_threshold)
         return self
 
-    def step_3_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score', zero_run_method='eliminate_worst_ranked'):
+    def step_1_load_and_prepare_data(self):
+        """[DEPRECATED] Use sandia_step_1_load_and_prepare() instead."""
+        warnings.warn("step_1_load_and_prepare_data() is deprecated. Use sandia_step_1_load_and_prepare() instead.", DeprecationWarning, stacklevel=2)
+        return self.sandia_step_1_load_and_prepare()
+
+    def sandia_step_2_select_candidates_fs(self, completeness_threshold=None):
+        """Step 2: Candidate month selection using FS statistics."""
+        if self.df_hourly is None and self.df_daily is None: raise RuntimeError("Run sandia_step_1_load_and_prepare() first.")
+        self._run_fs_selection(completeness_threshold=completeness_threshold)
+        return self
+
+    def sandia_step_3_proximity_ranking(self):
+        """Step 3: Proximity ranking based on Temp and GHI long-term median/mean."""
+        if self.candidate_months_pre_proximity is None: raise RuntimeError("Run sandia_step_2_select_candidates_fs() first.")
+        self._run_proximity_ranking()
+        return self
+
+    def step_2_select_candidate_months(self, completeness_threshold=None):
+        """[DEPRECATED] Use sandia_step_2 and sandia_step_3 instead."""
+        warnings.warn("step_2_select_candidate_months() is deprecated. Use sandia_step_2_select_candidates_fs() and sandia_step_3_proximity_ranking() instead.", DeprecationWarning, stacklevel=2)
+        self.sandia_step_2_select_candidates_fs(completeness_threshold=completeness_threshold)
+        self.sandia_step_3_proximity_ranking()
+        return self
+
+    def sandia_step_4_and_5_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score', zero_run_method='eliminate_worst_ranked'):
         """
-        Public method to run Step 4 & 5: Apply persistence criteria and Select Final Month.
-        (Note: Name retained as 'step_3' for API compatibility, but implements Steps 4-5)
+        Step 4 & 5: Apply persistence criteria and Select Final Month.
 
         Args:
             thresholds (tuple): Lower and upper percentile thresholds to define runs.
@@ -1339,7 +1446,7 @@ class TMYGenerator:
             zero_run_method (str): Method for handling zero-run candidates (only for 'sequential').
                 Options: 'eliminate_worst_ranked' (default), 'eliminate_all', 'eliminate_none'.
         """
-        if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
+        if self.candidate_months is None: raise RuntimeError("Run sandia_step_3_proximity_ranking() first.")
         self.persistence_thresholds = thresholds
         self.min_run_length = min_run_length
 
@@ -1370,7 +1477,21 @@ class TMYGenerator:
 
             self._apply_persistence_scoring(final_weights)
         
+        if self.save_validation_dfs:
+            self._generate_selected_months_summary()
+            
         return self
+
+    def step_3_apply_persistence(self, thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='score', zero_run_method='eliminate_worst_ranked'):
+        """[DEPRECATED] Use sandia_step_4_and_5_apply_persistence() instead."""
+        warnings.warn("step_3_apply_persistence() is deprecated. Use sandia_step_4_and_5_apply_persistence() instead.", DeprecationWarning, stacklevel=2)
+        return self.sandia_step_4_and_5_apply_persistence(thresholds, min_run_length, persistence_weights, persistence_method, zero_run_method)
+
+    def _generate_selected_months_summary(self):
+        """Generates a simple dataframe showing the finally selected year for each month."""
+        if self.selected_months is None: return
+        df = pd.DataFrame(list(self.selected_months.items()), columns=['Month', 'Selected_Year'])
+        self.validation_step5_selected_months_summary = df
 
     def _generate_tmy_composition_dataframe(self):
         """Generates a detailed TMY composition dataframe merging FS and Persistence stats."""
@@ -1385,10 +1506,10 @@ class TMYGenerator:
             row_data = {'Month': month_name, 'Month_Num': month, 'Source_Year': selected_year}
             
             # 1. Merge FS details (from validation_st2)
-            if self.validation_st2_summary_fs_ranking is not None and not self.validation_st2_summary_fs_ranking.empty:
+            if self.validation_step3_proximity_ranking is not None and not self.validation_step3_proximity_ranking.empty:
                 try:
-                    if (month_name, selected_year) in self.validation_st2_summary_fs_ranking.index:
-                        fs_row = self.validation_st2_summary_fs_ranking.loc[(month_name, selected_year)]
+                    if (month_name, selected_year) in self.validation_step3_proximity_ranking.index:
+                        fs_row = self.validation_step3_proximity_ranking.loc[(month_name, selected_year)]
                         if isinstance(fs_row, pd.DataFrame): fs_row = fs_row.iloc[0]
                         fs_dict = fs_row.to_dict()
                         fs_dict.pop('Month', None)
@@ -1398,8 +1519,8 @@ class TMYGenerator:
                     pass
             
             # 2. Merge Persistence details (from validation_st3)
-            if self.validation_st3_df_persistence_decision is not None:
-                df_pers = self.validation_st3_df_persistence_decision
+            if self.validation_step4_df_persistence_decision is not None:
+                df_pers = self.validation_step4_df_persistence_decision
                 if isinstance(df_pers, pd.DataFrame) and not df_pers.empty:
                      pers_row = df_pers[
                         (df_pers['Month'] == month) & 
@@ -1421,22 +1542,27 @@ class TMYGenerator:
         other_cols = [c for c in df_comp.columns if c not in basic_cols]
         return df_comp[basic_cols + other_cols]
 
-    def step_4_create_and_smooth_tmy(self, hours=6, s_factor=0.0):
-        """
-        Public method to run Step 6: Create and Smooth TMY.
-        (Note: Name retained as 'step_4' for API compatibility, but implements Step 6)
-
-        Args:
-            hours (int): The number of hours around the junction to apply smoothing.
-            s_factor (float): Smoothing factor for the spline. 0.0 for interpolation.
-        """
-        if self.candidate_months is None: raise RuntimeError("Run step_2_select_candidate_months() first.")
+    def sandia_step_6_assemble_tmy(self):
+        """Step 6: Assemble the raw TMY data."""
+        if self.candidate_months is None: raise RuntimeError("Run sandia_step_3_proximity_ranking() first.")
         if self.selected_months is None:
             self._select_months_by_fs_rank()
         self._create_raw_tmy()
+        return self
+
+    def sandia_step_7_smooth_junctions(self, hours=6, s_factor=0.0):
+        """Step 7: Smooth month-to-month transitions using splines."""
+        if self.tmy_raw is None: raise RuntimeError("Run sandia_step_6_assemble_tmy() first.")
         self._apply_smoothing(hours=hours, s_factor=s_factor)
         if self.save_validation_dfs:
-            self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
+            self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()
+        return self
+
+    def step_4_create_and_smooth_tmy(self, hours=6, s_factor=0.0):
+        """[DEPRECATED] Use sandia_step_6 and sandia_step_7 instead."""
+        warnings.warn("step_4_create_and_smooth_tmy() is deprecated. Use sandia_step_6_assemble_tmy() and sandia_step_7_smooth_junctions() instead.", DeprecationWarning, stacklevel=2)
+        self.sandia_step_6_assemble_tmy()
+        self.sandia_step_7_smooth_junctions(hours=hours, s_factor=s_factor)
         return self
 
     def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='sequential', zero_run_method='eliminate_worst_ranked', completeness_threshold=0.9, save_validation_dfs=True):
@@ -1455,10 +1581,11 @@ class TMYGenerator:
         """
         print("--- Starting full TMY generation workflow ---")
         self.save_validation_dfs = save_validation_dfs
-        self.step_1_load_and_prepare_data()
-        self.step_2_select_candidate_months(completeness_threshold=completeness_threshold)
+        self.sandia_step_1_load_and_prepare()
+        self.sandia_step_2_select_candidates_fs(completeness_threshold=completeness_threshold)
+        self.sandia_step_3_proximity_ranking()
         if use_persistence:
-            self.step_3_apply_persistence(
+            self.sandia_step_4_and_5_apply_persistence(
                 thresholds=persistence_thresholds,
                 min_run_length=min_run_length,
                 persistence_weights=persistence_weights,
@@ -1467,7 +1594,8 @@ class TMYGenerator:
             )
         else:
             self._select_months_by_fs_rank()
-        self.step_4_create_and_smooth_tmy()
+        self.sandia_step_6_assemble_tmy()
+        self.sandia_step_7_smooth_junctions()
         print("\n--- Full TMY generation finished ---")
         return self
 
@@ -1645,7 +1773,7 @@ class TMYGenerator:
         df_ranking = self._generate_ranking_table_for_month(month, analysis_df)
 
         # Update attribute as well, ensuring consistency
-        self.validation_st2_df_fs_ranking_by_month[month] = df_ranking
+        self.validation_step2_fs_ranking_by_month[month] = df_ranking
 
         print("\nWeights used for calculation:"), print(self.weights)
         print("\nFull Ranking Table (showing top 10 years):"), print(df_ranking.head(10).to_string(float_format="%.4f"))
@@ -1657,9 +1785,9 @@ class TMYGenerator:
         """Prints the detailed persistence tables for each month."""
         
         # 1. Check for Sequential method details
-        if self.validation_st3_persistence_sequential_details:
+        if self.validation_step4_persistence_sequential_details:
             print("\n--- Validation for Step 3: Persistence Decisions (Sequential Exclusion) ---")
-            for month_num, df_details in sorted(self.validation_st3_persistence_sequential_details.items()):
+            for month_num, df_details in sorted(self.validation_step4_persistence_sequential_details.items()):
                 month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
                 print(f"\nPersistence Table for {month_name}:")
                 # Format floats for FS
@@ -1671,9 +1799,9 @@ class TMYGenerator:
             return
 
         # 2. Check for Scoring method details
-        if self.validation_st3_persistence_score_details:
+        if self.validation_step4_persistence_score_details:
             print("\n--- Validation for Step 3: Persistence Scoring Selection ---")
-            for month_num, df_details in sorted(self.validation_st3_persistence_score_details.items()):
+            for month_num, df_details in sorted(self.validation_step4_persistence_score_details.items()):
                 month_name = pd.to_datetime(f'2000-{month_num}-01').strftime('%B')
                 print(f"\nScoring Table for {month_name}:")
                 # Format floats
@@ -1699,14 +1827,14 @@ class TMYGenerator:
         if self.tmy_final is None: raise RuntimeError("Run 'step_4_create_and_smooth_tmy()' first.")
         print("\n--- Validation for Step 4: Final TMY ---")
 
-        if self.validation_st4_df_tmy_composition is None:
-             self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
+        if self.validation_step6_tmy_composition is None:
+             self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()
 
         # Fallback if generation failed or returned None
-        if self.validation_st4_df_tmy_composition is None:
+        if self.validation_step6_tmy_composition is None:
              composition_data = {'Month': [pd.to_datetime(f'2000-{m}-01').strftime('%B') for m in range(1, 13)], 'Source_Year': [self.selected_months[m] for m in range(1, 13)]}
-             self.validation_st4_df_tmy_composition = pd.DataFrame(composition_data)
-        print("\nTMY Composition Table:"), print(self.validation_st4_df_tmy_composition.set_index('Month').to_string())
+             self.validation_step6_tmy_composition = pd.DataFrame(composition_data)
+        print("\nTMY Composition Table:"), print(self.validation_step6_tmy_composition.set_index('Month').to_string())
 
         print("\nDescriptive Statistics of the Final TMY:"), print(self.tmy_final.describe().to_string())
 
@@ -1716,11 +1844,11 @@ class TMYGenerator:
         print("\n--- Overall Summary of FS Results ---")
 
         # Ensure the summary dataframe exists
-        if self.validation_st2_summary_fs_ranking is None:
+        if self.validation_step3_proximity_ranking is None:
             self._generate_summary_fs_ranking()
 
         print("\nRanking Breakdown for the Top 5 Candidates of Each Month:")
-        print(self.validation_st2_summary_fs_ranking.to_string(float_format="%.4f"))
+        print(self.validation_step3_proximity_ranking.to_string(float_format="%.4f"))
 
     def plot_cdfs(self, month_to_plot=1, years_to_plot=None, save_figure_data=False):
         """
@@ -2928,7 +3056,7 @@ class TMYGenerator:
             self._apply_smoothing()
             # Refresh composition table
             if self.save_validation_dfs:
-                self.validation_st4_df_tmy_composition = self._generate_tmy_composition_dataframe()
+                self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()
             print("TMY regenerated successfully.")
 
         return corrections
