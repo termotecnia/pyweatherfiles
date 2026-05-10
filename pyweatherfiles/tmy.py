@@ -3037,6 +3037,11 @@ class TMYGenerator:
                     'new_diff':  best_diff,
                 }
 
+        if corrections:
+            if not hasattr(self, 'applied_corrections'):
+                self.applied_corrections = {}
+            self.applied_corrections.update(corrections)
+
         if verbose:
             print("\n" + "=" * 60)
             print(f"  CORRECTION REPORT  (threshold = |{temp_diff_threshold}| °C)")
@@ -3062,7 +3067,7 @@ class TMYGenerator:
         return corrections
 
     def plot_monthly_trend(self, months=None, variable=None, figsize=(14, 5),
-                           title=None, show=True):
+                           title=None, show=True, show_candidates=False):
         """
         Plots the long-term temporal trend of the monthly mean for the
         specified months, highlighting the year(s) selected for the TMY with
@@ -3076,6 +3081,8 @@ class TMYGenerator:
             figsize (tuple): Figure size. Default (14, 5).
             title (str, optional): Custom figure title.
             show (bool): If True (default), calls plt.show().
+            show_candidates (bool): If True, plots the other top-5 candidates as grey circles,
+                and highlights the previously selected candidate (if a correction was made) as a red square.
 
         Returns:
             matplotlib.figure.Figure
@@ -3110,6 +3117,28 @@ class TMYGenerator:
                            s=200, marker='*', color=color, zorder=6,
                            label=f'TMY {month_name} ({selected_year})')
 
+            # Optional: show other candidates and previously selected
+            if show_candidates and self.candidate_months:
+                candidates = self.candidate_months.get(month, [])
+                applied_corr = getattr(self, 'applied_corrections', {}).get(month, {})
+                original_year = applied_corr.get('original')
+
+                other_cands_plotted = False
+                for c_yr in candidates:
+                    if c_yr == selected_year or c_yr not in yearly_mean.index:
+                        continue
+                        
+                    if c_yr == original_year:
+                        ax.scatter([c_yr], [yearly_mean[c_yr]],
+                                   s=120, marker='s', edgecolors='red', facecolors='none', linewidths=2, zorder=5,
+                                   label=f'Previous {month_name} ({c_yr})')
+                    else:
+                        lbl = 'Other Candidates' if not other_cands_plotted else None
+                        ax.scatter([c_yr], [yearly_mean[c_yr]],
+                                   s=60, marker='o', edgecolors='grey', facecolors='none', zorder=4,
+                                   label=lbl)
+                        other_cands_plotted = True
+
         # Overall linear trend across all specified months
         summer_data = self.df_daily[self.df_daily.index.month.isin(months)]
         if col in summer_data.columns and len(summer_data) > 1:
@@ -3121,10 +3150,18 @@ class TMYGenerator:
                     label=f'Trend ({z[0]:+.3f} °C/yr)')
 
         ax.set_xlabel('Year')
+        import matplotlib.ticker as ticker
+        ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+        
         ax.set_ylabel(col.replace('_', ' '))
         ax.set_title(title or f'Long-term monthly mean trend — {col}\n'
                               f'(★ = TMY selected year)')
-        ax.legend(fontsize=9, ncol=2)
+        
+        # Deduplicate labels in legend just in case
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys(), fontsize=9, ncol=2)
+        
         ax.grid(True, linestyle=':', alpha=0.7)
         plt.tight_layout()
         if show:
