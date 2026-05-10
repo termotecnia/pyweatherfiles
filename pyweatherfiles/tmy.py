@@ -801,10 +801,14 @@ class TMYGenerator:
                     'Year': item['Year'], 
                     'Prox_Rank': rank + 1,
                     'Max_Error': item.get('Max_Error', np.nan),
-                    'Err_T_Mean': item.get('Err_T_Mean', np.nan),
-                    'Err_T_Med': item.get('Err_T_Med', np.nan),
-                    'Err_GHI_Mean': item.get('Err_GHI_Mean', np.nan),
-                    'Err_GHI_Med': item.get('Err_GHI_Med', np.nan),
+                    'Raw_Err_T_Mean': item.get('Raw_Err_T_Mean', np.nan),
+                    'Raw_Err_T_Med': item.get('Raw_Err_T_Med', np.nan),
+                    'Raw_Err_GHI_Mean': item.get('Raw_Err_GHI_Mean', np.nan),
+                    'Raw_Err_GHI_Med': item.get('Raw_Err_GHI_Med', np.nan),
+                    'Norm_Err_T_Mean': item.get('Norm_Err_T_Mean', np.nan),
+                    'Norm_Err_T_Med': item.get('Norm_Err_T_Med', np.nan),
+                    'Norm_Err_GHI_Mean': item.get('Norm_Err_GHI_Mean', np.nan),
+                    'Norm_Err_GHI_Med': item.get('Norm_Err_GHI_Med', np.nan),
                     'Total_W_FS': item.get('Total_W_FS', np.nan)
                 }
                 all_months_data.append(row)
