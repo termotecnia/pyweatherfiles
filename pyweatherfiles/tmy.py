@@ -713,12 +713,15 @@ class TMYGenerator:
                 
                 ranking_details.append({
                     'Year': year,
-                    'Max_Error': max_error,
-                    'Err_T_Mean': err_t_mean,
-                    'Err_T_Med': err_t_median,
-                    'Err_GHI_Mean': err_ghi_mean,
-                    'Err_GHI_Med': err_ghi_median,
-                    'Norm_Max_Error': max_error
+                    'Max_Error': max_error,  # This is the normalized max error used for sorting
+                    'Raw_Err_T_Mean': err_t_mean,
+                    'Raw_Err_T_Med': err_t_median,
+                    'Raw_Err_GHI_Mean': err_ghi_mean,
+                    'Raw_Err_GHI_Med': err_ghi_median,
+                    'Norm_Err_T_Mean': n_err_t_mean,
+                    'Norm_Err_T_Med': n_err_t_median,
+                    'Norm_Err_GHI_Mean': n_err_ghi_mean,
+                    'Norm_Err_GHI_Med': n_err_ghi_median
                 })
             
             # Sort candidates by Max_Error (Ascending)
