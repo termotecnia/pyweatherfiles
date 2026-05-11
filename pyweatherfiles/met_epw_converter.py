@@ -6,6 +6,8 @@ import os
 import sys
 import contextlib
 import numpy as np
+from .session_manager import save_function_session
+
 
 try:
     from ladybug.epw import EPW
@@ -139,7 +141,7 @@ def _get_epw_values(epw_obj, field_name):
 
 
 # --- CONVERSIÓN MET -> EPW ---
-def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_missing: bool = False) -> bool:
+def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_missing: bool = False, save_session: bool = True, session_dir: str = None) -> bool:
     print(f"Iniciando conversión de '{met_path}' a '{epw_path}'...")
 
     try:
@@ -334,6 +336,22 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         return False
 
     print("¡Conversión MET -> EPW completada (Balance de radiación asegurado)!")
+
+    # --- Session persistence ---
+    if save_session:
+        _inputs = {
+            "met_path": met_path,
+            "epw_path": epw_path,
+            "base_epw_path": base_epw_path,
+        }
+        _extra = {"replace_unused_with_missing": replace_unused_with_missing}
+        _dir = session_dir or os.path.dirname(os.path.abspath(met_path)) or os.getcwd()
+        try:
+            save_function_session("convert_met_to_epw", _inputs, result=True,
+                                  session_dir=_dir, extra=_extra)
+        except Exception as _e:
+            print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+
     return True
 
 

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from .session_manager import save_object_session
 
 try:
     from ladybug.epw import EPW
@@ -871,6 +872,8 @@ class DegreeHoursCalculator:
         zone_name: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        save_session: bool = True,
+        session_dir: Optional[str] = None,
     ) -> Dict[str, pd.DataFrame]:
         """
         Calculate degree hours from the EPW loaded in the constructor.
@@ -1030,6 +1033,20 @@ class DegreeHoursCalculator:
         print("[INFO] Cálculo completado.")
         for freq_key, df in results.items():
             print(f"  {freq_key}: {df.shape} → {df.sum().to_dict()}")
+
+        # --- Session persistence ---
+        if save_session:
+            _sp_key = setpoint_source if isinstance(setpoint_source, str) else "dict_config"
+            _inputs = {
+                "epw_path": self.epw_path,
+                "setpoint_source": _sp_key,
+                "mode": mode,
+            }
+            _dir = session_dir or os.path.dirname(os.path.abspath(self.epw_path)) or os.getcwd()
+            try:
+                save_object_session(self, "DegreeHoursCalculator", _inputs, session_dir=_dir)
+            except Exception as _e:
+                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
 
         return results
 
@@ -1465,7 +1482,7 @@ class EpwBatchAnalyzer:
 
     # -------------------------------------------------------------------------
 
-    def run(self) -> Dict[str, pd.DataFrame]:
+    def run(self, save_session: bool = True, session_dir: Optional[str] = None) -> Dict[str, pd.DataFrame]:
         """
         Execute the analysis for every EPW file.
 
@@ -1598,6 +1615,22 @@ class EpwBatchAnalyzer:
                 self.results[freq] = df_concat
 
         print("\n[BATCH] Análisis completado.")
+
+        # --- Session persistence ---
+        if save_session and self.results:
+            _first_epw = self.epw_paths[0] if self.epw_paths else "unknown"
+            _sp_key = self.setpoint_source if isinstance(self.setpoint_source, str) else "dict_config"
+            _inputs = {
+                "first_epw": _first_epw,
+                "setpoint_source": _sp_key,
+                "n_epws": str(len(self.epw_paths)),
+            }
+            _dir = session_dir or os.path.dirname(os.path.abspath(_first_epw)) or os.getcwd()
+            try:
+                save_object_session(self, "EpwBatchAnalyzer", _inputs, session_dir=_dir)
+            except Exception as _e:
+                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+
         return self.results
 
     # -------------------------------------------------------------------------

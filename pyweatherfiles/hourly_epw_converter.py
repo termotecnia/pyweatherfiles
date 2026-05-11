@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import math
 import os
+from .session_manager import save_object_session
 
 try:
     from ladybug.epw import EPW
@@ -333,7 +334,7 @@ class HourlyEPWConverter:
             print(f"Error al guardar el EPW de salida: {e}")
             return False
 
-    def process(self, output_dir=".", years=None, remove_leap_day=None, output_pattern=None, base_epw_path=None, **kwargs):
+    def process(self, output_dir=".", years=None, remove_leap_day=None, output_pattern=None, base_epw_path=None, save_session=True, session_dir=None, **kwargs):
         """
         Método directo que automatiza el proceso de conversión.
         Toma una lista de años (o todos si no se especifican) y genera un EPW para cada uno
@@ -378,7 +379,20 @@ class HourlyEPWConverter:
                 success_list.append(year)
             else:
                 print(f"Fallo al procesar guardado de {year}.")
-                
+
+        # --- Session persistence ---
+        if save_session and success_list:
+            _inputs = {
+                "file_path": self.file_path,
+                "base_epw_path": self.base_epw_path,
+                "years": str(sorted(success_list)),
+            }
+            _dir = session_dir or os.path.dirname(os.path.abspath(self.file_path)) or os.getcwd()
+            try:
+                save_object_session(self, "HourlyEPWConverter", _inputs, session_dir=_dir)
+            except Exception as _e:
+                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+
         return success_list
 
 
@@ -474,7 +488,7 @@ class BatchHourlyEPWConverter:
 
         return suggested_config
 
-    def process_all(self, output_pattern=None, remove_leap_day=True, **global_kwargs):
+    def process_all(self, output_pattern=None, remove_leap_day=True, save_session=True, session_dir=None, **global_kwargs):
         """
         Ejecuta el procesado iterando cada ciudad.
         Las variables pasadas en global_kwargs se combinan con las variables individuales
@@ -552,5 +566,18 @@ class BatchHourlyEPWConverter:
         print("RESUMEN DE BATCH PROCESSING")
         for f, yrs in results_summary.items():
             print(f"{os.path.basename(f)} -> Años convertidos: {yrs}")
+
+        # --- Session persistence ---
+        if save_session and results_summary:
+            _inputs = {
+                "output_dir": self.output_dir,
+                "n_cities": str(len(self.cities_config)),
+                "cities_hash": str(hash(str(self.cities_config)))[:12],
+            }
+            _dir = session_dir or self.output_dir or os.getcwd()
+            try:
+                save_object_session(self, "BatchHourlyEPWConverter", _inputs, session_dir=_dir)
+            except Exception as _e:
+                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
 
         return results_summary

@@ -2,6 +2,7 @@
 
 import pandas as pd
 from tabulate import tabulate
+from .session_manager import save_function_session
 
 try:
     from ladybug.epw import EPW
@@ -199,7 +200,7 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
     return df_final
 
 
-def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: str) -> pd.DataFrame:
+def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: str, save_session: bool = True, session_dir: str = None) -> pd.DataFrame:
     """
     Compara dos archivos EPW directamente como CSV.
     CORREGIDO: Usa encoding='latin-1' para evitar errores con tildes.
@@ -249,4 +250,25 @@ def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: s
         df_comparison[f'Generated_{col_name}'] = df_gen[i]
 
     print("DataFrame de comparación con nombres descriptivos creado con éxito.")
+
+    # --- Session persistence ---
+    if save_session and not df_comparison.empty:
+        _inputs = {
+            "base_epw_path": base_epw_path,
+            "generated_epw_path": generated_epw_path,
+        }
+        _extra = {"shape": list(df_comparison.shape), "columns": list(df_comparison.columns)}
+        import os
+        _dir = session_dir or os.path.dirname(os.path.abspath(base_epw_path)) or os.getcwd()
+        try:
+            save_function_session(
+                "create_comparison_hourly_dataframe",
+                _inputs,
+                result=df_comparison,
+                session_dir=_dir,
+                extra=_extra,
+            )
+        except Exception as _e:
+            print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+
     return df_comparison

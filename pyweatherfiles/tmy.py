@@ -48,6 +48,7 @@ import matplotlib.pyplot as plt
 import os
 import warnings
 import copy
+from .session_manager import save_object_session
 
 
 # ==============================================================================
@@ -69,7 +70,9 @@ class TMYGenerator:
                  col_dew='T_dew',
                  col_wind='Wind_speed',
                  col_ghi='GHI',
-                 col_dni='DNI'):
+                 col_dni='DNI',
+                 save_session=True,
+                 session_dir=None):
         """
         Initializes the TMYGenerator.
 
@@ -142,23 +145,35 @@ class TMYGenerator:
 
         # Set default weights based on the chosen method
         if weights is None:  # Only set defaults if user didn't provide custom weights
-            if self.weighting_method == 'tmy3':
-                # Weights based on NREL TMY3 / User provided Picture1.png
-                default_weights = {
-                    'T_air_max': 1 / 20, 'T_air_min': 1 / 20, 'T_air_mean': 2 / 20,
-                    'T_dew_max': 1 / 20, 'T_dew_min': 1 / 20, 'T_dew_mean': 2 / 20,
-                    'Wind_speed_max': 1 / 20, 'Wind_speed_mean': 1 / 20,
-                    'GHI_sum': 5 / 20, 'DNI_sum': 5 / 20
-                }
-            else:  # 'sandia' default
-                # Detailed Sandia weights from Picture1.png
-                default_weights = {
-                    'T_air_max': 1 / 24, 'T_air_min': 1 / 24, 'T_air_mean': 2 / 24,
-                    'T_dew_max': 1 / 24, 'T_dew_min': 1 / 24, 'T_dew_mean': 2 / 24,
-                    'Wind_speed_max': 2 / 24, 'Wind_speed_mean': 2 / 24,
-                    'GHI_sum': 12 / 24
-                    # DNI is excluded for Sandia
-                }
+            if self.cdf_method == 'hourly':
+                if self.weighting_method == 'tmy3':
+                    default_weights = {
+                        'T_air': 4 / 20, 'T_dew': 4 / 20,
+                        'Wind_speed': 2 / 20, 'GHI': 5 / 20, 'DNI': 5 / 20
+                    }
+                else:  # 'sandia' default
+                    default_weights = {
+                        'T_air': 4 / 24, 'T_dew': 4 / 24,
+                        'Wind_speed': 4 / 24, 'GHI': 12 / 24
+                    }
+            else:
+                if self.weighting_method == 'tmy3':
+                    # Weights based on NREL TMY3 / User provided Picture1.png
+                    default_weights = {
+                        'T_air_max': 1 / 20, 'T_air_min': 1 / 20, 'T_air_mean': 2 / 20,
+                        'T_dew_max': 1 / 20, 'T_dew_min': 1 / 20, 'T_dew_mean': 2 / 20,
+                        'Wind_speed_max': 1 / 20, 'Wind_speed_mean': 1 / 20,
+                        'GHI_sum': 5 / 20, 'DNI_sum': 5 / 20
+                    }
+                else:  # 'sandia' default
+                    # Detailed Sandia weights from Picture1.png
+                    default_weights = {
+                        'T_air_max': 1 / 24, 'T_air_min': 1 / 24, 'T_air_mean': 2 / 24,
+                        'T_dew_max': 1 / 24, 'T_dew_min': 1 / 24, 'T_dew_mean': 2 / 24,
+                        'Wind_speed_max': 2 / 24, 'Wind_speed_mean': 2 / 24,
+                        'GHI_sum': 12 / 24
+                        # DNI is excluded for Sandia
+                    }
             self.weights = default_weights
         else:
             self.weights = weights
@@ -199,6 +214,9 @@ class TMYGenerator:
         self.candidate_months_pre_proximity = None
         self.smoothing_config = None  # Attribute to store the used smoothing config
         self.save_validation_dfs = save_validation_dfs
+        # Session persistence
+        self.save_session = save_session
+        self.session_dir = session_dir
 
     # --- BACKWARD COMPATIBILITY PROPERTIES ---
 
@@ -610,7 +628,11 @@ class TMYGenerator:
                 # Check for completeness
                 days_in_month = pd.Period(f'{year}-{month}-01').days_in_month
                 expected_points = days_in_month * 24 if self.cdf_method == 'hourly' else days_in_month
-                actual_points = len(candidate_data)
+                
+                valid_cols = [col for col in self.weights.keys() if col in candidate_data.columns]
+                if not valid_cols:
+                    valid_cols = candidate_data.columns
+                actual_points = candidate_data[valid_cols].notna().all(axis=1).sum()
 
                 if actual_points / expected_points < completeness_threshold:
                     print(f"  Skipping {year}-{month:02d}: Insufficient data ({actual_points}/{expected_points} points)")
@@ -1302,10 +1324,15 @@ class TMYGenerator:
 
             month1_data_full = self.df_hourly[
                 (self.df_hourly.index.month == month1) & (self.df_hourly.index.year == year1)
-                ]
+                ].copy()
+            if month1 == 2 and len(month1_data_full) > 28 * 24:
+                month1_data_full = month1_data_full[month1_data_full.index.day != 29]
+                
             month2_data_full = self.df_hourly[
                 (self.df_hourly.index.month == month2) & (self.df_hourly.index.year == year2)
-                ]
+                ].copy()
+            if month2 == 2 and len(month2_data_full) > 28 * 24:
+                month2_data_full = month2_data_full[month2_data_full.index.day != 29]
 
             fitting_data = pd.concat([month1_data_full, month2_data_full])
             x_fit = np.arange(len(fitting_data))
@@ -1329,7 +1356,7 @@ class TMYGenerator:
             )
 
             for col in tmy_final.columns:
-                if col == 'GHI':
+                if col in ['GHI', 'DNI']:
                     continue
 
                 y_fit = fitting_data[col].values
@@ -1575,6 +1602,20 @@ class TMYGenerator:
         self._apply_smoothing(hours=hours, s_factor=s_factor)
         if self.save_validation_dfs:
             self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()
+
+        # --- Session persistence ---
+        if getattr(self, 'save_session', True):
+            _inputs = {
+                "file_path": self.file_path,
+                "cdf_method": self.cdf_method,
+                "weighting_method": self.weighting_method,
+            }
+            _dir = getattr(self, 'session_dir', None) or os.path.dirname(os.path.abspath(self.file_path)) or os.getcwd()
+            try:
+                save_object_session(self, "TMYGenerator", _inputs, session_dir=_dir)
+            except Exception as _e:
+                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+
         return self
 
     def step_4_create_and_smooth_tmy(self, hours=6, s_factor=0.0):
