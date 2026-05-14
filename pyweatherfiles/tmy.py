@@ -664,13 +664,72 @@ class TMYGenerator:
         if self.save_validation_dfs:
             self._generate_summary_fs_ranking()
 
-    def _run_proximity_ranking(self):
+    def _validate_proximity_normalization_method(self, normalization_method):
+        """Validates and normalizes the proximity normalization method string."""
+        if normalization_method is None:
+            normalization_method = 'std'
+
+        method = str(normalization_method).strip().lower()
+        if method == 'sawaqed':
+            warnings.warn("'sawaqed' is deprecated for proximity normalization. Use 'weighted' instead.", DeprecationWarning, stacklevel=3)
+            method = 'weighted'
+
+        valid_methods = {'std', 'long_term_mean', 'range', 'weighted'}
+        if method not in valid_methods:
+            raise ValueError(f"Invalid normalization_method '{normalization_method}'. Must be one of {sorted(valid_methods)}")
+        return method
+
+    def _resolve_proximity_weights(self, normalization_weights):
+        """Returns validated proximity weights for the 'weighted' proximity method."""
+        default_weights = {
+            't_mean': 0.30,
+            't_median': 0.20,
+            'ghi_mean': 0.30,
+            'ghi_median': 0.20
+        }
+
+        if normalization_weights is None:
+            return default_weights
+
+        expected_keys = set(default_weights.keys())
+        provided_keys = set(normalization_weights.keys())
+
+        missing_keys = expected_keys - provided_keys
+        extra_keys = provided_keys - expected_keys
+        if missing_keys or extra_keys:
+            raise ValueError(
+                "Invalid normalization_weights keys. "
+                f"Expected exactly {sorted(expected_keys)}, got {sorted(provided_keys)}."
+            )
+
+        resolved = {k: float(v) for k, v in normalization_weights.items()}
+        if any(v < 0 for v in resolved.values()):
+            raise ValueError("All normalization_weights values must be >= 0.")
+
+        total = sum(resolved.values())
+        if not np.isclose(total, 1.0, atol=1e-9):
+            raise ValueError(f"normalization_weights must sum to 1.0. Current sum is {total}.")
+
+        return resolved
+
+    def _safe_denominator(self, value):
+        """Protects proximity normalization from zero/NaN denominators."""
+        if pd.isna(value) or value == 0:
+            return 1.0
+        return float(value)
+
+    def _run_proximity_ranking(self, normalization_method='std', normalization_weights=None):
         """
         Step 3: Proximity Ranking (Sawaqed et al. 2005)
         Re-orders the top 5 candidates based on the deviation of their monthly
         mean and median Temperature and GHI from the long-term history.
         """
-        print("Step 3: Applying Proximity Ranking to re-order top 5 candidates...")
+        method = self._validate_proximity_normalization_method(normalization_method)
+        weights = self._resolve_proximity_weights(normalization_weights) if method == 'weighted' else None
+
+        print(f"Step 3: Applying Proximity Ranking to re-order top 5 candidates (method='{method}')...")
+        if method == 'weighted':
+            print(f"  Proximity weights: {weights}")
         
         # Calculate Long-Term Stats for all months first for efficiency
         # We need Mean and Median for T_air and GHI
@@ -698,12 +757,22 @@ class TMYGenerator:
             lt_t_mean = lt_data_month[t_col].mean()
             lt_t_median = lt_data_month[t_col].median()
             lt_t_std = lt_data_month[t_col].std()
-            if pd.isna(lt_t_std) or lt_t_std == 0: lt_t_std = 1.0
 
             lt_ghi_mean = lt_data_month[ghi_col].mean()
             lt_ghi_median = lt_data_month[ghi_col].median()
             lt_ghi_std = lt_data_month[ghi_col].std()
-            if pd.isna(lt_ghi_std) or lt_ghi_std == 0: lt_ghi_std = 1.0
+            lt_t_range = lt_data_month[t_col].max() - lt_data_month[t_col].min()
+            lt_ghi_range = lt_data_month[ghi_col].max() - lt_data_month[ghi_col].min()
+
+            if method == 'std' or method == 'weighted':
+                den_t = self._safe_denominator(lt_t_std)
+                den_ghi = self._safe_denominator(lt_ghi_std)
+            elif method == 'long_term_mean':
+                den_t = self._safe_denominator(abs(lt_t_mean))
+                den_ghi = self._safe_denominator(abs(lt_ghi_mean))
+            else:  # 'range'
+                den_t = self._safe_denominator(lt_t_range)
+                den_ghi = self._safe_denominator(lt_ghi_range)
             
             ranking_details = []
             
@@ -726,18 +795,30 @@ class TMYGenerator:
                 err_ghi_mean = abs(c_ghi_mean - lt_ghi_mean)
                 err_ghi_median = abs(c_ghi_median - lt_ghi_median)
 
-                # Normalized Deviations (by long-term standard deviation)
-                n_err_t_mean = err_t_mean / lt_t_std
-                n_err_t_median = err_t_median / lt_t_std
-                n_err_ghi_mean = err_ghi_mean / lt_ghi_std
-                n_err_ghi_median = err_ghi_median / lt_ghi_std
-                
-                # Ranking Value = Max of the 4 normalized errors
-                max_error = max(n_err_t_mean, n_err_t_median, n_err_ghi_mean, n_err_ghi_median)
+                # Normalized deviations according to the selected denominator method.
+                n_err_t_mean = err_t_mean / den_t
+                n_err_t_median = err_t_median / den_t
+                n_err_ghi_mean = err_ghi_mean / den_ghi
+                n_err_ghi_median = err_ghi_median / den_ghi
+
+                if method == 'weighted':
+                    weighted_score = (
+                        weights['t_mean'] * n_err_t_mean +
+                        weights['t_median'] * n_err_t_median +
+                        weights['ghi_mean'] * n_err_ghi_mean +
+                        weights['ghi_median'] * n_err_ghi_median
+                    )
+                    proximity_score = weighted_score
+                else:
+                    weighted_score = np.nan
+                    proximity_score = max(n_err_t_mean, n_err_t_median, n_err_ghi_mean, n_err_ghi_median)
                 
                 ranking_details.append({
                     'Year': year,
-                    'Max_Error': max_error,  # This is the normalized max error used for sorting
+                    'Max_Error': proximity_score,
+                    'Proximity_Score': proximity_score,
+                    'Proximity_Method': method,
+                    'Weighted_Score': weighted_score,
                     'Raw_Err_T_Mean': err_t_mean,
                     'Raw_Err_T_Med': err_t_median,
                     'Raw_Err_GHI_Mean': err_ghi_mean,
@@ -748,7 +829,7 @@ class TMYGenerator:
                     'Norm_Err_GHI_Med': n_err_ghi_median
                 })
             
-            # Sort candidates by Max_Error (Ascending)
+            # Sort candidates by proximity score (ascending)
             # Rank 1 = Lowest Max Error
             sorted_details = sorted(ranking_details, key=lambda x: x['Max_Error'])
             
@@ -825,6 +906,9 @@ class TMYGenerator:
                     'Year': item['Year'], 
                     'Prox_Rank': rank + 1,
                     'Max_Error': item.get('Max_Error', np.nan),
+                    'Proximity_Score': item.get('Proximity_Score', np.nan),
+                    'Proximity_Method': item.get('Proximity_Method', np.nan),
+                    'Weighted_Score': item.get('Weighted_Score', np.nan),
                     'Raw_Err_T_Mean': item.get('Raw_Err_T_Mean', np.nan),
                     'Raw_Err_T_Med': item.get('Raw_Err_T_Med', np.nan),
                     'Raw_Err_GHI_Mean': item.get('Raw_Err_GHI_Mean', np.nan),
@@ -1467,10 +1551,22 @@ class TMYGenerator:
         self._run_fs_selection(completeness_threshold=completeness_threshold)
         return self
 
-    def sandia_step_3_proximity_ranking(self):
-        """Step 3: Proximity ranking based on Temp and GHI long-term median/mean."""
+    def sandia_step_3_proximity_ranking(self, normalization_method='std', normalization_weights=None):
+        """Step 3: Proximity ranking based on Temp and GHI long-term median/mean.
+
+        Args:
+            normalization_method (str): One of 'std' (default), 'long_term_mean',
+                'range', or 'weighted'.
+            normalization_weights (dict, optional): Used only when
+                normalization_method='weighted'. Expected keys:
+                't_mean', 't_median', 'ghi_mean', 'ghi_median'.
+                Values must be non-negative and sum to 1.
+        """
         if self.candidate_months_pre_proximity is None: raise RuntimeError("Run sandia_step_2_select_candidates_fs() first.")
-        self._run_proximity_ranking()
+        self._run_proximity_ranking(
+            normalization_method=normalization_method,
+            normalization_weights=normalization_weights
+        )
         return self
 
     def step_2_select_candidate_months(self, completeness_threshold=None):
@@ -1628,7 +1724,7 @@ class TMYGenerator:
         self.sandia_step_7_smooth_junctions(hours=hours, s_factor=s_factor)
         return self
 
-    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='sequential', zero_run_method='eliminate_worst_ranked', completeness_threshold=0.9, save_validation_dfs=True):
+    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='sequential', zero_run_method='eliminate_worst_ranked', completeness_threshold=0.9, save_validation_dfs=True, proximity_normalization_method='std', proximity_normalization_weights=None):
         """
         Runs the complete TMY generation workflow from start to finish.
 
@@ -1637,6 +1733,11 @@ class TMYGenerator:
             persistence_method (str): 'score' or 'sequential'.
             completeness_threshold (float): Threshold for data completeness (0.0 to 1.0)
             save_validation_dfs (bool): If True (default), stores validation dataframes.
+            proximity_normalization_method (str): Proximity denominator method.
+                One of 'std' (default), 'long_term_mean', 'range', or 'weighted'.
+            proximity_normalization_weights (dict, optional): Used when
+                proximity_normalization_method='weighted'. Expected keys are
+                't_mean', 't_median', 'ghi_mean', 'ghi_median' and values must sum to 1.
             ... (other args passed to respective steps)
 
         Returns:
@@ -1646,7 +1747,10 @@ class TMYGenerator:
         self.save_validation_dfs = save_validation_dfs
         self.sandia_step_1_load_and_prepare()
         self.sandia_step_2_select_candidates_fs(completeness_threshold=completeness_threshold)
-        self.sandia_step_3_proximity_ranking()
+        self.sandia_step_3_proximity_ranking(
+            normalization_method=proximity_normalization_method,
+            normalization_weights=proximity_normalization_weights
+        )
         if use_persistence:
             self.sandia_step_4_and_5_apply_persistence(
                 thresholds=persistence_thresholds,
