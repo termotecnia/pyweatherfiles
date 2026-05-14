@@ -15,6 +15,8 @@
 ## Data flow conventions that matter
 - TMY flow is: load/mapping -> FS ranking -> proximity reranking -> persistence filtering -> assemble TMY -> smoothing -> export.
 - `TMYGenerator.generate_tmy()` defaults to `persistence_method='sequential'`; alternative score-based persistence exists.
+- `TMYGenerator.generate_tmy()` now exposes proximity controls: `proximity_normalization_method='std'` and `proximity_normalization_weights=None`.
+- Supported proximity normalization methods are: `std`, `long_term_mean`, `range`, `weighted`.
 - Daily vs hourly is a first-class switch: `data_frequency` and `cdf_method` must be consistent (`daily` data cannot use hourly CDF).
 - Input column names are frequently non-standard; pass explicit mapping (`datetime_col`, `col_temp`, etc.) and preserve exact names/spaces from source files.
 - Hourly smoothing in Step 7 only runs when hourly data is available (`df_hourly` or `hourly_file_path`); otherwise it is skipped.
@@ -29,6 +31,9 @@
 ## Project-specific patterns (follow these)
 - Keep backward compatibility in `tmy.py`: new `sandia_step_*` methods coexist with deprecated aliases and compatibility properties.
 - Many public methods print rich diagnostics to console and store intermediate DataFrames in `validation_step*` attributes; do not remove these side effects lightly.
+- Proximity step API is configurable: `sandia_step_3_proximity_ranking(normalization_method='std', normalization_weights=None)`.
+- For `normalization_method='weighted'`, use exactly 4 keys in `normalization_weights`: `t_mean`, `t_median`, `ghi_mean`, `ghi_median`; all weights must be >= 0 and sum to 1.0.
+- Backward compatibility: legacy `'sawaqed'` is accepted only as deprecated alias and internally mapped to `'weighted'` (warning emitted).
 - Session persistence is expected behavior (`save_session=True` defaults in core classes/functions) and produces files like `TMYGenerator_*.pkl/.json`.
 - Typical scripts are executed from repo root and use relative dataset paths (e.g., `Sevilla_Definitivo_para_convertir_a_epw.xlsx`, `SF_Detached_*.idf`).
 
