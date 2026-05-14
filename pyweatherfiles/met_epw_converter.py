@@ -35,6 +35,8 @@ def suppress_stdout_stderr():
 # --- CONSTANTES Y DEFINICIONES DE COLUMNAS ---
 # Precisión exacta según instrucciones
 _STEFAN_BOLTZMANN = 5.6697e-8
+_COS_ZENITH_MIN = 0.01
+_DNI_MAX_PHYSICAL = 1367.0
 
 COLS_MET_13 = [
     'Month', 'Day', 'Hour', 'DryBulb', 'SkyTemp',
@@ -265,8 +267,21 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
 
     ghi_values = []
     dni_values = []
+    balance_residual_values = []
+    negative_direct_input_count = 0
+    dni_clipped_count = 0
+    low_sun_count = 0
 
     for m, d, h, dir_horiz, diff_horiz in zip(df['Month'], df['Day'], df['Hour'], df['RadDirectaHoriz'], df['RadDifusaHoriz']):
+
+        raw_dir_horiz = float(dir_horiz)
+        raw_diff_horiz = float(diff_horiz)
+        if raw_dir_horiz < 0:
+            negative_direct_input_count += 1
+
+        # Evita propagar radiación negativa de entrada por ruido/redondeo del MET.
+        dir_horiz = max(0.0, raw_dir_horiz)
+        diff_horiz = max(0.0, raw_diff_horiz)
 
         # 1. GHI = Directa Horizontal + Difusa Horizontal
         ghi = dir_horiz + diff_horiz
@@ -280,14 +295,31 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         # 3. Calcular DNI
         cos_zenith = math.cos(math.radians(zenith_deg))
 
-        if cos_zenith <= 0.01:
+        if cos_zenith <= _COS_ZENITH_MIN or dir_horiz <= 0.0:
+            low_sun_count += 1
             dni = 0.0
         else:
-            dni = dir_horiz / cos_zenith
-            if dni > 1367.0:
-                dni = 1367.0
+            dni = max(0.0, dir_horiz / cos_zenith)
+            if dni > _DNI_MAX_PHYSICAL:
+                dni = _DNI_MAX_PHYSICAL
+                dni_clipped_count += 1
 
         dni_values.append(dni)
+        balance_residual = ghi - (diff_horiz + dni * max(cos_zenith, 0.0))
+        balance_residual_values.append(balance_residual)
+
+    if dni_values:
+        dni_arr = np.array(dni_values, dtype=float)
+        residual_arr = np.array(balance_residual_values, dtype=float)
+        print(
+            "  - QA DNI -> "
+            f"min={np.min(dni_arr):.1f}, p95={np.percentile(dni_arr, 95):.1f}, max={np.max(dni_arr):.1f} W/m2 | "
+            f"sol_bajo={low_sun_count}, recortes={dni_clipped_count}, dir_horiz_negativa={negative_direct_input_count}"
+        )
+        print(
+            "  - QA balance (GHI - (DHI + DNI*cos(theta_z))) -> "
+            f"media_abs={np.mean(np.abs(residual_arr)):.2f} W/m2, p95_abs={np.percentile(np.abs(residual_arr), 95):.2f} W/m2"
+        )
 
     _set_epw_values(epw_data, 'global_horizontal_radiation', ghi_values)
     _set_epw_values(epw_data, 'direct_normal_radiation', dni_values)
