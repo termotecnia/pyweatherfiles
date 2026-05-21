@@ -674,7 +674,7 @@ class TMYGenerator:
             warnings.warn("'sawaqed' is deprecated for proximity normalization. Use 'weighted' instead.", DeprecationWarning, stacklevel=3)
             method = 'weighted'
 
-        valid_methods = {'std', 'long_term_mean', 'range', 'weighted'}
+        valid_methods = {'std', 'long_term_mean', 'range', 'weighted', 'no_normalization'}
         if method not in valid_methods:
             raise ValueError(f"Invalid normalization_method '{normalization_method}'. Must be one of {sorted(valid_methods)}")
         return method
@@ -770,9 +770,12 @@ class TMYGenerator:
             elif method == 'long_term_mean':
                 den_t = self._safe_denominator(abs(lt_t_mean))
                 den_ghi = self._safe_denominator(abs(lt_ghi_mean))
-            else:  # 'range'
+            elif method == 'range':
                 den_t = self._safe_denominator(lt_t_range)
                 den_ghi = self._safe_denominator(lt_ghi_range)
+            else:  # 'no_normalization'
+                den_t = 1.0
+                den_ghi = 1.0
             
             ranking_details = []
             
@@ -818,6 +821,8 @@ class TMYGenerator:
                     'Max_Error': proximity_score,
                     'Proximity_Score': proximity_score,
                     'Proximity_Method': method,
+                    'Den_T': den_t,
+                    'Den_GHI': den_ghi,
                     'Weighted_Score': weighted_score,
                     'Raw_Err_T_Mean': err_t_mean,
                     'Raw_Err_T_Med': err_t_median,
@@ -908,6 +913,8 @@ class TMYGenerator:
                     'Max_Error': item.get('Max_Error', np.nan),
                     'Proximity_Score': item.get('Proximity_Score', np.nan),
                     'Proximity_Method': item.get('Proximity_Method', np.nan),
+                    'Den_T': item.get('Den_T', np.nan),
+                    'Den_GHI': item.get('Den_GHI', np.nan),
                     'Weighted_Score': item.get('Weighted_Score', np.nan),
                     'Raw_Err_T_Mean': item.get('Raw_Err_T_Mean', np.nan),
                     'Raw_Err_T_Med': item.get('Raw_Err_T_Med', np.nan),
@@ -1556,7 +1563,7 @@ class TMYGenerator:
 
         Args:
             normalization_method (str): One of 'std' (default), 'long_term_mean',
-                'range', or 'weighted'.
+                'range', 'weighted', or 'no_normalization'.
             normalization_weights (dict, optional): Used only when
                 normalization_method='weighted'. Expected keys:
                 't_mean', 't_median', 'ghi_mean', 'ghi_median'.
@@ -1734,7 +1741,8 @@ class TMYGenerator:
             completeness_threshold (float): Threshold for data completeness (0.0 to 1.0)
             save_validation_dfs (bool): If True (default), stores validation dataframes.
             proximity_normalization_method (str): Proximity denominator method.
-                One of 'std' (default), 'long_term_mean', 'range', or 'weighted'.
+                One of 'std' (default), 'long_term_mean', 'range',
+                'weighted', or 'no_normalization'.
             proximity_normalization_weights (dict, optional): Used when
                 proximity_normalization_method='weighted'. Expected keys are
                 't_mean', 't_median', 'ghi_mean', 'ghi_median' and values must sum to 1.
