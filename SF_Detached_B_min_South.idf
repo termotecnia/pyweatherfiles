@@ -5677,26 +5677,26 @@ Output:VariableDictionary,
 !     Site Outdoor Air Drybulb Temperature,  !- Variable Name
 !     Timestep;                !- Reporting Frequency
 
-Output:Variable,
-    *,                       !- Key Value
-    Zone Mean Air Temperature,  !- Variable Name
-    Hourly;                !- Reporting Frequency
+! Output:Variable,
+!     *,                       !- Key Value
+!     Zone Mean Air Temperature,  !- Variable Name
+!     Hourly;                !- Reporting Frequency
+!
+! Output:Variable,
+!     *,                       !- Key Value
+!     Zone Ideal Loads Zone Total Heating Energy,  !- Variable Name
+!     Hourly;                !- Reporting Frequency
+!
+! Output:Variable,
+!     *,                       !- Key Value
+!     Zone Ideal Loads Zone Total Cooling Energy,  !- Variable Name
+!     Hourly;                !- Reporting Frequency
 
-Output:Variable,
-    *,                       !- Key Value
-    Zone Ideal Loads Zone Total Heating Energy,  !- Variable Name
-    Hourly;                !- Reporting Frequency
+Output:Meter, DistrictHeating:Facility, Runperiod;
+Output:Meter, DistrictCooling:Facility, Runperiod;
 
-Output:Variable,
-    *,                       !- Key Value
-    Zone Ideal Loads Zone Total Cooling Energy,  !- Variable Name
-    Hourly;                !- Reporting Frequency
-
-! Output:Meter, DistrictHeating:Facility, Runperiod;
-! Output:Meter, DistrictCooling:Facility, Runperiod;
-
-! Output:Meter, DistrictHeating:Facility, Monthly;
-! Output:Meter, DistrictCooling:Facility, Monthly;
+Output:Meter, DistrictHeating:Facility, Monthly;
+Output:Meter, DistrictCooling:Facility, Monthly;
 
 
 OutputControl:Files,

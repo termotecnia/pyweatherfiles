@@ -1,4 +1,54 @@
-# met_epw_converter.py
+# -*- coding: utf-8 -*-
+"""
+met_epw_converter.py
+=====================
+
+Bidirectional conversion between the Spanish ``.met`` reference-climate file
+format (used by the CTE/LIDER-CALENER building-energy-code tools) and the
+international **EPW** (EnergyPlus Weather) format.
+
+**The ``.met`` format.** A plain-text file with a metadata line (latitude,
+longitude, elevation) followed by a data block of either 13 columns
+(``Month, Day, Hour, DryBulb, SkyTemp, RadDirectaHoriz, RadDifusaHoriz,
+AbsHum, RelHum, WindSpeed, WindDir, Azimuth, Zenith``, see
+:data:`COLS_MET_13`) or 15 columns (no wind direction, two unused auxiliary
+columns, see :data:`COLS_MET_15`). Because ``.met`` does not store
+temperature-independent physical quantities directly (dew point, atmospheric
+pressure, DNI), this module reconstructs them from what *is* available using
+well known meteorological/astronomical formulas (Magnus dew-point inversion,
+the international barometric formula, Stefan-Boltzmann sky-temperature
+inversion, and exact solar-position-based DNI reconstruction via
+``ladybug.sunpath.Sunpath``).
+
+Public API
+----------
+- :func:`convert_met_to_epw` — the main, most commonly used entry point:
+  ``.met`` (+ an EPW template for anything a ``.met`` cannot provide, such as
+  illuminance/cloud-cover placeholders) -> ``.epw``.
+- :func:`convert_epw_to_met` — the reverse conversion, ``.epw`` -> ``.met``.
+
+Both functions are free functions (no class involved); :func:`convert_met_to_epw`
+persists a reproducible session via
+:func:`~pyweatherfiles.session_manager.save_function_session` when
+``save_session=True`` (the default).
+
+Example
+-------
+Converting an official CTE/LIDER-CALENER reference file to EPW, ready to be
+fed into EnergyPlus or compared against a generated TMY::
+
+    from pyweatherfiles import met_epw_converter
+
+    met_epw_converter.convert_met_to_epw(
+        met_path="sevilla_SP.met",
+        base_epw_path="ESP_Sevilla.083910_IWEC.epw",
+        epw_path="sevilla_met.epw",
+        replace_unused_with_missing=True,
+    )
+
+    # Round-trip back to .met (e.g. to sanity-check the conversion):
+    met_epw_converter.convert_epw_to_met("sevilla_met.epw", "sevilla_roundtrip.met")
+"""
 
 import pandas as pd
 import math
@@ -20,6 +70,20 @@ except ImportError:
 # --- GESTOR DE CONTEXTO ---
 @contextlib.contextmanager
 def suppress_stdout_stderr():
+    """Context manager that temporarily redirects ``stdout``/``stderr`` to
+    the OS null device, silencing any print statements made by third-party
+    code (namely ``ladybug``'s ``EPW.save()``, which can otherwise be quite
+    verbose) for the duration of the ``with`` block.
+
+    ``stdout``/``stderr`` are always restored on exit, even if the code
+    inside the block raises an exception.
+
+    Example:
+        >>> with suppress_stdout_stderr():
+        ...     print("this will not be shown")
+        >>> print("this will be shown")
+        this will be shown
+    """
     with open(os.devnull, 'w') as fnull:
         saved_stdout = sys.stdout
         saved_stderr = sys.stderr
@@ -33,16 +97,27 @@ def suppress_stdout_stderr():
 
 
 # --- CONSTANTES Y DEFINICIONES DE COLUMNAS ---
-# Precisión exacta según instrucciones
+# Exact physical constants as specified by the conversion formulas below.
 _STEFAN_BOLTZMANN = 5.6697e-8
+"""float: Stefan-Boltzmann constant in W/(m2*K4), used to convert between
+sky temperature and horizontal infrared radiation intensity."""
+
 _COS_ZENITH_MIN = 0.01
+"""float: Minimum cosine of the solar zenith angle below which the sun is
+considered to be at/below the horizon (used to zero-out DNI safely instead
+of dividing by a near-zero cosine)."""
+
 _DNI_MAX_PHYSICAL = 1367.0
+"""float: The solar constant (W/m2), used as a physically-motivated upper
+clip for the DNI values reconstructed from ``.met`` horizontal irradiance."""
 
 COLS_MET_13 = [
     'Month', 'Day', 'Hour', 'DryBulb', 'SkyTemp',
     'RadDirectaHoriz', 'RadDifusaHoriz', 'AbsHum', 'RelHum',
     'WindSpeed', 'WindDir', 'Azimuth', 'Zenith'
 ]
+"""list[str]: Column names for the 13-column ``.met`` data-block variant
+(includes wind direction)."""
 
 COLS_MET_15 = [
     'Month', 'Day', 'Hour', 'DryBulb', 'SkyTemp',
@@ -50,14 +125,38 @@ COLS_MET_15 = [
     'WindSpeed', 'Nada1', 'Azimuth', 'Zenith',
     'Nada2', 'Nada3'
 ]
+"""list[str]: Column names for the 15-column ``.met`` data-block variant
+(no wind direction; ``Nada1``/``Nada2``/``Nada3`` are unused placeholder
+columns kept only to match the file's column count)."""
 
 
 # --- FUNCIONES DE CÁLCULO AUXILIARES ---
 
 def _calculate_variable_pressure_from_met(temp_c, rel_hum, wabs, elevation_m):
     """
-    Ingeniería inversa: Despeja la presión atmosférica horaria a partir de la
-    Humedad Absoluta (wabs), Temperatura y Humedad Relativa del archivo .met.
+    Reverse-engineer the hourly atmospheric pressure from the absolute
+    humidity, dry-bulb temperature and relative humidity provided by a
+    ``.met`` file (``.met`` does not store pressure directly).
+
+    Steps: compute the saturation vapour pressure at *temp_c* (Magnus-type
+    formula), scale it by *rel_hum* to get the actual vapour pressure, then
+    solve for atmospheric pressure using the standard psychrometric relation
+    between absolute humidity and vapour pressure. If the result is not a
+    physically plausible sea-level-adjustable pressure (outside
+    50,000-110,000 Pa, which can happen due to rounding noise in the source
+    ``.met``), falls back to the standard barometric estimate for the site's
+    elevation (see :func:`_calculate_atmos_pressure`).
+
+    Args:
+        temp_c (float): Dry-bulb temperature in degrees Celsius.
+        rel_hum (float): Relative humidity in percent (0-100).
+        wabs (float): Absolute humidity (humidity ratio, kg water / kg dry
+            air) as provided by the ``.met`` file's ``AbsHum`` column.
+        elevation_m (float): Site elevation in metres, used only for the
+            barometric-formula fallback.
+
+    Returns:
+        float: Atmospheric station pressure in Pascals.
     """
     # Si la humedad absoluta es 0 (aire extremadamente seco o error de datos),
     # evitamos división por cero y devolvemos la presión constante por altitud.
@@ -79,6 +178,25 @@ def _calculate_variable_pressure_from_met(temp_c, rel_hum, wabs, elevation_m):
         return _calculate_atmos_pressure(elevation_m)
 
 def _calculate_dew_point(temp_c, rh_percent):
+    """Compute the dew-point temperature from dry-bulb temperature and
+    relative humidity by inverting the Magnus formula.
+
+    ``gamma = b*T/(c+T) + ln(RH/100)`` and ``Tdp = c*gamma / (b - gamma)``,
+    with the standard Magnus coefficients ``b=17.62`` and ``c=243.12``.
+
+    Args:
+        temp_c (float): Dry-bulb temperature in degrees Celsius.
+        rh_percent (float): Relative humidity in percent (0-100). If
+            ``<= 0``, *temp_c* is returned unchanged (degenerate case, avoids
+            ``log(0)``).
+
+    Returns:
+        float: Dew-point temperature in degrees Celsius.
+
+    Example:
+        >>> round(_calculate_dew_point(25.0, 50.0), 2)
+        13.86
+    """
     if rh_percent <= 0: return temp_c
     b = 17.62
     c = 243.12
@@ -88,6 +206,23 @@ def _calculate_dew_point(temp_c, rh_percent):
 
 
 def _calculate_atmos_pressure(elevation_m):
+    """Estimate the standard atmospheric pressure at a given elevation using
+    the international barometric formula (ISA, constant lapse-rate model).
+
+    ``P(h) = P0 * (1 - L*h/T0) ** (g*M / (R*L))`` with the standard sea-level
+    constants ``P0=101325 Pa``, ``L=0.0065 K/m``, ``T0=288.15 K``,
+    ``g=9.80665 m/s2``, ``M=0.0289644 kg/mol``, ``R=8.31447 J/(mol*K)``.
+
+    Args:
+        elevation_m (float): Site elevation above sea level, in metres.
+
+    Returns:
+        float: Estimated standard atmospheric pressure in Pascals.
+
+    Example:
+        >>> round(_calculate_atmos_pressure(0), 0)
+        101325.0
+    """
     p0 = 101325
     L = 0.0065
     T0 = 288.15
@@ -99,7 +234,21 @@ def _calculate_atmos_pressure(elevation_m):
 
 
 def _calculate_sky_temperature(hir_radiation):
-    """Calcula la temperatura del cielo a partir de la radiación infrarroja horizontal (EPW -> MET)"""
+    """Invert the Stefan-Boltzmann law to recover an equivalent sky
+    temperature from horizontal infrared radiation intensity (used for the
+    EPW -> ``.met`` direction, since ``.met`` stores ``SkyTemp`` directly).
+
+    ``T_sky = (IR / sigma) ** 0.25 - 273.15``.
+
+    Args:
+        hir_radiation (float): Horizontal infrared radiation intensity in
+            W/m2 (EPW's ``horizontal_infrared_radiation_intensity`` field).
+
+    Returns:
+        float: Equivalent sky temperature in degrees Celsius. Returns
+        ``-273.15`` (absolute zero, a sentinel for "no signal") if
+        *hir_radiation* is ``<= 0``.
+    """
     if hir_radiation <= 0: return -273.15
     sky_temp_k = (hir_radiation / _STEFAN_BOLTZMANN) ** 0.25
     sky_temp_c = sky_temp_k - 273.15
@@ -107,7 +256,21 @@ def _calculate_sky_temperature(hir_radiation):
 
 
 def _calculate_absolute_humidity(temp_c, rel_hum, pressure_pa):
-    """Fórmula psicrométrica (EPW -> MET)"""
+    """Compute absolute humidity (humidity ratio) from dry-bulb temperature,
+    relative humidity and atmospheric pressure using the standard
+    psychrometric relation, for the EPW -> ``.met`` direction (``.met``
+    stores absolute humidity, ``AbsHum``/``wabs``, instead of pressure).
+
+    Args:
+        temp_c (float): Dry-bulb temperature in degrees Celsius.
+        rel_hum (float): Relative humidity in percent (0-100). Values below
+            0.1% are treated as perfectly dry air (returns 0.0 directly).
+        pressure_pa (float): Atmospheric (station) pressure in Pascals.
+
+    Returns:
+        float: Absolute humidity (humidity ratio) in kg water / kg dry air,
+        clipped to be non-negative.
+    """
     if rel_hum < 0.1: return 0.0
     e_s = 610.78 * (10 ** (7.5 * temp_c / (237.3 + temp_c)))
     e = e_s * (rel_hum / 100.0)
@@ -117,9 +280,26 @@ def _calculate_absolute_humidity(temp_c, rel_hum, pressure_pa):
 
 def _set_epw_values(epw_obj, field_name, new_vals):
     """
-    Asigna valores a un campo de Ladybug EPW compensando el desfase interno de point_in_time.
-    MET Hour 1 (01:00) es el índice 0 de new_vals.
-    Ladybug point_in_time espera que el índice 0 sea Jan 1 00:00 (Row 8760 de un año estándar).
+    Assign *new_vals* to a Ladybug ``EPW`` hourly field, compensating for
+    Ladybug's internal "point-in-time" index offset.
+
+    ``.met`` files index ``Hour=1`` as the first record (01:00), whereas
+    Ladybug's *point-in-time* fields (e.g. dry-bulb temperature) expect index
+    0 to correspond to January 1st, 00:00 (i.e. the *end* of the last hour of
+    the year, rotated to the front). This helper shifts the values one
+    position (``[last] + values[:-1]``) before assigning them so the
+    resulting EPW file is correctly aligned; fields that are **not**
+    point-in-time (e.g. cumulative/integrated quantities) are assigned as-is.
+
+    Args:
+        epw_obj (ladybug.epw.EPW): The EPW object being populated.
+        field_name (str): Name of the EPW data-collection attribute to set
+            (e.g. ``'dry_bulb_temperature'``, ``'global_horizontal_radiation'``).
+        new_vals (list or tuple): The new hourly values (length 8760/8784),
+            with index 0 corresponding to ``.met`` ``Hour=1``.
+
+    Returns:
+        None: The field is updated in place on *epw_obj*.
     """
     field = getattr(epw_obj, field_name)
     if field.header.data_type.point_in_time:
@@ -131,8 +311,19 @@ def _set_epw_values(epw_obj, field_name, new_vals):
 
 def _get_epw_values(epw_obj, field_name):
     """
-    Obtiene valores de un campo de Ladybug EPW compensando el desfase interno de point_in_time.
-    Devuelve una lista donde el índice 0 corresponde a MET Hour 1 (01:00).
+    Read hourly values from a Ladybug ``EPW`` field, compensating for the
+    same "point-in-time" index offset described in :func:`_set_epw_values`,
+    so that index 0 of the returned list corresponds to ``.met`` ``Hour=1``
+    (01:00) rather than Ladybug's internal Jan-1st-00:00 convention.
+
+    Args:
+        epw_obj (ladybug.epw.EPW): The EPW object to read from.
+        field_name (str): Name of the EPW data-collection attribute to read
+            (e.g. ``'dry_bulb_temperature'``).
+
+    Returns:
+        list: The hourly values (length 8760/8784), re-aligned so index 0
+        corresponds to ``.met`` ``Hour=1``.
     """
     field = getattr(epw_obj, field_name)
     vals = list(field.values)
@@ -144,6 +335,66 @@ def _get_epw_values(epw_obj, field_name):
 
 # --- CONVERSIÓN MET -> EPW ---
 def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_missing: bool = False, save_session: bool = True, session_dir: str = None) -> bool:
+    """
+    Convert a Spanish ``.met`` reference-climate file into an EPW file.
+
+    This is the main conversion entry point of the module. It parses the
+    ``.met`` metadata line (latitude/longitude/elevation, auto-located within
+    the first 10 lines if not where expected) and its 13- or 15-column data
+    block (see :data:`COLS_MET_13` / :data:`COLS_MET_15`), then:
+
+    1. Loads *base_epw_path* as a template (for header fields and any EPW
+       variable not present in ``.met``, such as illuminance).
+    2. Reconstructs dew point (:func:`_calculate_dew_point`), atmospheric
+       pressure (:func:`_calculate_variable_pressure_from_met`) and
+       horizontal infrared radiation (Stefan-Boltzmann, from ``SkyTemp``).
+    3. Reconstructs **GHI** (``RadDirectaHoriz + RadDifusaHoriz``, negative
+       inputs clipped to 0) and **DNI** using the exact solar position at the
+       midpoint of each hour (``ladybug.sunpath.Sunpath``), clipping to the
+       solar constant (:data:`_DNI_MAX_PHYSICAL`) and printing a short
+       quality-control report (DNI percentiles, number of low-sun hours,
+       number of clips, and the radiation-balance residual
+       ``GHI - (DHI + DNI*cos(zenith))``).
+    4. Forces a standard, non-leap, 8760-hour ``AnalysisPeriod``.
+    5. Optionally (``replace_unused_with_missing=True``) fills the 15 EPW
+       fields that EnergyPlus does not use (illuminances, sky cover,
+       visibility, precipitable water, etc.) with their official EPW
+       "missing value" codes instead of leaving them at 0.
+    6. Saves the resulting EPW to *epw_path* and, if ``save_session=True``
+       (default), persists a reproducible session via
+       :func:`~pyweatherfiles.session_manager.save_function_session`.
+
+    Args:
+        met_path (str): Path to the input ``.met`` file.
+        epw_path (str): Path where the resulting ``.epw`` file will be
+            written.
+        base_epw_path (str): Path to a template EPW file used for header
+            fields (city, comments) and for any variable not derivable from
+            ``.met``.
+        replace_unused_with_missing (bool, optional): If ``True``, neutralise
+            the 15 EnergyPlus-unused EPW fields with their official missing-
+            value codes. Defaults to ``False``.
+        save_session (bool, optional): If ``True`` (default), save a
+            reproducible ``.pkl``/``.json`` session next to *met_path* (or in
+            *session_dir* if given).
+        session_dir (str, optional): Directory to write the session files to.
+            Defaults to the directory of *met_path*.
+
+    Returns:
+        bool: ``True`` if the conversion succeeded and the EPW file was
+        written; ``False`` if any step failed (details are printed to the
+        console).
+
+    Example:
+        >>> from pyweatherfiles import met_epw_converter
+        >>> met_epw_converter.convert_met_to_epw(
+        ...     met_path="sevilla_SP.met",
+        ...     base_epw_path="ESP_Sevilla.083910_IWEC.epw",
+        ...     epw_path="sevilla_met.epw",
+        ...     replace_unused_with_missing=True,
+        ... )  # doctest: +SKIP
+        True
+    """
     print(f"Iniciando conversión de '{met_path}' a '{epw_path}'...")
 
     try:
@@ -389,6 +640,53 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
 
 # --- CONVERSIÓN EPW -> MET ---
 def convert_epw_to_met(epw_path: str, met_path: str) -> bool:
+    """
+    Convert an EPW file back into the 13-column ``.met`` reference-climate
+    format (the inverse of :func:`convert_met_to_epw`).
+
+    Reads dry-bulb temperature, relative humidity, wind speed/direction,
+    global/diffuse horizontal radiation and horizontal infrared radiation
+    from *epw_path* (via :func:`_get_epw_values`, which corrects Ladybug's
+    point-in-time index offset), then reconstructs the ``.met``-specific
+    fields:
+
+    - ``RadDirectaHoriz = GHI - DHI`` (clipped to be ``>= 0``);
+      ``RadDifusaHoriz = DHI`` directly (DNI is **not** stored, since the
+      ``.met`` format only keeps horizontal components).
+    - ``Tcielo`` (sky temperature) via Stefan-Boltzmann inversion of the
+      horizontal infrared radiation intensity (see
+      :func:`_calculate_sky_temperature`).
+    - ``wabs`` (absolute humidity) via the standard psychrometric formula
+      (see :func:`_calculate_absolute_humidity`), using the standard
+      barometric pressure estimate for the EPW's elevation (see
+      :func:`_calculate_atmos_pressure`).
+    - Timestamps are fixed to the (arbitrary, non-leap) year 2005;
+      ``Azimuth``/``Zenith`` are written as ``0`` (not reconstructed, since
+      the ``.met`` format's own file header already fixes the time zone
+      implicitly via longitude).
+
+    The metadata line is written first (``tz*15`` "solar longitude" plus the
+    filename, then ``lat  lon  elevation  0.0``), followed by the
+    space-separated, header-less data block.
+
+    Args:
+        epw_path (str): Path to the source EPW file.
+        met_path (str): Path where the resulting ``.met`` file will be
+            written.
+
+    Returns:
+        bool: ``True`` if the conversion succeeded; ``False`` if reading the
+        EPW or writing the ``.met`` file failed (details are printed to the
+        console).
+
+    Example:
+        >>> from pyweatherfiles import met_epw_converter
+        >>> met_epw_converter.convert_epw_to_met(
+        ...     epw_path="sevilla_tmy.epw",
+        ...     met_path="sevilla_tmy_roundtrip.met",
+        ... )  # doctest: +SKIP
+        True
+    """
     print(f"\n--- Iniciando conversión de '{epw_path}' a '{met_path}' ---")
 
     try:

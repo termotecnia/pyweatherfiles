@@ -54,42 +54,42 @@ converter_tmy_to_epw = hourly_epw_converter.HourlyEPWConverter(
 converter_tmy_to_epw.process(output_pattern='seville_tmy.epw')
 
 
-##
-from pyweatherfiles import epw_comparator
-df = epw_comparator.create_comparison_hourly_dataframe(
-    base_epw_path='seville_2018.epw',
-    generated_epw_path='seville_tmy.epw'
-)
-
-##
-
-from besos.eplus_funcs import run_building, run_energyplus
-from besos.eppy_funcs import get_building
-
-# building = get_building('ALJARAFE CENTER_mod.idf')
-
-# building.run()
+# ##
+# from pyweatherfiles import epw_comparator
+# df = epw_comparator.create_comparison_hourly_dataframe(
+#     base_epw_path='seville_2018.epw',
+#     generated_epw_path='seville_tmy.epw'
+# )
 #
-# run_building(
-#     building=building,
+# ##
 #
-# )
-
+# from besos.eplus_funcs import run_building, run_energyplus
+# from besos.eppy_funcs import get_building
+#
+# # building = get_building('ALJARAFE CENTER_mod.idf')
+#
+# # building.run()
+# #
+# # run_building(
+# #     building=building,
+# #
+# # )
+#
+# # run_energyplus(
+# #     building_path='SF_Detached_D_min_South.idf',
+# #     epw='madrid_2018.epw',
+# #     out_dir='eplus_results_long-term'
+# # )
+#
+#
 # run_energyplus(
-#     building_path='SF_Detached_D_min_South.idf',
-#     epw='madrid_2018.epw',
-#     out_dir='eplus_results_long-term'
+#     building_path='SF_Detached_B_min_South.idf',
+#     epw='seville_tmy.epw',
+#     out_dir='eplus_results_seville_tmy_3'
 # )
-
-
-run_energyplus(
-    building_path='SF_Detached_B_min_South.idf',
-    epw='seville_tmy.epw',
-    out_dir='eplus_results_seville_tmy_3'
-)
-
-# run_energyplus(
-#     building_path='SF_Detached_D_min_South.idf',
-#     epw='madrid_met.epw',
-#     out_dir='eplus_results_met'
-# )
+#
+# # run_energyplus(
+# #     building_path='SF_Detached_D_min_South.idf',
+# #     epw='madrid_met.epw',
+# #     out_dir='eplus_results_met'
+# # )

@@ -1,4 +1,65 @@
 # -*- coding: utf-8 -*-
+"""
+hourly_epw_converter.py
+=========================
+
+Convert already-cleaned hourly weather series (CSV/Excel) into EPW
+(EnergyPlus Weather) files.
+
+This module provides the "last mile" export step of the package's pipeline:
+once a series is clean (no gaps — see
+:class:`~pyweatherfiles.climate_processor.ClimateProcessor` if it is not) and
+either represents several real years or the synthetic Typical Meteorological
+Year produced by :class:`~pyweatherfiles.tmy.TMYGenerator`, it needs to become
+one ``.epw`` file per year that EnergyPlus (or any EPW-compatible tool) can
+consume. That is exactly what :class:`HourlyEPWConverter` does for a single
+data source, and what :class:`BatchHourlyEPWConverter` does for many
+cities/zones at once.
+
+Two public classes
+-------------------
+- :class:`HourlyEPWConverter` — reads one hourly CSV/Excel file, derives any
+  missing physical quantity (relative humidity, atmospheric pressure,
+  diffuse horizontal radiation) with well-known formulas, and writes one EPW
+  file per available year (or per a requested subset of years).
+- :class:`BatchHourlyEPWConverter` — a thin orchestration layer that
+  instantiates one :class:`HourlyEPWConverter` per city/zone in a
+  configuration list/DataFrame and runs them all, optionally auto-detecting
+  the configuration by matching file names against a list of identifiers
+  (see :meth:`BatchHourlyEPWConverter.suggest_config`).
+
+Unit conventions (important!)
+------------------------------
+Input wind speed is assumed to be in **km/h** (converted to m/s by dividing
+by 3.6) and input pressure is assumed to be in **hPa** (converted to Pa by
+multiplying by 100). If your source file already uses SI units, convert it
+back to km/h / hPa first, or the resulting EPW will be silently wrong.
+
+Example
+-------
+Converting a multi-year clean hourly series into one EPW per year::
+
+    from pyweatherfiles import hourly_epw_converter
+
+    converter = hourly_epw_converter.HourlyEPWConverter(
+        file_path="weather_data.csv",      # already clean, no gaps
+        base_epw_path="template.epw",      # provides lat/lon/elevation/time zone
+    )
+    converter.process(output_pattern="city_{year}.epw")
+
+Batch-processing several cities at once, auto-matching data files to EPW
+templates by name::
+
+    from pyweatherfiles import hourly_epw_converter
+
+    config = hourly_epw_converter.BatchHourlyEPWConverter.suggest_config(
+        identifiers=["MADRID", "SEVILLE"],
+        data_files="path/to/data/",
+        base_epw_files="path/to/epws/",
+    )
+    batch = hourly_epw_converter.BatchHourlyEPWConverter(config, output_dir="output/")
+    batch.process_all(output_pattern="{identifier}_{year}.epw")
+"""
 import pandas as pd
 import numpy as np
 import math
@@ -15,8 +76,56 @@ except ImportError:
 
 class HourlyEPWConverter:
     """
-    Clase para leer archivos climáticos horarios (previamente limpiados y rellenados)
-    y exportarlos a formato EPW inhabilitando las variables no requeridas (obsoletas).
+    Convert an already-cleaned hourly weather series (CSV/Excel) into one EPW
+    file per available year, disabling the EPW fields that EnergyPlus does
+    not actually use.
+
+    The constructor only loads and prepares the data (see :meth:`_load_file`);
+    call :meth:`process` (which internally calls :meth:`transform_to_epw` once
+    per year) to actually write the EPW file(s).
+
+    Attributes:
+        file_path (str): Path to the source hourly CSV/Excel file, as passed
+            to the constructor.
+        base_epw_path (str): Path to the EPW template used for header fields
+            and any variable not present in the source file.
+        lat (float): Site latitude in degrees (explicit or auto-extracted
+            from *base_epw_path*).
+        lon (float): Site longitude in degrees.
+        elev (float): Site elevation in metres.
+        tz_hour (float): UTC time-zone offset in hours.
+        preserve_extra (bool): If ``True``, an existing cloud-cover column is
+            kept in ``total_sky_cover`` instead of it being overwritten by
+            the "unused field" neutralisation step.
+        remove_leap_day (bool): If ``True`` (default), drop
+            February 29th from every processed year so the output always
+            has 8760 hours.
+        col_mapping (dict): The effective column-name mapping in use (merges
+            the individual ``col_*``/``datetime_col`` constructor arguments
+            with any *column_mapping* dict override); keys are canonical
+            names (``'datetime'``, ``'temp'``, ``'dew'``, ``'wind_speed'``,
+            ``'ghi'``, ``'dni'``, ``'rh'``, ``'pres'``, ``'wind_dir'``,
+            ``'dhi'``, ``'cloud_cover'``, ``'irh'``), values are the actual
+            column names expected in the source file.
+        datetime_col, col_temp, col_dew, col_wind, col_ghi, col_dni,
+        col_rh, col_pres, col_wind_dir, col_dhi, col_cloud_cover, col_irh (str):
+            Convenience direct attributes mirroring the corresponding entries
+            of :attr:`col_mapping`.
+        df (pandas.DataFrame): The loaded hourly source data, sorted
+            chronologically, with wind speed converted to m/s and pressure
+            to Pa (see :meth:`_load_file`).
+        available_years (list[int]): Calendar years present in :attr:`df`.
+
+    Example:
+        >>> from pyweatherfiles import hourly_epw_converter
+        >>> converter = hourly_epw_converter.HourlyEPWConverter(
+        ...     file_path="weather_data.csv",
+        ...     base_epw_path="template.epw",
+        ... )  # doctest: +SKIP
+        >>> converter.available_years  # doctest: +SKIP
+        [2018, 2019, 2020]
+        >>> converter.process(output_pattern="city_{year}.epw")  # doctest: +SKIP
+        [2018, 2019, 2020]
     """
     
     def __init__(self, file_path, base_epw_path, lat=None, lon=None, elev=None, tz_hour=None,
@@ -35,7 +144,79 @@ class HourlyEPWConverter:
                  column_mapping=None,
                  preserve_extra=False,
                  remove_leap_day=True):
-        
+        """Load and prepare the hourly source file for conversion.
+
+        If *lat*/*lon*/*elev*/*tz_hour* are not all given explicitly, they
+        are auto-extracted from *base_epw_path* via
+        ``ladybug.epw.EPW(base_epw_path).location`` — a ``ValueError`` is
+        raised if any of the four cannot be determined either way.
+
+        Args:
+            file_path (str): Path to the source hourly CSV or Excel file
+                (already cleaned/gap-filled).
+            base_epw_path (str): Path to an EPW file used as a template for
+                header fields (and for lat/lon/elev/tz_hour, if not given
+                explicitly).
+            lat (float, optional): Site latitude in degrees. Auto-extracted
+                from *base_epw_path* if ``None``.
+            lon (float, optional): Site longitude in degrees. Auto-extracted
+                if ``None``.
+            elev (float, optional): Site elevation in metres. Auto-extracted
+                if ``None``.
+            tz_hour (float, optional): UTC time-zone offset in hours.
+                Auto-extracted if ``None``.
+            datetime_col (str, optional): Name of the timestamp column.
+                Defaults to ``'time'``.
+            col_temp (str, optional): Name of the dry-bulb temperature
+                column (degrees Celsius). Defaults to
+                ``'Dry-bulb temperature'``.
+            col_dew (str, optional): Name of the dew-point temperature
+                column (degrees Celsius). Defaults to
+                ``'Dew Point temperature'``.
+            col_wind (str, optional): Name of the wind-speed column
+                (**assumed to be in km/h**, converted to m/s on load).
+                Defaults to ``'Wind Speed'``.
+            col_ghi (str, optional): Name of the global horizontal
+                irradiance column (Wh/m2). Defaults to
+                ``'Global Horizontal Irradiance '`` (note the trailing
+                space, matching common source-file headers).
+            col_dni (str, optional): Name of the direct/beam normal
+                irradiance column (Wh/m2). Defaults to
+                ``'Beam Normal Irradiance '``.
+            col_rh (str, optional): Name of the relative-humidity column
+                (%). Reconstructed via :meth:`_calculate_rh` if the column
+                is absent. Defaults to ``'Relative Humidity'``.
+            col_pres (str, optional): Name of the atmospheric-pressure
+                column (**assumed to be in hPa**, converted to Pa on load).
+                Reconstructed via :meth:`_calculate_atmos_pressure` if
+                absent. Defaults to ``'Pressure'``.
+            col_wind_dir (str, optional): Name of the wind-direction column
+                (degrees). Filled with 0 if absent. Defaults to
+                ``'Wind Direction'``.
+            col_dhi (str, optional): Name of the diffuse horizontal
+                irradiance column (Wh/m2). Reconstructed from GHI/DNI and
+                exact solar position if absent. Defaults to
+                ``'Diffuse Horizontal Irradiance'``.
+            col_cloud_cover (str, optional): Name of the total-cloud-cover
+                column (used for the optional ``total_sky_cover`` EPW
+                field). Defaults to ``'Total Cloud Cover'``.
+            col_irh (str, optional): Name of the horizontal infrared
+                radiation intensity column. Defaults to ``'IRh'``.
+            column_mapping (dict, optional): Extra overrides merged on top
+                of the individual ``col_*``/``datetime_col`` arguments
+                (keys are the canonical names listed in :attr:`col_mapping`).
+            preserve_extra (bool, optional): If ``True``, do not neutralise
+                ``total_sky_cover`` when a cloud-cover column is available.
+                Defaults to ``False``.
+            remove_leap_day (bool, optional): If ``True`` (default), drop
+                February 29th from every processed year so the output always
+                has 8760 hours.
+
+        Raises:
+            ValueError: If latitude/longitude/elevation/time-zone could not
+                be determined either explicitly or from *base_epw_path*.
+        """
+
         # Atributos geográficos
         self.file_path = file_path
         self.base_epw_path = base_epw_path
@@ -102,7 +283,20 @@ class HourlyEPWConverter:
         self._load_file()
 
     def _load_file(self):
-        """Lee el archivo climático y almacena el DataFrame y los años disponibles."""
+        """Read :attr:`file_path` (``.xlsx`` or ``.csv``, auto-detected by
+        extension) into :attr:`df`, sort it chronologically by
+        :attr:`datetime_col`, apply the fixed unit conversions, and record
+        the available years.
+
+        Unit conversions applied (package-wide convention, **not**
+        configurable): wind speed is divided by 3.6 (assumed input km/h ->
+        m/s) and pressure is multiplied by 100 (assumed input hPa -> Pa),
+        whenever those columns are present.
+
+        Returns:
+            None: Populates ``self.df`` and ``self.available_years`` in
+            place.
+        """
         if getattr(self, "file_path", "").endswith('.xlsx'):
             self.df = pd.read_excel(self.file_path)
         else:
@@ -126,14 +320,46 @@ class HourlyEPWConverter:
         self.available_years = [int(i) for i in self.available_years]
 
     def get_year_data(self, year):
-        """Devuelve un DataFrame aislado con los datos de un año específico."""
+        """Return an isolated copy of :attr:`df` restricted to a single
+        calendar year.
+
+        Args:
+            year (int): Calendar year to extract; must be one of
+                :attr:`available_years`.
+
+        Returns:
+            pandas.DataFrame: Rows of :attr:`df` whose :attr:`datetime_col`
+            falls within *year* (a copy, safe to mutate).
+
+        Raises:
+            ValueError: If *year* is not in :attr:`available_years`.
+
+        Example:
+            >>> converter.get_year_data(2019).shape[0] in (8760, 8784)  # doctest: +SKIP
+            True
+        """
         if year not in self.available_years:
             raise ValueError(f"El año {year} no está disponible en este archivo.")
         return self.df[self.df[self.datetime_col].dt.year == year].copy()
 
     def _calculate_rh(self, tdb, tdp):
-        """Cálculo interno Psicométrico de HR (requerido por el EPW)"""
-        if pd.isna(tdb) or pd.isna(tdp): 
+        """Estimate relative humidity from dry-bulb and dew-point
+        temperature using a Magnus-type saturation-vapour-pressure ratio:
+        ``RH = 100 * e_s(Tdp) / e_s(Tdb)``, clipped to ``[0, 100]``.
+
+        Used as a fallback when :attr:`col_rh` is not present in the source
+        file.
+
+        Args:
+            tdb (float): Dry-bulb temperature in degrees Celsius.
+            tdp (float): Dew-point temperature in degrees Celsius (clipped
+                to *tdb* if greater, which would be physically inconsistent).
+
+        Returns:
+            float: Relative humidity in percent (0-100). Returns ``50.0`` if
+            either input is ``NaN``.
+        """
+        if pd.isna(tdb) or pd.isna(tdp):
             return 50.0
         if tdp > tdb:
             tdp = tdb
@@ -143,7 +369,14 @@ class HourlyEPWConverter:
         return min(max(rh, 0.0), 100.0)
 
     def _calculate_atmos_pressure(self):
-        """Cálculo de la presión atmosférica basado en su elevación"""
+        """Estimate the standard atmospheric pressure at :attr:`elev` using
+        the international barometric formula (constant lapse-rate model),
+        used as a fallback when :attr:`col_pres` is not present in the
+        source file.
+
+        Returns:
+            float: Estimated atmospheric pressure in Pascals.
+        """
         p0 = 101325
         L = 0.0065
         T0 = 288.15
@@ -153,7 +386,23 @@ class HourlyEPWConverter:
         return p0 * (1 - (L * self.elev) / T0) ** ((g * M) / (R * L))
 
     def _set_epw_values(self, epw_obj, field_name, new_vals):
-        """Asigna valores a un campo compensando el desfase interno de Ladybug"""
+        """
+        Assign *new_vals* to a Ladybug ``EPW`` hourly field, compensating for
+        Ladybug's internal "point-in-time" index offset (see the identical
+        helper in :mod:`~pyweatherfiles.met_epw_converter` for a detailed
+        explanation of *why* this shift is necessary).
+
+        Args:
+            epw_obj (ladybug.epw.EPW): The EPW object being populated.
+            field_name (str): Name of the EPW data-collection attribute to
+                set (e.g. ``'dry_bulb_temperature'``).
+            new_vals (list or tuple): The new hourly values, index 0 =
+                first hour of the source data (typically Jan 1st, 00:00 or
+                01:00 depending on the source file's convention).
+
+        Returns:
+            None: The field is updated in place on *epw_obj*.
+        """
         field = getattr(epw_obj, field_name)
         if field.header.data_type.point_in_time:
             shifted = [new_vals[-1]] + list(new_vals[:-1])
@@ -163,8 +412,41 @@ class HourlyEPWConverter:
 
     def transform_to_epw(self, df_year, output_epw_path, base_epw_path=None):
         """
-        Traslada los valores del DataFrame a un archivo .epw que sirve de base,
-        realizando cálculos (DHI, Psicometría, Atmosférica) y desactivando las variables obsoletas.
+        Convert a single year's worth of hourly data into an EPW file.
+
+        Steps: adjust the year to exactly 8760 (non-leap) or 8784 (leap)
+        hours according to :attr:`remove_leap_day` (dropping February 29th,
+        padding a warning if too short, or truncating if too long); load
+        *base_epw_path* (or :attr:`base_epw_path`) as a template and update
+        its header (lat/lon/elevation/time-zone/comments) and
+        ``AnalysisPeriod``; extract and inject (via :meth:`_set_epw_values`)
+        dry-bulb/dew-point temperature, relative humidity (reconstructed via
+        :meth:`_calculate_rh` if absent), wind speed/direction (0 if
+        direction absent), global/direct-normal/diffuse-horizontal radiation
+        (diffuse reconstructed from GHI/DNI and exact solar position via
+        ``ladybug.sunpath.Sunpath`` if absent) and atmospheric pressure
+        (reconstructed via :meth:`_calculate_atmos_pressure` if absent);
+        optionally inject cloud cover / horizontal infrared radiation if
+        those columns exist; neutralise the 15 EnergyPlus-unused EPW fields
+        with their official "missing value" codes; finally save the EPW.
+
+        Args:
+            df_year (pandas.DataFrame): A single year's hourly data (as
+                returned by :meth:`get_year_data`).
+            output_epw_path (str): Path where the resulting ``.epw`` file
+                will be written.
+            base_epw_path (str, optional): EPW template to use instead of
+                :attr:`base_epw_path` for this specific call.
+
+        Returns:
+            bool: ``True`` if the EPW file was written successfully;
+            ``False`` if loading the template or saving the result failed
+            (details printed to the console).
+
+        Example:
+            >>> df_2019 = converter.get_year_data(2019)  # doctest: +SKIP
+            >>> converter.transform_to_epw(df_2019, "city_2019.epw")  # doctest: +SKIP
+            True
         """
         base_epw_path = base_epw_path or self.base_epw_path
         df_y = df_year.copy()
@@ -336,9 +618,43 @@ class HourlyEPWConverter:
 
     def process(self, output_dir=".", years=None, remove_leap_day=None, output_pattern=None, base_epw_path=None, save_session=True, session_dir=None, **kwargs):
         """
-        Método directo que automatiza el proceso de conversión.
-        Toma una lista de años (o todos si no se especifican) y genera un EPW para cada uno
-        a partir del archivo que ya viene rellenado.
+        Automate the full conversion process: generate one EPW file per
+        requested year (or every year in :attr:`available_years` if *years*
+        is ``None``) by calling :meth:`transform_to_epw` once per year.
+
+        Args:
+            output_dir (str, optional): Directory where the EPW files will
+                be written. Defaults to ``"."`` (current directory).
+            years (list[int], optional): Specific years to process. Years
+                not present in :attr:`available_years` are skipped with a
+                warning. Defaults to all available years.
+            remove_leap_day (bool, optional): Overrides :attr:`remove_leap_day`
+                for this call if given.
+            output_pattern (str, optional): Filename pattern passed through
+                ``str.format(year=..., **kwargs)`` (e.g.
+                ``'city_{year}.epw'``). Falls back to
+                ``'{source_basename}_{year}.epw'`` if ``None`` or if the
+                pattern references an unknown key.
+            base_epw_path (str, optional): Overrides :attr:`base_epw_path`
+                for this call if given.
+            save_session (bool, optional): If ``True`` (default), persist a
+                reproducible ``.pkl``/``.json`` session (recording
+                *file_path*, *base_epw_path* and the successfully processed
+                years) via
+                :func:`~pyweatherfiles.session_manager.save_object_session`.
+            session_dir (str, optional): Directory for the session files.
+                Defaults to the directory of :attr:`file_path`.
+            **kwargs: Extra keyword arguments forwarded to
+                ``output_pattern.format()`` (e.g. an ``identifier`` used by
+                :class:`BatchHourlyEPWConverter`).
+
+        Returns:
+            list[int]: The years that were successfully converted and saved
+            (a subset of the requested *years*/:attr:`available_years`).
+
+        Example:
+            >>> converter.process(output_pattern="seville_{year}.epw")  # doctest: +SKIP
+            [2018, 2019, 2020]
         """
         base_epw_path = base_epw_path or self.base_epw_path
         if remove_leap_day is not None:
@@ -398,18 +714,63 @@ class HourlyEPWConverter:
 
 class BatchHourlyEPWConverter:
     """
-    Clase para iterar de manera masiva sobre múltiples archivos climáticos
-    de diferentes ciudades o zonas climáticas y generar sus respectivos EPW.
+    Iterate :class:`HourlyEPWConverter` over multiple weather-data files
+    (e.g. one per city or climate zone) and generate their respective EPW
+    files in a single call.
+
+    This class does not implement any conversion logic itself — it validates
+    a configuration list, instantiates one :class:`HourlyEPWConverter` per
+    entry, and delegates to :meth:`HourlyEPWConverter.process`.
+
+    Attributes:
+        cities_config (list[dict]): One configuration dict per city/zone,
+            each containing at least the mandatory keys returned by
+            :meth:`get_mandatory_config_keys` (``'file_path'``,
+            ``'base_epw_path'``), plus any optional keys
+            (``'lat'``/``'lon'``/``'elev'``/``'tz_hour'``, ``'years'``, any
+            of the ``col_*``/``column_mapping``/``preserve_extra``
+            :class:`HourlyEPWConverter` constructor options, and any free-
+            form key used to format ``output_pattern``, e.g.
+            ``'identifier'``). If a :class:`pandas.DataFrame` is passed to
+            the constructor, it is converted to this list-of-dicts form via
+            ``to_dict(orient='records')``.
+        output_dir (str): Directory where every generated EPW file will be
+            written.
+
+    Example:
+        >>> from pyweatherfiles import hourly_epw_converter
+        >>> cities_config = [
+        ...     {"file_path": "madrid.xlsx", "base_epw_path": "madrid_template.epw", "identifier": "MADRID"},
+        ...     {"file_path": "seville.xlsx", "base_epw_path": "seville_template.epw", "identifier": "SEVILLE"},
+        ... ]
+        >>> batch = hourly_epw_converter.BatchHourlyEPWConverter(cities_config, output_dir="output/")  # doctest: +SKIP
+        >>> batch.process_all(output_pattern="{identifier}_{year}.epw")  # doctest: +SKIP
     """
 
     # Atributo de clase con las llaves requeridas
     MANDATORY_KEYS = ['file_path', 'base_epw_path']
+    """list[str]: Class attribute listing the configuration keys every
+    entry of :attr:`cities_config` must contain (see
+    :meth:`get_mandatory_config_keys`)."""
 
     @classmethod
     def get_mandatory_config_keys(cls):
         """
-        Imprime y devuelve la lista de llaves obligatorias que cada diccionario
-        / fila de DataFrame debe contener en la configuración 'cities_config'.
+        Print and return the list of mandatory configuration keys every
+        dict/DataFrame row in ``cities_config`` must contain.
+
+        Returns:
+            list[str]: ``['file_path', 'base_epw_path']`` (also available
+            directly as :attr:`MANDATORY_KEYS`).
+
+        Example:
+            >>> from pyweatherfiles.hourly_epw_converter import BatchHourlyEPWConverter
+            >>> BatchHourlyEPWConverter.get_mandatory_config_keys()
+            Las llaves de configuración obligatorias para cada archivo son:
+             - 'file_path': Ruta al Excel u origen de datos horario.
+             - 'base_epw_path': Plantilla .epw a usar como base para este archivo.
+            Las llaves opcionales (pero recomendables si no se pueden extraer del EPW de base) son: 'lat', 'lon', 'elev', 'tz_hour'.
+            ['file_path', 'base_epw_path']
         """
         print("Las llaves de configuración obligatorias para cada archivo son:")
         for key in cls.MANDATORY_KEYS:
@@ -421,11 +782,23 @@ class BatchHourlyEPWConverter:
         return cls.MANDATORY_KEYS
 
     def __init__(self, cities_config, output_dir="."):
-        """
-        cities_config: Lista de diccionarios, o un pandas DataFrame.
-          Debe contener obligatoriamente las llaves expuestas en `get_mandatory_config_keys()`.
-          - 'years': (opcional) Lista de años a procesar [2013, 2014]. Si se omite, procesa todos.
-          - Toda llave extra en el diccionario se asume como variable para formatear el 'output_pattern'.
+        """Store the batch configuration and output directory (no
+        conversion happens yet — call :meth:`process_all` for that).
+
+        Args:
+            cities_config (list[dict] or pandas.DataFrame): One entry per
+                city/zone. Must contain at least the keys from
+                :meth:`get_mandatory_config_keys` (``'file_path'``,
+                ``'base_epw_path'``). Optional keys: ``'lat'``, ``'lon'``,
+                ``'elev'``, ``'tz_hour'``, ``'years'`` (list of years to
+                process for that entry only), any
+                :class:`HourlyEPWConverter` ``col_*``/``column_mapping``/
+                ``preserve_extra`` constructor option, and any free-form key
+                used to format ``output_pattern`` in :meth:`process_all`
+                (e.g. ``'identifier'``). A DataFrame is converted internally
+                via ``to_dict(orient='records')``.
+            output_dir (str, optional): Directory where every generated EPW
+                file will be written. Defaults to ``"."``.
         """
         if isinstance(cities_config, pd.DataFrame):
             self.cities_config = cities_config.to_dict(orient='records')
@@ -437,15 +810,44 @@ class BatchHourlyEPWConverter:
     @classmethod
     def suggest_config(cls, identifiers, data_files, base_epw_files):
         """
-        Genera automáticamente la lista de configuración 'cities_config' buscando
-        coincidencias de una lista de identificadores (ej: nombres de ciudades, zonas)
-        dentro de dos orígenes (archivos de datos y plantillas EPW).
-        Además, abre cada plantilla EPW encontrada para extraer de ella
-        la latitud, longitud, elevación y huso horario.
+        Auto-generate a ``cities_config`` list by matching a list of
+        identifiers (e.g. city names, climate-zone codes) against two
+        sources of files (hourly data files and EPW templates), and extract
+        latitude/longitude/elevation/time-zone from each matched EPW
+        template via Ladybug.
 
-        identifiers: Lista de strings, ej: ['MADRID', 'SEVILLA', 'C3']
-        data_files: Lista de rutas a los archivos .xlsx/.csv, o ruta a la carpeta.
-        base_epw_files: Lista de rutas a los archivos .epw base, o ruta a la carpeta.
+        Matching rule: for each *identifier*, the first *data_files* entry
+        whose (lower-cased) base name contains the (lower-cased) identifier
+        as a substring is taken as its data file, and likewise for
+        *base_epw_files*. Identifiers with no match on either side are
+        skipped (with a warning printed); no config entry is created for
+        them.
+
+        Args:
+            identifiers (list[str]): Identifiers to search for, e.g.
+                ``['MADRID', 'SEVILLE']``.
+            data_files (list[str] or str): List of paths to ``.xlsx``/``.csv``
+                data files, or a directory path (in which case every
+                ``.xlsx``/``.csv`` file inside it is used).
+            base_epw_files (list[str] or str): List of paths to ``.epw``
+                template files, or a directory path (every ``.epw`` file
+                inside it is used).
+
+        Returns:
+            list[dict]: One config dict per successfully matched identifier,
+            with keys ``'identifier'``, ``'file_path'``, ``'base_epw_path'``,
+            ``'lat'``, ``'lon'``, ``'elev'`` and ``'tz_hour'`` — ready to be
+            passed straight to the :class:`BatchHourlyEPWConverter`
+            constructor.
+
+        Example:
+            >>> from pyweatherfiles import hourly_epw_converter
+            >>> config = hourly_epw_converter.BatchHourlyEPWConverter.suggest_config(
+            ...     identifiers=["MADRID", "SEVILLE"],
+            ...     data_files="path/to/data/",
+            ...     base_epw_files="path/to/epws/",
+            ... )  # doctest: +SKIP
+            >>> batch = hourly_epw_converter.BatchHourlyEPWConverter(config, output_dir="output/")  # doctest: +SKIP
         """
         # Permite pasar directamente la ruta a los directorios o listas de archivos
         if isinstance(data_files, str) and os.path.isdir(data_files):
@@ -490,10 +892,47 @@ class BatchHourlyEPWConverter:
 
     def process_all(self, output_pattern=None, remove_leap_day=True, save_session=True, session_dir=None, **global_kwargs):
         """
-        Ejecuta el procesado iterando cada ciudad.
-        Las variables pasadas en global_kwargs se combinan con las variables individuales
-        de cada ciudad para rellenar las llaves del output_pattern.
-        Acepta configuración como profile_method, window_weeks, remove_leap_day.
+        Run the conversion for every entry in :attr:`cities_config`: for
+        each one, validate that the mandatory keys are present, instantiate
+        a :class:`HourlyEPWConverter` (forwarding lat/lon/elev/tz_hour and
+        any recognised ``col_*``/``column_mapping``/``preserve_extra``
+        options found in the entry), and call
+        :meth:`HourlyEPWConverter.process` on it.
+
+        *global_kwargs* are merged with each entry's own free-form keys
+        (entry-specific values win) to fill in ``output_pattern`` — this is
+        how, for example, an ``'identifier'`` key set per-city in
+        :attr:`cities_config` (see :meth:`suggest_config`) ends up
+        substituted into a pattern like ``'{identifier}_{year}.epw'``.
+
+        Args:
+            output_pattern (str, optional): Filename pattern forwarded to
+                :meth:`HourlyEPWConverter.process` for every entry (e.g.
+                ``'{identifier}_{year}.epw'``).
+            remove_leap_day (bool, optional): Forwarded to every
+                :meth:`HourlyEPWConverter.process` call. Defaults to
+                ``True``.
+            save_session (bool, optional): If ``True`` (default), persist a
+                reproducible ``.pkl``/``.json`` session for the **batch as a
+                whole** (not per-city; each :class:`HourlyEPWConverter` call
+                also saves/does not save its own session according to its
+                own defaults) via
+                :func:`~pyweatherfiles.session_manager.save_object_session`.
+            session_dir (str, optional): Directory for the batch session
+                files. Defaults to :attr:`output_dir`.
+            **global_kwargs: Extra keyword arguments merged into every
+                entry's ``output_pattern.format()`` call (entry-specific
+                keys take precedence over these).
+
+        Returns:
+            dict[str, list[int]]: Mapping of each processed entry's
+            ``file_path`` to the list of years it successfully converted
+            (as returned by :meth:`HourlyEPWConverter.process`). Entries
+            missing a mandatory key are skipped and absent from the result.
+
+        Example:
+            >>> batch.process_all(output_pattern="{identifier}_{year}.epw")  # doctest: +SKIP
+            {'madrid.xlsx': [2018, 2019], 'seville.xlsx': [2018, 2019]}
         """
         results_summary = {}
         for config in self.cities_config:

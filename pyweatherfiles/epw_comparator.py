@@ -1,4 +1,44 @@
 # epw_comparator.py
+"""
+epw_comparator.py
+==================
+
+Structural, statistical and hourly comparison tools for pairs of EPW files.
+
+This module answers a recurring question in the package's workflow: *"how
+close is the EPW I generated (TMY, converted from ``.met``, or an individual
+year) to a reference EPW?"* It offers four independent, free (non-class)
+functions, from a quick diagnostic dump to a full hour-by-hour DataFrame
+suitable for statistical testing or plotting:
+
+- :func:`explore_epw_structure` — dumps the shape of ``EPW.to_dict()`` for a
+  single file; a debugging helper for locating where Ladybug stores what.
+- :func:`compare_epw_files` — prints a console report (via ``tabulate``)
+  comparing header metadata and the descriptive statistics of the difference
+  (generated - base) for 9 key climate variables.
+- :func:`create_comparison_dataframe` — builds a side-by-side DataFrame from
+  Ladybug's ``EPW.to_dict()['data_collections']``, with Spanish column names
+  suffixed ``_Base``/``_Generado``.
+- :func:`create_comparison_hourly_dataframe` — the most commonly used
+  function: reads both EPW files directly as CSV (skipping the 8 header
+  lines) and returns a single DataFrame with ``Base_*``/``Generated_*``
+  columns for all 35 official EPW data-dictionary fields, aligned hour by
+  hour.
+
+Example
+-------
+Comparing a generated TMY against the official reference EPW used to build it::
+
+    from pyweatherfiles import epw_comparator
+
+    epw_comparator.compare_epw_files("ESP_Sevilla.083910_IWEC.epw", "sevilla_tmy.epw")
+
+    df = epw_comparator.create_comparison_hourly_dataframe(
+        base_epw_path="ESP_Sevilla.083910_IWEC.epw",
+        generated_epw_path="sevilla_tmy.epw",
+    )
+    print(df[["Base_DryBulbTemp", "Generated_DryBulbTemp"]].describe())
+"""
 
 import pandas as pd
 from tabulate import tabulate
@@ -12,11 +52,26 @@ except ImportError:
 
 def explore_epw_structure(epw_path: str):
     """
-    Carga un archivo EPW e imprime la estructura de su objeto y del diccionario
-    generado por .to_dict() para entender cómo acceder a sus datos.
+    Load an EPW file and print the structure of the underlying Ladybug
+    object (via ``EPW.to_dict()``): every top-level key, its Python type, and
+    a short value preview.
+
+    This is primarily a **debugging/discovery** helper, useful when working
+    with a new/unexpected Ladybug version to figure out where the hourly
+    data collections live inside the dict (look for keys whose preview says
+    "List with 8760 elements").
 
     Args:
-        epw_path (str): Ruta al archivo EPW que se desea explorar.
+        epw_path (str): Path to the EPW file to inspect.
+
+    Returns:
+        None: Everything is printed to the console; nothing is returned.
+
+    Example:
+        >>> from pyweatherfiles import epw_comparator
+        >>> epw_comparator.explore_epw_structure("sevilla_tmy.epw")  # doctest: +SKIP
+        --- Explorando la Estructura del Archivo EPW: 'sevilla_tmy.epw' ---
+        ...
     """
     print(f"\n--- Explorando la Estructura del Archivo EPW: '{epw_path}' ---")
     try:
@@ -60,8 +115,33 @@ def explore_epw_structure(epw_path: str):
 
 def compare_epw_files(base_epw_path: str, generated_epw_path: str):
     """
-    Compara dos archivos EPW, uno base y uno generado, y muestra un resumen
-    de las diferencias en sus metadatos y datos horarios.
+    Print a console report (via ``tabulate``) comparing a base/reference EPW
+    against a generated one: first their header metadata (city, latitude,
+    longitude, time zone, elevation, comments), then descriptive statistics
+    (count of changed values, mean/std/min/max) of the hourly difference
+    (*generated - base*) for 9 key climate variables (dry-bulb and dew-point
+    temperature, relative humidity, atmospheric pressure, direct-normal and
+    diffuse-horizontal radiation, horizontal infrared radiation, wind speed
+    and direction).
+
+    Both files are loaded with ``ladybug.epw.EPW``; any field that cannot be
+    read is reported as ``"Error al leer"`` instead of raising.
+
+    Args:
+        base_epw_path (str): Path to the reference/base EPW file.
+        generated_epw_path (str): Path to the EPW file to compare against
+            the base (e.g. a TMY you just generated).
+
+    Returns:
+        None: The comparison is printed to the console; nothing is returned.
+
+    Example:
+        >>> from pyweatherfiles import epw_comparator
+        >>> epw_comparator.compare_epw_files(
+        ...     "ESP_Sevilla.083910_IWEC.epw", "sevilla_tmy.epw"
+        ... )  # doctest: +SKIP
+        --- Iniciando Comparación de Archivos EPW ---
+        ...
     """
     print("--- Iniciando Comparación de Archivos EPW ---")
     print(f"  Archivo Base:      '{base_epw_path}'")
@@ -127,7 +207,35 @@ def compare_epw_files(base_epw_path: str, generated_epw_path: str):
 
 def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> pd.DataFrame:
     """
-    Crea un único DataFrame de Pandas para comparar dos archivos EPW usando Ladybug.
+    Build a single, side-by-side pandas DataFrame comparing two EPW files,
+    using Ladybug's structured ``EPW.to_dict()['data_collections']`` as the
+    data source (as opposed to :func:`create_comparison_hourly_dataframe`,
+    which parses the raw CSV bytes directly).
+
+    For each of 9 mapped climate variables (see the ``column_map`` in the
+    source code, e.g. ``"Dry Bulb Temperature" -> "TempBulboSeco"``), two
+    columns are added: ``{short_name}_Base`` and ``{short_name}_Generado``.
+    The DataFrame index is built from the ``year``/``month``/``day``/``hour``
+    columns found in the base file's data collections when possible,
+    otherwise a plain numeric index is used (with a warning printed).
+
+    Args:
+        base_epw_path (str): Path to the reference/base EPW file.
+        generated_epw_path (str): Path to the EPW file to compare against
+            the base.
+
+    Returns:
+        pandas.DataFrame: Side-by-side comparison DataFrame with
+        Spanish-named, ``_Base``/``_Generado``-suffixed columns. Returns an
+        **empty** DataFrame if either file cannot be loaded or parsed (errors
+        are printed to the console).
+
+    Example:
+        >>> from pyweatherfiles import epw_comparator
+        >>> df = epw_comparator.create_comparison_dataframe(
+        ...     "ESP_Sevilla.083910_IWEC.epw", "sevilla_tmy.epw"
+        ... )  # doctest: +SKIP
+        >>> df[["TempBulboSeco_Base", "TempBulboSeco_Generado"]].head()  # doctest: +SKIP
     """
     print("\n--- Creando DataFrame Comparativo (Método Ladybug) ---")
     try:
@@ -145,6 +253,10 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
         # Intentamos obtener el nombre. Si 'header' es un dict, buscamos 'name'.
         # Si 'header' es un string (versiones antiguas), lo usamos directamente.
         def get_header_name(collection):
+            """Return the human-readable variable name of a Ladybug data
+            collection dict, handling both the modern (``header`` is a dict
+            with a ``'name'`` key) and legacy (``header`` is already a
+            string) ``EPW.to_dict()`` formats."""
             header = collection.get('header')
             if isinstance(header, dict):
                 return header.get('name', 'Unknown')
@@ -202,8 +314,46 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
 
 def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: str, save_session: bool = True, session_dir: str = None) -> pd.DataFrame:
     """
-    Compara dos archivos EPW directamente como CSV.
-    CORREGIDO: Usa encoding='latin-1' para evitar errores con tildes.
+    Build a single, side-by-side hourly DataFrame comparing two EPW files by
+    reading both **directly as CSV** (the 8 EPW header lines are skipped, and
+    all 35 official EPW data-dictionary field names are assigned manually),
+    rather than going through Ladybug's object model.
+
+    This is **the function used in the article's Seville case study** for
+    hour-by-hour comparisons: it is faster than the Ladybug-based
+    :func:`create_comparison_dataframe`, does not depend on Ladybug's
+    ``to_dict()`` internal structure, and reads with ``encoding='latin-1'``
+    so accented characters in Spanish-origin EPW files (city names, comments)
+    do not raise a ``UnicodeDecodeError``.
+
+    Every one of the 35 EPW fields gets two columns in the result:
+    ``Base_{field}`` and ``Generated_{field}`` (e.g. ``Base_DryBulbTemp``,
+    ``Generated_GlobalHorzRad``), aligned row-by-row (hour-by-hour) between
+    the two files.
+
+    Args:
+        base_epw_path (str): Path to the reference/base EPW file.
+        generated_epw_path (str): Path to the EPW file to compare against
+            the base.
+        save_session (bool, optional): If ``True`` (default), save a
+            reproducible ``.pkl``/``.json`` session (inputs + resulting
+            DataFrame's shape/columns) via
+            :func:`~pyweatherfiles.session_manager.save_function_session`.
+        session_dir (str, optional): Directory to write the session files
+            to. Defaults to the directory of *base_epw_path*.
+
+    Returns:
+        pandas.DataFrame: The hourly comparison DataFrame with
+        ``Base_*``/``Generated_*`` columns. Returns an **empty** DataFrame if
+        either file cannot be read (errors are printed to the console).
+
+    Example:
+        >>> from pyweatherfiles import epw_comparator
+        >>> df = epw_comparator.create_comparison_hourly_dataframe(
+        ...     base_epw_path="ESP_Sevilla.083910_IWEC.epw",
+        ...     generated_epw_path="sevilla_tmy.epw",
+        ... )  # doctest: +SKIP
+        >>> (df["Generated_DryBulbTemp"] - df["Base_DryBulbTemp"]).describe()  # doctest: +SKIP
     """
     print("\n--- Comparando Archivos EPW con Nombres de Columna Descriptivos ---")
 

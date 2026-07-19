@@ -1,0 +1,3 @@
+# Placeholder so this (otherwise empty) directory is kept under version control.
+# Sphinx looks for custom Jinja2 templates here via templates_path in conf.py.
+

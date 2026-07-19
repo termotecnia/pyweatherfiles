@@ -1,8 +1,58 @@
 # -*- coding: utf-8 -*-
 """
-Degree Hours Calculator
-Calculates heating and cooling degree hours from EPW files
-using setpoint temperatures from IDF files or custom dictionaries.
+degree_hours.py
+=================
+
+Heating/cooling degree-hours from an EPW file, using setpoints extracted
+from an EnergyPlus IDF model or defined through a custom dictionary, plus a
+multi-EPW comparative analyser.
+
+Degree-hours (heating degree-hours, HDH, and cooling degree-hours, CDH) are
+one of the simplest and most widely used indicators of a building's thermal
+demand: for every hour where the outdoor dry-bulb temperature is below the
+heating setpoint (or above the cooling setpoint), the temperature difference
+is accumulated. This module computes them from an EPW weather file and a
+source of setpoint temperatures, with hourly/daily/monthly/yearly
+aggregation, optional date/hour-of-day filtering, and HVAC-availability
+masking (hours where the system is scheduled off do not count).
+
+Two public classes
+-------------------
+- :class:`DegreeHoursCalculator` — the core engine: one EPW in, HDH/CDH out,
+  at any of 4 aggregation frequencies, with setpoints either parsed from a
+  real EnergyPlus IDF (dual-setpoint thermostats, ``SCHEDULE:COMPACT`` and
+  ``SCHEDULE:YEAR`` schedules, ``IdealLoadsAirSystem`` availability) or
+  defined via a lightweight Python dict (constant, daily, weekly or
+  hourly-weekly patterns — no IDF required).
+- :class:`EpwBatchAnalyzer` — runs :class:`DegreeHoursCalculator` over
+  *several* EPW files and *several* hour-of-day scenarios at once, producing
+  a single comparative DataFrame with ``(epw_name, variable)`` MultiIndex
+  columns — ideal for "TMY vs. real years vs. reference file" tables.
+
+Example
+-------
+Single-EPW degree-hours with setpoints from a real IDF model::
+
+    from pyweatherfiles.degree_hours import DegreeHoursCalculator
+
+    calc = DegreeHoursCalculator("city_tmy.epw")
+    results = calc.calculate("building_model.idf", frequency=["hourly", "daily", "monthly"], mode="both")
+    print(results["monthly"])
+    calc.export_results("degree_hours.xlsx")
+
+Comparing a TMY against several real years and a custom setpoint schedule::
+
+    from pyweatherfiles.degree_hours import EpwBatchAnalyzer
+
+    batch = EpwBatchAnalyzer(
+        epw_paths=["city_tmy.epw", "city_2019.epw", "city_2020.epw"],
+        setpoint_source={"type": "constant", "heating": 20.0, "cooling": 25.0},
+        epw_variables={"global_horizontal_radiation": ["sum", "mean"]},
+        hours={"morning": list(range(9)), "all_day": list(range(24))},
+        frequencies=["monthly"],
+    )
+    results = batch.run()
+    batch.export("batch_degree_hours.xlsx")
 
 Author: Daniel Sánchez-García
 """
@@ -98,28 +148,68 @@ class DegreeHoursCalculator:
     Calculates heating and cooling degree hours from EPW weather data
     using setpoint temperatures from IDF files or custom dictionaries.
 
+    Instantiate once per EPW file, then call :meth:`calculate` (optionally
+    preceded by :meth:`plot` for a visual sanity-check of the setpoints).
+
     Attributes
     ----------
-    temperatures : pd.Series
-        Hourly dry-bulb temperatures from the EPW.
+    epw_path : str
+        Path to the source EPW file, as passed to the constructor.
     year : int
-        Reference year assigned to the EPW data.
+        Reference year assigned to the EPW hourly index (from the EPW
+        header, or overridden via the constructor's *year* argument).
+    temperatures : pd.Series
+        Hourly dry-bulb temperatures from the EPW, indexed by an hourly
+        ``DatetimeIndex`` for :attr:`year`.
+    epw_data : pd.DataFrame
+        All available EPW hourly variables (up to 21 possible columns —
+        temperature, dew point, relative humidity, pressure,
+        radiation/illuminance components, wind, sky cover, visibility,
+        ceiling height, horizontal IR, precipitable water, aerosol optical
+        depth, snow, precipitation), indexed like :attr:`temperatures`. Also
+        the data source used by :class:`EpwBatchAnalyzer` and by
+        :class:`~pyweatherfiles.epw_trend_analyzer.EpwTrendAnalyzer`.
     result_hourly : pd.DataFrame or None
-        Hourly degree-hours after calling calculate().
+        Hourly degree-hours after calling :meth:`calculate` (``None`` until
+        then, or if ``'hourly'`` was not in the requested *frequency*).
     result_daily : pd.DataFrame or None
-        Daily totals after calling calculate().
+        Daily totals after calling :meth:`calculate`.
     result_monthly : pd.DataFrame or None
-        Monthly totals after calling calculate().
+        Monthly totals after calling :meth:`calculate`.
+    result_yearly : pd.DataFrame or None
+        Yearly totals after calling :meth:`calculate`.
+
+    Example
+    -------
+    >>> from pyweatherfiles.degree_hours import DegreeHoursCalculator
+    >>> calc = DegreeHoursCalculator("city_tmy.epw")  # doctest: +SKIP
+    >>> results = calc.calculate("building.idf", frequency=["monthly"], mode="both")  # doctest: +SKIP
+    >>> results["monthly"].head()  # doctest: +SKIP
     """
 
     def __init__(self, epw_path: str, year: Optional[int] = None):
         """
+        Load an EPW file and prepare its hourly temperature series and full
+        climate-variable DataFrame; no degree-hours are computed yet (call
+        :meth:`calculate` for that).
+
         Parameters
         ----------
         epw_path : str
             Path to the EPW weather file.
         year : int, optional
-            Override the year to assign to the EPW data index.
+            Override the year to assign to the EPW data index. Defaults to
+            the year found in the EPW header, or 2000 if unavailable.
+
+        Raises
+        ------
+        FileNotFoundError
+            If *epw_path* does not exist.
+
+        Example
+        -------
+        >>> calc = DegreeHoursCalculator("city_tmy.epw", year=2000)  # doctest: +SKIP
+        >>> calc.temperatures.describe()  # doctest: +SKIP
         """
         if not os.path.exists(epw_path):
             raise FileNotFoundError(f"EPW file not found: {epw_path}")
@@ -557,14 +647,14 @@ class DegreeHoursCalculator:
                     try:
                         s = self._schedule_to_series(idf, h_sch)
                         h_avail = h_avail * (s > 0).astype(float)
-                        print(f"[INFO] '{zone}' → heating availability: '{h_sch}'")
+                        print(f"[INFO] '{zone}' -> heating availability: '{h_sch}'")
                     except Exception as e:
                         print(f"[WARNING] No se pudo parsear heating availability '{h_sch}': {e}")
                 if c_sch:
                     try:
                         s = self._schedule_to_series(idf, c_sch)
                         c_avail = c_avail * (s > 0).astype(float)
-                        print(f"[INFO] '{zone}' → cooling availability: '{c_sch}'")
+                        print(f"[INFO] '{zone}' -> cooling availability: '{c_sch}'")
                     except Exception as e:
                         print(f"[WARNING] No se pudo parsear cooling availability '{c_sch}': {e}")
 
@@ -597,8 +687,14 @@ class DegreeHoursCalculator:
         Returns
         -------
         dict
-            ``{zone_name: {'heating': Series, 'cooling': Series,
-                           'heating_avail': Series, 'cooling_avail': Series}}``
+            Mapping from zone/space name to a dict with keys 'heating', 'cooling',
+            'heating_avail' and 'cooling_avail', each an hourly pandas Series.
+
+        Example
+        -------
+        >>> calc = DegreeHoursCalculator("city_tmy.epw")  # doctest: +SKIP
+        >>> setpoints = calc.extract_setpoints_from_idf("building.idf")  # doctest: +SKIP
+        >>> setpoints["LivingRoom"]["heating"].describe()  # doctest: +SKIP
         """
         if not os.path.exists(idf_path):
             raise FileNotFoundError(f"IDF file not found: {idf_path}")
@@ -656,7 +752,7 @@ class DegreeHoursCalculator:
             h_sch = str(dual_obj.Heating_Setpoint_Temperature_Schedule_Name).strip()
             c_sch = str(dual_obj.Cooling_Setpoint_Temperature_Schedule_Name).strip()
             print(
-                f"[INFO] '{t_zone}' → heating: '{h_sch}',  cooling: '{c_sch}'"
+                f"[INFO] '{t_zone}' -> heating: '{h_sch}',  cooling: '{c_sch}'"
             )
 
             result[t_zone] = {
@@ -900,6 +996,14 @@ class DegreeHoursCalculator:
             Start date in ``'DD/MM'`` format. Data outside the period is set to 0.
         end_date : str, optional
             End date in ``'DD/MM'`` format.
+        save_session : bool, optional
+            If ``True`` (default), persist a reproducible ``.pkl``/``.json``
+            session (recording *epw_path*, *setpoint_source* and *mode*, plus
+            every public attribute of ``self``) via
+            :func:`~pyweatherfiles.session_manager.save_object_session`.
+        session_dir : str, optional
+            Directory for the session files. Defaults to the directory of
+            *epw_path*.
 
         Returns
         -------
@@ -908,6 +1012,17 @@ class DegreeHoursCalculator:
             ``{'hourly': df, 'daily': df, 'monthly': df}``.
             Results are also stored in ``self.result_hourly``,
             ``self.result_daily``, ``self.result_monthly``.
+
+        Example
+        -------
+        >>> calc = DegreeHoursCalculator("city_tmy.epw")  # doctest: +SKIP
+        >>> results = calc.calculate(
+        ...     "building.idf",
+        ...     frequency=["hourly", "daily", "monthly"],
+        ...     hours=list(range(8, 20)),  # only 08:00-19:00
+        ...     mode="both",
+        ... )  # doctest: +SKIP
+        >>> results["monthly"]  # doctest: +SKIP
         """
         if frequency is None:
             frequency = ['hourly', 'daily', 'monthly']
@@ -1032,7 +1147,7 @@ class DegreeHoursCalculator:
 
         print("[INFO] Cálculo completado.")
         for freq_key, df in results.items():
-            print(f"  {freq_key}: {df.shape} → {df.sum().to_dict()}")
+            print(f"  {freq_key}: {df.shape} -> {df.sum().to_dict()}")
 
         # --- Session persistence ---
         if save_session:
@@ -1095,6 +1210,18 @@ class DegreeHoursCalculator:
         show_air_temp : bool
             Whether to overlay the EPW dry-bulb air temperature
             (default False).
+
+        Returns
+        -------
+        None
+            The chart is displayed via ``matplotlib.pyplot.show()``; nothing
+            is returned.
+
+        Example
+        -------
+        >>> calc = DegreeHoursCalculator("city_tmy.epw")  # doctest: +SKIP
+        >>> calc.plot("building.idf", period="day", period_value=["06-10", "06-11"], show_air_temp=True)  # doctest: +SKIP
+        >>> calc.plot("building.idf", period="month", period_value=[1])  # doctest: +SKIP
         """
         try:
             import matplotlib.pyplot as plt
@@ -1255,6 +1382,19 @@ class DegreeHoursCalculator:
         -------
         str
             Absolute path to the saved file.
+
+        Raises
+        ------
+        ValueError
+            If :meth:`calculate` has not been called yet (no results to
+            export).
+
+        Example
+        -------
+        >>> calc = DegreeHoursCalculator("city_tmy.epw")  # doctest: +SKIP
+        >>> calc.calculate("building.idf", frequency=["monthly"])  # doctest: +SKIP
+        >>> calc.export_results("degree_hours.xlsx")  # doctest: +SKIP
+        '/abs/path/degree_hours.xlsx'
         """
         sheets = {
             'hourly':  self.result_hourly,
@@ -1311,12 +1451,47 @@ class EpwBatchAnalyzer:
 
     Attributes
     ----------
-    results : pd.DataFrame or None
-        MultiIndex-column DataFrame ``(epw_name, variable)`` with months
-        1-12 as index. Populated after calling :meth:`run`.
-    calculators : dict
-        Maps EPW base name → :class:`DegreeHoursCalculator` instance,
+    epw_paths : list of str
+        Paths to the EPW files being analysed, as passed to the constructor.
+    setpoint_source : str or dict
+        The IDF path or custom setpoint configuration in use.
+    epw_variables : list or dict or None
+        The raw *epw_variables* argument as passed to the constructor
+        (normalised internally by :meth:`_resolve_epw_variables` when
+        :meth:`run` executes).
+    hours : list, dict or None
+        The raw *hours* argument as passed to the constructor (normalised
+        internally by :meth:`_resolve_hours` when :meth:`run` executes).
+    zone_name : str or None
+        Zone/Space name forwarded to every :meth:`DegreeHoursCalculator.calculate`
+        call.
+    mode : str
+        ``'heating'``, ``'cooling'`` or ``'both'``.
+    year : int or None
+        Year override forwarded to every :class:`DegreeHoursCalculator`.
+    frequencies : list of str
+        Aggregation frequencies to compute (subset of ``'hourly'``,
+        ``'daily'``, ``'monthly'``, ``'yearly'``).
+    start_date, end_date : str or None
+        ``'DD/MM'``-formatted period filter forwarded to every calculation.
+    results : dict[str, pd.DataFrame] or None
+        MultiIndex-column DataFrames ``(epw_name, variable)``, one per
+        requested frequency, with months (or hours/days/years) as index.
+        Populated after calling :meth:`run`.
+    calculators : dict[str, DegreeHoursCalculator]
+        Maps EPW base name -> :class:`DegreeHoursCalculator` instance,
         giving access to hourly data and individual results after :meth:`run`.
+
+    Example
+    -------
+    >>> from pyweatherfiles.degree_hours import EpwBatchAnalyzer
+    >>> batch = EpwBatchAnalyzer(
+    ...     epw_paths=["city_tmy.epw", "city_met.epw", "city_2005.epw"],
+    ...     setpoint_source="building.idf",
+    ...     frequencies=["monthly"],
+    ... )  # doctest: +SKIP
+    >>> results = batch.run()  # doctest: +SKIP
+    >>> results["monthly"]["city_tmy"]  # doctest: +SKIP
     """
 
     def __init__(
@@ -1383,6 +1558,23 @@ class EpwBatchAnalyzer:
             Start date in ``'DD/MM'`` format to restrict calculations.
         end_date : str, optional
             End date in ``'DD/MM'`` format to restrict calculations.
+
+        Raises
+        ------
+        ValueError
+            If *epw_paths* is empty.
+
+        Example
+        -------
+        >>> batch = EpwBatchAnalyzer(
+        ...     epw_paths=["city_tmy.epw", "city_met.epw", "city_2005.epw"],
+        ...     setpoint_source="building.idf",
+        ...     epw_variables={"global_horizontal_radiation": ["sum", "mean"]},
+        ...     hours={"morning": list(range(9)), "all_day": list(range(24))},
+        ...     mode="both",
+        ...     frequencies=["hourly", "daily", "monthly"],
+        ...     start_date="01/06", end_date="30/09",
+        ... )  # doctest: +SKIP
         """
         if not epw_paths:
             raise ValueError("epw_paths must contain at least one file path.")
@@ -1484,13 +1676,47 @@ class EpwBatchAnalyzer:
 
     def run(self, save_session: bool = True, session_dir: Optional[str] = None) -> Dict[str, pd.DataFrame]:
         """
-        Execute the analysis for every EPW file.
+        Execute the analysis for every EPW file: for each EPW path, load it
+        with :class:`DegreeHoursCalculator` (stored in :attr:`calculators`),
+        run :meth:`DegreeHoursCalculator.calculate` once per hour-of-day
+        scenario in :attr:`hours` (see :meth:`_resolve_hours`), extract the
+        requested :attr:`epw_variables` (see :meth:`_resolve_epw_variables`)
+        aggregated at each requested frequency, and finally concatenate
+        everything into one MultiIndex-column DataFrame per frequency.
+
+        Parameters
+        ----------
+        save_session : bool, optional
+            If ``True`` (default), persist a reproducible ``.pkl``/``.json``
+            session for the analyzer as a whole via
+            :func:`~pyweatherfiles.session_manager.save_object_session`.
+            Note: this does **not** prevent each internal
+            :meth:`DegreeHoursCalculator.calculate` call from also saving
+            its own session next to its respective EPW file (that internal
+            call always uses its own default of ``save_session=True`` and
+            currently cannot be silenced from here).
+        session_dir : str, optional
+            Directory for the batch session files. Defaults to the
+            directory of the first entry in :attr:`epw_paths`.
 
         Returns
         -------
         dict
             A dictionary mapping each frequency to its corresponding summary
             DataFrame with a two-level column MultiIndex: ``(epw_name, variable)``.
+            Also stored in :attr:`results`.
+
+        Raises
+        ------
+        RuntimeError
+            If none of the EPW files in :attr:`epw_paths` could be found or
+            processed.
+
+        Example
+        -------
+        >>> batch = EpwBatchAnalyzer(["city_tmy.epw", "city_2019.epw"], "building.idf", frequencies=["monthly"])  # doctest: +SKIP
+        >>> results = batch.run(save_session=False)  # doctest: +SKIP
+        >>> results["monthly"].columns.get_level_values("epw").unique()  # doctest: +SKIP
         """
         # Store dataframes grouped by frequency and then by EPW
         # Structure: {freq: {epw_name: dataframe}}
@@ -1652,6 +1878,18 @@ class EpwBatchAnalyzer:
         -------
         str
             Absolute path to the saved file.
+
+        Raises
+        ------
+        ValueError
+            If :meth:`run` has not been called yet (no results to export).
+
+        Example
+        -------
+        >>> batch = EpwBatchAnalyzer(["city_tmy.epw", "city_2019.epw"], "building.idf", frequencies=["monthly"])  # doctest: +SKIP
+        >>> batch.run()  # doctest: +SKIP
+        >>> batch.export("batch_degree_hours.xlsx")  # doctest: +SKIP
+        '/abs/path/batch_degree_hours.xlsx'
         """
         if not self.results:
             raise ValueError("No results to export. Call run() first.")

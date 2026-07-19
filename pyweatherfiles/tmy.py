@@ -5,36 +5,44 @@
 ==============================================================================
 Methodology: Sandia TMY3, with selectable CDF calculation methods.
 
-v4.10 Changelog:
-- Refactored public step methods to align precisely with Sandia 7-step process (`sandia_step_1` to `sandia_step_7`).
-- Added fine-grained validation dataframes (`validation_step1` to `validation_step6`).
-- Deprecated old `step_1` through `step_4` methods (they now wrap the new methods and emit warnings).
-- Fixed the previous discrepancy where `validation_st2_summary_fs_ranking` actually contained candidates in proximity order. Now `validation_step2` is strict FS order, and `validation_step3` contains the proximity order.
+Changelog::
 
-v4.09 Changelog:
-- Added `get_candidate_stats(month)`: returns a DataFrame with T_air and
-  GHI statistics (mean, diff vs. long-term, percentile) for each of the
-  top-5 candidate years of a given month.
-- Added `analyze_selection(months, temp_diff_threshold)`: audits the TMY
-  month selection, flags months where the selected year deviates from the
-  long-term temperature mean beyond the given threshold.
-- Added `correct_selection_by_temperature(months, temp_diff_threshold,
-  regenerate)`: automatically replaces anomalous selections with the
-  top-5 candidate that minimises |T_mean - T_mean_LT| and optionally
-  regenerates the TMY in-place.
-- Added `plot_monthly_trend(months, variable)`: plots the long-term yearly
-  trend for each month with TMY-selected year highlighted by a star.
-- Added `plot_monthly_series(months, variable)`: overlays daily series for
-  all years on the same axes, highlighting the TMY-selected year in red.
-- Added `compare_tmy_versions(other_tmy_df, ...)`: side-by-side comparison
-  of two TMY DataFrames for specified months.
+    v4.10:
+    - Refactored public step methods to align precisely with Sandia 7-step
+      process (sandia_step_1 to sandia_step_7).
+    - Added fine-grained validation dataframes (validation_step1 to
+      validation_step6).
+    - Deprecated old step_1 through step_4 methods (they now wrap the new
+      methods and emit warnings).
+    - Fixed the previous discrepancy where validation_st2_summary_fs_ranking
+      actually contained candidates in proximity order. Now validation_step2
+      is strict FS order, and validation_step3 contains the proximity order.
 
-v4.08 Changelog:
-- The `plot_smoothing_comparison` method now displays the `hours` and `s_factor`
-  parameters used for smoothing directly in the title of each subplot,
-  improving traceability.
-- The `smoothing_config` is now stored as a class attribute (`self.smoothing_config`)
-  during Step 4 to make it accessible to the plotting function.
+    v4.09:
+    - Added get_candidate_stats(month): returns a DataFrame with T_air and
+      GHI statistics (mean, diff vs. long-term, percentile) for each of the
+      top-5 candidate years of a given month.
+    - Added analyze_selection(months, temp_diff_threshold): audits the TMY
+      month selection, flags months where the selected year deviates from
+      the long-term temperature mean beyond the given threshold.
+    - Added correct_selection_by_temperature(months, temp_diff_threshold,
+      regenerate): automatically replaces anomalous selections with the
+      top-5 candidate that minimises the absolute difference to the
+      long-term mean, and optionally regenerates the TMY in-place.
+    - Added plot_monthly_trend(months, variable): plots the long-term yearly
+      trend for each month with TMY-selected year highlighted by a star.
+    - Added plot_monthly_series(months, variable): overlays daily series for
+      all years on the same axes, highlighting the TMY-selected year in red.
+    - Added compare_tmy_versions(other_tmy_df, ...): side-by-side comparison
+      of two TMY DataFrames for specified months.
+
+    v4.08:
+    - The plot_smoothing_comparison method now displays the hours and
+      s_factor parameters used for smoothing directly in the title of each
+      subplot, improving traceability.
+    - The smoothing_config is now stored as a class attribute
+      (self.smoothing_config) during Step 4 to make it accessible to the
+      plotting function.
 
 Author: Gemini AI & Project Contributor
 Date: November 4, 2025
@@ -59,6 +67,150 @@ class TMYGenerator:
     """
     A class to generate a Typical Meteorological Year (TMY) from historical
     weather data, using one of several selectable methodologies.
+
+    This is the core class of the ``pyweatherfiles`` package: it implements
+    the Sandia National Laboratories TMY generation method (Hall et al.,
+    1978), with additional support for NREL's TMY3 weighting scheme (Wilcox
+    & Marion, 2008). The method is structured in **7 sequential steps**
+    (:meth:`sandia_step_1_load_and_prepare` through
+    :meth:`sandia_step_7_smooth_junctions`), orchestrated by
+    :meth:`generate_tmy`:
+
+    1. **Load & prepare** — read the source file, map columns, resample to
+       hourly (if applicable) and compute the daily aggregates required by
+       the weighting scheme.
+    2. **Finkelstein-Schafer (FS) candidate selection** — for each calendar
+       month, rank all available years by how closely their empirical CDF
+       matches the long-term CDF, keeping the 5 best candidates.
+    3. **Proximity ranking** — re-order the 5 FS candidates by closeness of
+       their monthly mean/median temperature and GHI to the long-term
+       statistics (Sawaqed et al., 2005).
+    4. **Persistence filtering & final selection** — exclude candidates
+       with atypical runs of consecutive extreme days (either via a
+       deterministic ``'sequential'`` exclusion process or a weighted
+       ``'score'``), then pick the best-ranked survivor (steps 4 and 5 of
+       the original Sandia methodology).
+    5. **Raw TMY assembly** — concatenate the 12 selected months (one
+       source year each) into a single synthetic year.
+    6. **Junction smoothing** — fit a smoothing spline across each of the
+       11 month-to-month junctions (using hourly data) to remove abrupt
+       discontinuities, while leaving solar radiation untouched.
+
+    Deprecated aliases (``step_1_load_and_prepare_data``,
+    ``step_2_select_candidate_months``, ``step_3_apply_persistence``,
+    ``step_4_create_and_smooth_tmy``) and compatibility properties for the
+    old ``validation_st*`` attribute names are kept for backward
+    compatibility; they simply delegate to the ``sandia_step_*``
+    counterparts and emit a ``DeprecationWarning``.
+
+    Attributes:
+        file_path (str): Path to the source CSV/Excel file, as passed to
+            the constructor.
+        hourly_file_path (str or None): Optional additional hourly source
+            file (see constructor).
+        cdf_method (str): ``'daily'`` or ``'hourly'`` — resolution used for
+            the Finkelstein-Schafer CDF comparison in Step 2.
+        data_frequency (str): ``'hourly'`` or ``'daily'`` — resolution of
+            the source file itself.
+        weighting_method (str): ``'sandia'`` or ``'tmy3'`` — which default
+            variable-weight table is used.
+        weights (dict): Effective per-variable weights used for the
+            weighted FS statistic (either the method-specific defaults or
+            the user-supplied override).
+        years_to_include (iterable or None): Restricts the analysis to a
+            subset of calendar years, as passed to the constructor.
+        missing_data_threshold (float): Minimum fraction of valid data
+            points (0-1) a candidate month must have to avoid exclusion in
+            Step 2.
+        plotting_position_method (str): ``'hazen'``, ``'weibull'`` or
+            ``'california'`` — empirical CDF plotting-position formula.
+        base_mapping (dict): The subset of the column mapping derived only
+            from the explicit ``col_*``/``datetime_col`` constructor
+            arguments (used by :meth:`export_tmy` to restore original
+            column names).
+        column_mapping (dict): The full effective column-name mapping
+            (``base_mapping`` merged with legacy shortcuts and any
+            *column_mapping* override), applied when loading the source
+            file(s).
+        df_hourly (pandas.DataFrame or None): Hourly source data after Step
+            1 (``None`` if ``data_frequency='daily'`` and no
+            *hourly_file_path* was given).
+        df_daily (pandas.DataFrame or None): Daily source data / aggregates
+            after Step 1.
+        excluded_months (list[tuple[int, int]]): ``(year, month)`` pairs
+            excluded in Step 2 due to insufficient data completeness.
+        excluded_months_initial (list[tuple[int, int]]): ``(year, month)``
+            pairs excluded in Step 1 while filtering the separate hourly
+            file to the months present in the daily file.
+        candidate_months_pre_proximity (dict[int, list[int]]): Top-5 FS
+            candidate years per calendar month, in FS order (before Step 3).
+        candidate_months (dict[int, list[int]]): Top-5 candidate years per
+            calendar month, re-ordered by proximity (after Step 3); this is
+            the list Steps 4-5 operate on.
+        fs_ranking_results (dict[int, list[dict]]): Per-month list of dicts
+            with the FS/proximity metrics of each of the 5 candidates.
+        selected_months (dict[int, int] or None): The single, final source
+            year chosen for each calendar month (populated by Steps 4-5, or
+            directly by :meth:`_select_months_by_fs_rank` when
+            ``use_persistence=False``).
+        persistence_thresholds (tuple[float, float] or None): The
+            ``(lower, upper)`` percentile thresholds used to define
+            "runs" in the persistence step.
+        min_run_length (int or None): Minimum number of consecutive days to
+            count as a persistence "run".
+        tmy_raw (pandas.DataFrame or None): The assembled-but-unsmoothed TMY
+            (after Step 6).
+        tmy_final (pandas.DataFrame or None): The final TMY, smoothed at
+            month junctions if hourly data was available (after Step 7).
+            This is what :meth:`export_tmy` writes to disk.
+        smoothing_config (dict or None): Per-junction smoothing parameters
+            actually used in Step 7 (``hours_before``/``hours_after``/
+            ``s_factor``, plus the auto-computed spline residual when
+            applicable).
+        save_validation_dfs (bool): Whether the ``validation_step*``
+            diagnostic DataFrames are populated as the workflow runs.
+        save_session (bool): Whether a reproducible ``.pkl``/``.json``
+            session is saved automatically at the end of Step 7.
+        session_dir (str or None): Directory for the session files (see
+            :mod:`~pyweatherfiles.session_manager`).
+        figures_data (dict): Maps a figure title to
+            ``{'fig': matplotlib.figure.Figure, 'data': pandas.DataFrame}``
+            for every ``plot_*`` call made with ``save_figure_data=True``.
+        validation_step2_fs_ranking_by_month (dict[int, pandas.DataFrame]):
+            Full (all-years) FS ranking table per month.
+        validation_step2_summary_fs_ranking (pandas.DataFrame or None):
+            Summary of the top-5 FS candidates for every month.
+        validation_step3_proximity_ranking (pandas.DataFrame or None):
+            Summary of the top-5 candidates re-ordered by proximity, with
+            their normalised/raw deviation metrics.
+        validation_step4_df_persistence_decision (pandas.DataFrame or dict):
+            Persistence decision details (``'score'`` method) across all
+            months, concatenated into one table.
+        validation_step4_persistence_sequential_details (dict[int, pandas.DataFrame] or None):
+            Per-month exclusion-pass details (``'sequential'`` method).
+        validation_step4_persistence_score_details (dict[int, pandas.DataFrame] or None):
+            Per-month scoring details (``'score'`` method).
+        validation_step5_selected_months_summary (pandas.DataFrame or None):
+            Simple ``Month -> Selected_Year`` summary table.
+        validation_step6_tmy_composition (pandas.DataFrame or None):
+            Detailed TMY composition table merging FS, proximity and
+            persistence stats for each selected month.
+        validation_full_summary (pandas.DataFrame or None): One-row-per-month
+            consolidated summary across all steps (populated by
+            :meth:`generate_full_summary`).
+        validation_selection_analysis (pandas.DataFrame or None): Flagged
+            selection-audit table (populated by :meth:`analyze_selection`).
+
+    Example:
+        >>> from pyweatherfiles import tmy
+        >>> gen = tmy.TMYGenerator(
+        ...     file_path="weather_data.csv",
+        ...     cdf_method="daily",
+        ...     data_frequency="hourly",
+        ...     weighting_method="sandia",
+        ... )  # doctest: +SKIP
+        >>> gen.generate_tmy(use_persistence=True)  # doctest: +SKIP
+        >>> gen.export_tmy("tmy_output.csv")  # doctest: +SKIP
     """
 
     def __init__(self, file_path, cdf_method='daily', years_to_include=None, weights=None, 
@@ -221,9 +373,16 @@ class TMYGenerator:
         self.session_dir = session_dir
 
     # --- BACKWARD COMPATIBILITY PROPERTIES ---
+    # These properties exist solely so that code written against pre-4.10
+    # versions of this class (which used the ``validation_st2_*``/
+    # ``validation_st3_*``/``validation_st4_*`` attribute names) keeps
+    # working transparently: reading/writing them redirects to the current
+    # ``validation_step*`` attribute described in the class docstring.
 
     @property
     def validation_st2_df_fs_ranking_by_month(self):
+        """dict[int, pandas.DataFrame]: Deprecated alias for
+        :attr:`validation_step2_fs_ranking_by_month`."""
         return self.validation_step2_fs_ranking_by_month
 
     @validation_st2_df_fs_ranking_by_month.setter
@@ -232,6 +391,10 @@ class TMYGenerator:
 
     @property
     def validation_st2_summary_fs_ranking(self):
+        """pandas.DataFrame or None: Deprecated alias for
+        :attr:`validation_step3_proximity_ranking` (kept under its
+        historical name; the top-5 candidates it stores were already in
+        proximity order in the original implementation)."""
         # Maps to proximity ranking since originally it stored the top 5 in proximity order
         return self.validation_step3_proximity_ranking
 
@@ -241,6 +404,8 @@ class TMYGenerator:
 
     @property
     def validation_st3_df_persistence_decision(self):
+        """pandas.DataFrame or dict: Deprecated alias for
+        :attr:`validation_step4_df_persistence_decision`."""
         return self.validation_step4_df_persistence_decision
 
     @validation_st3_df_persistence_decision.setter
@@ -249,6 +414,8 @@ class TMYGenerator:
 
     @property
     def validation_st3_persistence_sequential_details(self):
+        """dict[int, pandas.DataFrame] or None: Deprecated alias for
+        :attr:`validation_step4_persistence_sequential_details`."""
         return self.validation_step4_persistence_sequential_details
 
     @validation_st3_persistence_sequential_details.setter
@@ -257,6 +424,8 @@ class TMYGenerator:
 
     @property
     def validation_st3_persistence_score_details(self):
+        """dict[int, pandas.DataFrame] or None: Deprecated alias for
+        :attr:`validation_step4_persistence_score_details`."""
         return self.validation_step4_persistence_score_details
 
     @validation_st3_persistence_score_details.setter
@@ -265,6 +434,8 @@ class TMYGenerator:
 
     @property
     def validation_st4_df_tmy_composition(self):
+        """pandas.DataFrame or None: Deprecated alias for
+        :attr:`validation_step6_tmy_composition`."""
         return self.validation_step6_tmy_composition
 
     @validation_st4_df_tmy_composition.setter
@@ -1539,7 +1710,26 @@ class TMYGenerator:
     # --- PUBLIC WORKFLOWS ---
 
     def sandia_step_1_load_and_prepare(self):
-        """Step 1: Data loading and preparation."""
+        """
+        **Step 1** of the Sandia TMY workflow: load the source file(s),
+        apply the column mapping, convert the index to a UTC ``DatetimeIndex``,
+        filter by :attr:`years_to_include` if given, resample to hourly
+        frequency if ``data_frequency='hourly'`` (clipping negative
+        GHI/DNI/Wind_speed to 0), and compute the daily aggregates required
+        by :attr:`weighting_method`. Populates :attr:`df_hourly` and/or
+        :attr:`df_daily`. Requires a minimum of 5 years of data.
+
+        Returns:
+            TMYGenerator: ``self``, to allow method chaining.
+
+        Raises:
+            ValueError: If essential columns are missing after mapping, or
+                if fewer than 5 years of data remain after filtering.
+
+        Example:
+            >>> gen = tmy.TMYGenerator(file_path="weather_data.csv")  # doctest: +SKIP
+            >>> gen.sandia_step_1_load_and_prepare()  # doctest: +SKIP
+        """
         self._load_and_prepare_real_data()
 
         if self.data_frequency == 'daily':
@@ -1553,21 +1743,66 @@ class TMYGenerator:
         return self.sandia_step_1_load_and_prepare()
 
     def sandia_step_2_select_candidates_fs(self, completeness_threshold=None):
-        """Step 2: Candidate month selection using FS statistics."""
+        """
+        **Step 2** of the Sandia TMY workflow: for each calendar month,
+        compute the Finkelstein-Schafer (FS) statistic between every
+        available year's empirical CDF and the long-term CDF (see
+        :meth:`_calculate_fs_statistic`), excluding candidate months whose
+        data completeness falls below *completeness_threshold*, and keep
+        the 5 years with the lowest weighted-FS score. Populates
+        :attr:`candidate_months_pre_proximity` and :attr:`fs_ranking_results`.
+
+        Args:
+            completeness_threshold (float, optional): Overrides
+                :attr:`missing_data_threshold` for this call.
+
+        Returns:
+            TMYGenerator: ``self``, to allow method chaining.
+
+        Raises:
+            RuntimeError: If :meth:`sandia_step_1_load_and_prepare` has not
+                been run yet.
+
+        Example:
+            >>> gen.sandia_step_1_load_and_prepare()  # doctest: +SKIP
+            >>> gen.sandia_step_2_select_candidates_fs()  # doctest: +SKIP
+        """
         if self.df_hourly is None and self.df_daily is None: raise RuntimeError("Run sandia_step_1_load_and_prepare() first.")
         self._run_fs_selection(completeness_threshold=completeness_threshold)
         return self
 
     def sandia_step_3_proximity_ranking(self, normalization_method='std', normalization_weights=None):
-        """Step 3: Proximity ranking based on Temp and GHI long-term median/mean.
+        """
+        **Step 3** of the Sandia TMY workflow (Sawaqed, Zurigat & Al-Hinai,
+        2005): re-orders the 5 FS candidates from Step 2 by how close their
+        monthly mean/median temperature and GHI are to the long-term
+        statistics, using a normalised, configurable proximity score (see
+        the module-level formulas in the package README, section 3.4).
+        Populates :attr:`candidate_months` with the re-ordered candidate
+        lists (ascending by proximity score, best first).
 
         Args:
             normalization_method (str): One of 'std' (default), 'long_term_mean',
-                'range', 'weighted', or 'no_normalization'.
+                'range', 'weighted', or 'no_normalization'. The deprecated
+                alias ``'sawaqed'`` is still accepted and mapped internally
+                to ``'weighted'`` (emits a ``DeprecationWarning``).
             normalization_weights (dict, optional): Used only when
                 normalization_method='weighted'. Expected keys:
                 't_mean', 't_median', 'ghi_mean', 'ghi_median'.
                 Values must be non-negative and sum to 1.
+
+        Returns:
+            TMYGenerator: ``self``, to allow method chaining.
+
+        Raises:
+            RuntimeError: If :meth:`sandia_step_2_select_candidates_fs` has
+                not been run yet.
+            ValueError: If *normalization_method* is invalid, or if
+                *normalization_weights* has invalid keys/values.
+
+        Example:
+            >>> gen.sandia_step_2_select_candidates_fs()  # doctest: +SKIP
+            >>> gen.sandia_step_3_proximity_ranking(normalization_method="std")  # doctest: +SKIP
         """
         if self.candidate_months_pre_proximity is None: raise RuntimeError("Run sandia_step_2_select_candidates_fs() first.")
         self._run_proximity_ranking(
@@ -1596,6 +1831,17 @@ class TMYGenerator:
             persistence_method (str): Method to use. 'score' (default) or 'sequential'.
             zero_run_method (str): Method for handling zero-run candidates (only for 'sequential').
                 Options: 'eliminate_worst_ranked' (default), 'eliminate_all', 'eliminate_none'.
+
+        Returns:
+            TMYGenerator: ``self``, to allow method chaining.
+
+        Raises:
+            RuntimeError: If :meth:`sandia_step_3_proximity_ranking` has not
+                been run yet.
+
+        Example:
+            >>> gen.sandia_step_3_proximity_ranking()  # doctest: +SKIP
+            >>> gen.sandia_step_4_and_5_apply_persistence(persistence_method="sequential")  # doctest: +SKIP
         """
         if self.candidate_months is None: raise RuntimeError("Run sandia_step_3_proximity_ranking() first.")
         self.persistence_thresholds = thresholds
@@ -1694,7 +1940,28 @@ class TMYGenerator:
         return df_comp[basic_cols + other_cols]
 
     def sandia_step_6_assemble_tmy(self):
-        """Step 6: Assemble the raw TMY data."""
+        """
+        **Step 6** of the Sandia TMY workflow: for each of the 12 calendar
+        months, extracts the full month (hourly resolution if
+        :attr:`df_hourly` is available, otherwise daily) from its
+        :attr:`selected_months` source year, relabels it to the synthetic
+        year 2000 (dropping February 29th if the source year was a leap
+        year), and concatenates the 12 months into :attr:`tmy_raw`. If
+        :meth:`sandia_step_4_and_5_apply_persistence` was not run,
+        automatically falls back to selecting by best FS/proximity rank
+        (:meth:`_select_months_by_fs_rank`).
+
+        Returns:
+            TMYGenerator: ``self``, to allow method chaining.
+
+        Raises:
+            RuntimeError: If :meth:`sandia_step_3_proximity_ranking` has not
+                been run yet.
+
+        Example:
+            >>> gen.sandia_step_3_proximity_ranking()  # doctest: +SKIP
+            >>> gen.sandia_step_6_assemble_tmy()  # doctest: +SKIP
+        """
         if self.candidate_months is None: raise RuntimeError("Run sandia_step_3_proximity_ranking() first.")
         if self.selected_months is None:
             self._select_months_by_fs_rank()
@@ -1702,7 +1969,41 @@ class TMYGenerator:
         return self
 
     def sandia_step_7_smooth_junctions(self, hours=6, s_factor=0.0):
-        """Step 7: Smooth month-to-month transitions using splines."""
+        """
+        **Step 7** (final step) of the Sandia TMY workflow: fits a
+        smoothing spline (``scipy.interpolate.UnivariateSpline``) across
+        each of the 11 month-to-month junctions, using the two full months
+        of hourly source data on either side, and replaces the raw values
+        in a configurable window around each junction — for every variable
+        **except** GHI and DNI (radiation is left untouched to preserve
+        solar geometry). Requires hourly data (:attr:`df_hourly` or
+        *hourly_file_path*); if unavailable, smoothing is skipped (the
+        final TMY equals the raw TMY) with a warning. Populates
+        :attr:`tmy_final`, :attr:`validation_step6_tmy_composition` (calling
+        :meth:`generate_full_summary` automatically) and, if
+        :attr:`save_session` is ``True`` (default), saves a reproducible
+        session via
+        :func:`~pyweatherfiles.session_manager.save_object_session`.
+
+        Args:
+            hours (int): Default number of hours before/after each junction
+                over which the spline is evaluated and applied. Defaults to
+                6.
+            s_factor (float): Default smoothing factor passed to
+                ``UnivariateSpline`` (``0.0`` = exact interpolation).
+                Defaults to 0.0.
+
+        Returns:
+            TMYGenerator: ``self``, to allow method chaining.
+
+        Raises:
+            RuntimeError: If :meth:`sandia_step_6_assemble_tmy` has not
+                been run yet.
+
+        Example:
+            >>> gen.sandia_step_6_assemble_tmy()  # doctest: +SKIP
+            >>> gen.sandia_step_7_smooth_junctions(hours=6, s_factor=0.0)  # doctest: +SKIP
+        """
         if self.tmy_raw is None: raise RuntimeError("Run sandia_step_6_assemble_tmy() first.")
         self._apply_smoothing(hours=hours, s_factor=s_factor)
         if self.save_validation_dfs:
@@ -1750,6 +2051,12 @@ class TMYGenerator:
 
         Returns:
             self: The TMYGenerator instance for method chaining.
+
+        Example:
+            >>> from pyweatherfiles import tmy
+            >>> gen = tmy.TMYGenerator(file_path="weather_data.csv", cdf_method="daily", data_frequency="hourly")  # doctest: +SKIP
+            >>> gen.generate_tmy(use_persistence=True, persistence_method="sequential")  # doctest: +SKIP
+            >>> gen.export_tmy("tmy_output.csv")  # doctest: +SKIP
         """
         print("--- Starting full TMY generation workflow ---")
         self.save_validation_dfs = save_validation_dfs
@@ -1780,9 +2087,31 @@ class TMYGenerator:
         """
         Exports the final TMY data to a specified file path.
 
+        Any variable present in :attr:`df_hourly` but absent from
+        :attr:`tmy_final` is assembled the same way as the TMY (same
+        selected months/years) and appended. The source file's original
+        column names are restored (inverse of :attr:`base_mapping`) before
+        writing, so that — if the ``col_*`` arguments matched
+        :class:`~pyweatherfiles.hourly_epw_converter.HourlyEPWConverter`'s
+        defaults — the exported file is directly usable as input to that
+        converter without any extra ``column_mapping``.
+
         Args:
             output_path (str, optional): The destination file path. If None, a
                 default name is generated. Supported extensions: .csv, .tmy, .xlsx.
+
+        Returns:
+            None: The file is written to *output_path*; nothing is returned.
+
+        Raises:
+            RuntimeError: If no TMY has been generated yet (i.e.
+                :attr:`tmy_final` is ``None``).
+            ValueError: If *output_path*'s extension is not one of
+                ``.csv``/``.tmy``/``.xlsx``.
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.export_tmy("tmy_output.csv")  # doctest: +SKIP
         """
         if self.tmy_final is None: raise RuntimeError("No TMY has been generated to export.")
 
@@ -1858,7 +2187,12 @@ class TMYGenerator:
         print("Export completed successfully.")
 
     def validate_step_1_data_loading(self):
-        """Prints descriptive statistics and a sample plot for the loaded data."""
+        """Prints descriptive statistics and a sample plot for the loaded data.
+
+        Example:
+            >>> gen.sandia_step_1_load_and_prepare()  # doctest: +SKIP
+            >>> gen.validate_step_1_data_loading()  # doctest: +SKIP
+        """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
             raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
@@ -1888,6 +2222,9 @@ class TMYGenerator:
 
         Returns:
             pd.DataFrame or None: A DataFrame with the calculation steps.
+
+        Example:
+            >>> gen.validate_fs_calculation("T_air", month=1, year=2019)  # doctest: +SKIP
         """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
@@ -1935,6 +2272,9 @@ class TMYGenerator:
 
         Returns:
             pd.DataFrame: The full ranking table for the specified month.
+
+        Example:
+            >>> gen.validate_full_ranking_for_month(month=1)  # doctest: +SKIP
         """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
@@ -1957,7 +2297,12 @@ class TMYGenerator:
         return df_ranking
 
     def validate_persistence_selection(self):
-        """Prints the detailed persistence tables for each month."""
+        """Prints the detailed persistence tables for each month.
+
+        Example:
+            >>> gen.sandia_step_4_and_5_apply_persistence()  # doctest: +SKIP
+            >>> gen.validate_persistence_selection()  # doctest: +SKIP
+        """
         
         # 1. Check for Sequential method details
         if self.validation_step4_persistence_sequential_details:
@@ -1998,7 +2343,12 @@ class TMYGenerator:
         if self.tmy_raw is None: raise RuntimeError("Raw TMY not generated yet. Run 'step_4_create_and_smooth_tmy()' first.")
 
     def validate_step_4_final_tmy(self):
-        """Prints the composition table and descriptive statistics of the final TMY."""
+        """Prints the composition table and descriptive statistics of the final TMY.
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.validate_step_4_final_tmy()  # doctest: +SKIP
+        """
         if self.tmy_final is None: raise RuntimeError("Run 'step_4_create_and_smooth_tmy()' first.")
         print("\n--- Validation for Step 4: Final TMY ---")
 
@@ -2014,7 +2364,12 @@ class TMYGenerator:
         print("\nDescriptive Statistics of the Final TMY:"), print(self.tmy_final.describe().to_string())
 
     def summarize_fs_results(self):
-        """Creates and prints a summary table of FS results for all candidate months."""
+        """Creates and prints a summary table of FS results for all candidate months.
+
+        Example:
+            >>> gen.sandia_step_3_proximity_ranking()  # doctest: +SKIP
+            >>> gen.summarize_fs_results()  # doctest: +SKIP
+        """
         if self.candidate_months is None: raise RuntimeError("Run 'step_2_select_candidate_months()' first.")
         print("\n--- Overall Summary of FS Results ---")
 
@@ -2033,6 +2388,9 @@ class TMYGenerator:
             month_to_plot (int): The month to visualize (1-12).
             years_to_plot (list, optional): A list of specific years to plot.
             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Example:
+            >>> gen.plot_cdfs(month_to_plot=1, years_to_plot=[2018, 2019, 2020])  # doctest: +SKIP
         """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
@@ -2135,6 +2493,9 @@ class TMYGenerator:
             month_to_plot (int): The month to visualize (1-12).
             year_to_plot (int): The year to visualize.
             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Example:
+            >>> gen.plot_fs_details(var_to_plot="T_air", month_to_plot=1, year_to_plot=2019)  # doctest: +SKIP
         """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
@@ -2206,6 +2567,9 @@ class TMYGenerator:
             hours_around (int): The number of hours to show on either side of
                 the junction point.
             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Example:
+            >>> gen.plot_junctions([("T_air", 1), ("GHI", 7)], hours_around=12)  # doctest: +SKIP
         """
         if self.tmy_raw is None:
             # Create a temporary raw TMY if it doesn't exist, to allow pre-visualization
@@ -2289,6 +2653,9 @@ class TMYGenerator:
             junctions_to_plot (list of tuples): Example: `[('T_air', 1), ('GHI', 7)]`.
             hours_around (int): The number of hours to show on either side of the junction.
             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Example:
+            >>> gen.plot_smoothing_comparison([("T_air", 1), ("GHI", 7)], hours_around=12)  # doctest: +SKIP
         """
         if self.tmy_raw is None or self.tmy_final is None: raise RuntimeError("Run 'step_4_create_and_smooth_tmy()' first.")
         print("\n--- Comparing Smoothing Effect ---")
@@ -2403,6 +2770,9 @@ class TMYGenerator:
             month (int): The month to visualize (1-12).
             years (list or int): A list of years (or a single year) to plot.
             save_figure_data (bool): If True, stores the figure and data in self.figures_data.
+
+        Example:
+            >>> gen.plot_persistence_runs(month=1, years=[2018, 2019, 2020])  # doctest: +SKIP
         """
         if self.df_daily is None: raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
         if self.persistence_thresholds is None: raise RuntimeError("Run 'step_3_apply_persistence()' before visualizing its results.")
@@ -2493,6 +2863,10 @@ class TMYGenerator:
 
         Raises:
             RuntimeError: If the TMY has not been generated yet.
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.plot_annual_cdfs()  # doctest: +SKIP
         """
         # Check if TMY and data exist
         if self.tmy_final is None:
@@ -2604,6 +2978,10 @@ class TMYGenerator:
 
         Raises:
             RuntimeError: If the TMY has not been generated yet.
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.plot_monthly_means()  # doctest: +SKIP
         """
         # Check if TMY and daily data exist
         if self.tmy_final is None:
@@ -2716,6 +3094,10 @@ class TMYGenerator:
 
         Raises:
             RuntimeError: If the TMY has not been generated yet.
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.plot_monthly_cdfs(sharex=True)  # doctest: +SKIP
         """
         # Check if TMY and data exist
         if self.tmy_final is None:
@@ -2871,6 +3253,16 @@ class TMYGenerator:
             weighting_method (str): 'sandia' or 'tmy3'.
             data_frequency (str): 'hourly' or 'daily'.
             column_mapping (dict, optional): Dictionary to map file columns to standard names.
+
+        Returns:
+            dict: ``{'found_columns': list, 'expected_variables': list,
+            'missing_exact': list, 'time_valid': bool}`` — a summary of the
+            analysis, also printed to the console with a suggested
+            ``column_mapping`` snippet if any expected column is missing.
+
+        Example:
+            >>> from pyweatherfiles import tmy
+            >>> tmy.TMYGenerator.check_input_expectations("weather_data.csv", weighting_method="sandia", data_frequency="hourly")  # doctest: +SKIP
         """
         import pandas as pd
         print(f"--- Analyzing '{file_path}' for {weighting_method} method ({data_frequency}) ---")
@@ -2991,6 +3383,10 @@ class TMYGenerator:
 
         Returns:
             pd.DataFrame or None if data are not yet computed.
+
+        Example:
+            >>> gen.sandia_step_3_proximity_ranking()  # doctest: +SKIP
+            >>> gen.get_candidate_stats(month=7)  # doctest: +SKIP
         """
         if self.candidate_months is None:
             raise RuntimeError("Run step_2_select_candidate_months() first.")
@@ -3072,6 +3468,11 @@ class TMYGenerator:
         ------
         RuntimeError
             If the workflow has not been run at least up to Step 4/5.
+
+        Example
+        -------
+        >>> gen.generate_tmy()  # doctest: +SKIP
+        >>> gen.generate_full_summary()  # doctest: +SKIP
         """
         if self.selected_months is None:
             raise RuntimeError(
@@ -3204,6 +3605,10 @@ class TMYGenerator:
                 T_mean_LT, T_mean_Selected, T_diff, T_pctil, Flagged_T,
                 GHI_mean_LT, GHI_mean_Selected, GHI_diff, GHI_pctil,
                 Flagged_GHI, Flagged
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.analyze_selection(temp_diff_threshold=1.0)  # doctest: +SKIP
         """
         if self.selected_months is None:
             raise RuntimeError("Run generate_tmy() or step_3_apply_persistence() first.")
@@ -3323,23 +3728,28 @@ class TMYGenerator:
         """
         For each specified month where the currently selected year's temperature
         deviates from the long-term mean by more than *temp_diff_threshold* °C,
-        replaces it with the top-5 candidate that minimises |T_mean - T_mean_LT|.
+        replaces it with the top-5 candidate that minimises the absolute
+        difference ``abs(T_mean - T_mean_LT)``.
 
         After overriding selected_months, optionally regenerates and smooths the
-        TMY (raw → smoothed) in-place.
+        TMY (raw -> smoothed) in-place.
 
         Args:
             months (list of int, optional): Months to check. Defaults to all 12.
             temp_diff_threshold (float): Correction is applied when
-                |T_selected - T_LT| > threshold. Default 1.0 °C.
+                ``abs(T_selected - T_LT) > threshold``. Default 1.0 °C.
             regenerate (bool): If True (default), regenerates the TMY after
                 correction (calls _create_raw_tmy + _apply_smoothing).
             verbose (bool): Print a correction report.
 
         Returns:
-            dict: {month_num: {'original': year, 'corrected': year,
-                               'orig_diff': float, 'new_diff': float}}
-                  Only months that were actually corrected are included.
+            dict: Mapping ``{month_num: {'original': year, 'corrected': year,
+            'orig_diff': float, 'new_diff': float}}``. Only months that were
+            actually corrected are included.
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.correct_selection_by_temperature(temp_diff_threshold=1.0)  # doctest: +SKIP
         """
         if self.selected_months is None:
             raise RuntimeError("Run generate_tmy() first.")
@@ -3437,6 +3847,10 @@ class TMYGenerator:
 
         Returns:
             matplotlib.figure.Figure
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.plot_monthly_trend(months=[1, 7], show_candidates=True)  # doctest: +SKIP
         """
         if self.df_daily is None:
             raise RuntimeError("Run step_1_load_and_prepare_data() first.")
@@ -3538,6 +3952,10 @@ class TMYGenerator:
 
         Returns:
             matplotlib.figure.Figure
+
+        Example:
+            >>> gen.generate_tmy()  # doctest: +SKIP
+            >>> gen.plot_monthly_series(months=[1, 7])  # doctest: +SKIP
         """
         if self.df_daily is None:
             raise RuntimeError("Run step_1_load_and_prepare_data() first.")
@@ -3611,6 +4029,10 @@ class TMYGenerator:
 
         Returns:
             matplotlib.figure.Figure
+
+        Example:
+            >>> other_tmy = pd.read_csv("previous_tmy.csv", index_col=0, parse_dates=True)  # doctest: +SKIP
+            >>> gen.compare_tmy_versions(other_tmy, months=[1, 7])  # doctest: +SKIP
         """
         if self.tmy_final is None:
             raise RuntimeError("No TMY available on this instance. "

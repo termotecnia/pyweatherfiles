@@ -1,16 +1,65 @@
 # -*- coding: utf-8 -*-
 """
 session_manager.py
-==================
-Centralised session persistence (pickle + JSON) for pyweatherfiles
-classes and standalone functions.
+===================
 
-Public API
-----------
-save_object_session(obj, prefix, inputs_dict, session_dir=None)
-save_function_session(func_name, inputs_dict, result, session_dir=None, extra=None)
-load_session(pkl_path)
-generate_session_filename(prefix, inputs_dict, extension='pkl')
+Centralised, reproducible session persistence for the whole ``pyweatherfiles``
+package.
+
+**What problem does this module solve?** Almost every public class/function in
+the package (:class:`~pyweatherfiles.tmy.TMYGenerator`,
+:class:`~pyweatherfiles.hourly_epw_converter.HourlyEPWConverter`,
+:class:`~pyweatherfiles.degree_hours.DegreeHoursCalculator`,
+:func:`~pyweatherfiles.met_epw_converter.convert_met_to_epw`, etc.) can save a
+**session** right after finishing its work: a snapshot of exactly what inputs
+were used and what the resulting object/DataFrame looked like. This makes runs
+auditable and reproducible (useful for scientific articles, QA, or simply
+remembering "how did I generate this file six months ago?").
+
+Every session is written as **two files** sharing the same deterministic,
+collision-resistant name (see :func:`generate_session_filename`):
+
+- ``{prefix}_{slug1}_{slug2}_{slug3}_{hash8}.pkl`` — the actual serialised
+  Python object (or a partial, sanitised state dict if some attribute cannot
+  be pickled), recoverable with :func:`load_session`.
+- ``{prefix}_{slug1}_{slug2}_{slug3}_{hash8}.json`` — a human-readable
+  snapshot (timestamp, package version, all public attributes converted to a
+  JSON-safe form) that can be opened in any text editor without Python.
+
+This module is used internally by other modules and is rarely imported
+directly by end users, but its public functions are perfectly usable on their
+own if you want to add session persistence to your own scripts.
+
+Examples
+--------
+Saving the session of an arbitrary object you built yourself::
+
+    from pyweatherfiles.session_manager import save_object_session, load_session
+
+    class MyResult:
+        def __init__(self, value):
+            self.value = value
+
+    result = MyResult(value=42)
+    pkl_path = save_object_session(
+        result,
+        prefix="MyResult",
+        inputs_dict={"source_file": "data.csv", "method": "average"},
+    )
+    # -> ".../MyResult_data_average_9f8a1c02.pkl" (+ matching .json)
+
+    restored = load_session(pkl_path)
+    assert restored.value == 42
+
+Saving the session of a plain function call (no class involved)::
+
+    from pyweatherfiles.session_manager import save_function_session
+
+    def add(a, b):
+        return a + b
+
+    inputs = {"a": 2, "b": 3}
+    save_function_session("add", inputs, result=add(**inputs))
 """
 
 import copy
@@ -36,7 +85,24 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def _sanitize(text: str, max_len: int = 28) -> str:
-    """Return a filesystem-safe slug from *text*."""
+    """Turn an arbitrary string (typically a file path) into a short,
+    filesystem-safe slug usable inside a filename.
+
+    The base name (without directory or extension) is extracted, every
+    character that is not alphanumeric or ``_``/``-`` is replaced with ``_``,
+    repeated underscores are collapsed, and the result is truncated to
+    *max_len* characters.
+
+    Args:
+        text (str): Arbitrary text to sanitise (often a file path or a
+            parameter value).
+        max_len (int, optional): Maximum length of the returned slug.
+            Defaults to 28.
+
+    Returns:
+        str: A filesystem-safe slug, e.g. ``_sanitize("C:/data/Seville 2020.xlsx")
+        -> "Seville_2020"``.
+    """
     text = os.path.splitext(os.path.basename(str(text)))[0]
     text = re.sub(r'[^\w\-]', '_', text)
     text = re.sub(r'_+', '_', text).strip('_')
@@ -44,7 +110,20 @@ def _sanitize(text: str, max_len: int = 28) -> str:
 
 
 def _make_hash(inputs_dict: dict, length: int = 8) -> str:
-    """Short deterministic MD5 hash of *inputs_dict*."""
+    """Compute a short, deterministic MD5 hash that uniquely identifies a set
+    of inputs, used as the final component of session filenames so that two
+    runs with different parameters never collide.
+
+    Args:
+        inputs_dict (dict): Mapping of input names to values. Values are
+            stringified and the dict is sorted by key before hashing, so the
+            hash only depends on content, not on key/insertion order.
+        length (int, optional): Number of hex characters to keep from the
+            full MD5 digest. Defaults to 8.
+
+    Returns:
+        str: A lowercase hexadecimal string of length *length*.
+    """
     canonical = json.dumps(
         {k: str(v) for k, v in sorted(inputs_dict.items())},
         sort_keys=True,
@@ -60,20 +139,32 @@ def generate_session_filename(
     """
     Build a unique, human-readable session filename.
 
-    Format: ``{prefix}_{slug1}_{slug2}_{hash8}.{ext}``
+    Format: ``{prefix}_{slug1}_{slug2}_{slug3}_{hash8}.{ext}``, where up to
+    the first 3 values of *inputs_dict* are turned into short slugs (via
+    :func:`_sanitize`) and appended to *prefix*, followed by a short
+    deterministic hash (via :func:`_make_hash`) of the *entire* inputs dict.
+    This keeps filenames readable at a glance while still guaranteeing
+    uniqueness across different parameter combinations.
 
-    Parameters
-    ----------
-    prefix : str
-        Class / function name (e.g. ``'TMYGenerator'``).
-    inputs_dict : dict
-        Key inputs used to distinguish sessions (paths, methods, years…).
-    extension : str
-        File extension without leading dot (default: ``'pkl'``).
+    Args:
+        prefix (str): Class or function name used as the filename prefix
+            (e.g. ``'TMYGenerator'``, ``'convert_met_to_epw'``).
+        inputs_dict (dict): Key inputs used to distinguish sessions (file
+            paths, methods, years...). Only the first 3 values are turned
+            into visible slugs; all of them contribute to the hash.
+        extension (str, optional): File extension without the leading dot.
+            Defaults to ``'pkl'``.
 
-    Returns
-    -------
-    str
+    Returns:
+        str: The generated filename, e.g.
+        ``"TMYGenerator_weather_data_daily_hourly_3a1b9c04.pkl"``.
+
+    Example:
+        >>> generate_session_filename(
+        ...     "TMYGenerator",
+        ...     {"file_path": "weather_data.csv", "cdf_method": "daily"},
+        ... )
+        'TMYGenerator_weather_data_daily_....pkl'
     """
     parts = [prefix]
     for i, v in enumerate(inputs_dict.values()):
@@ -87,7 +178,21 @@ def generate_session_filename(
 
 
 def _infer_output_dir(inputs_dict: dict) -> str:
-    """Return the directory of the first file-path value found in *inputs_dict*."""
+    """Guess a sensible directory to write session files to when the caller
+    did not provide an explicit ``session_dir``.
+
+    Scans *inputs_dict* values for anything that looks like a file path
+    (contains a path separator) and returns the absolute directory of the
+    first match; falls back to the current working directory otherwise.
+
+    Args:
+        inputs_dict (dict): Mapping of input names to values, typically
+            including at least one file path (e.g. ``file_path``,
+            ``epw_path``).
+
+    Returns:
+        str: An absolute directory path.
+    """
     for v in inputs_dict.values():
         s = str(v)
         if os.sep in s or '/' in s:
@@ -102,7 +207,25 @@ def _infer_output_dir(inputs_dict: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _to_json_safe(value: Any) -> Any:
-    """Recursively convert *value* to a JSON-serialisable form."""
+    """Recursively convert an arbitrary Python value into something
+    ``json.dump``-compatible, without raising ``TypeError`` on the objects
+    commonly found in this package (:class:`pandas.DataFrame`,
+    :class:`pandas.Series`, :class:`numpy.ndarray`, numpy scalars, nested
+    dict/list/tuple, dates...).
+
+    DataFrames/Series/ndarrays are **summarised** (shape, columns, dtypes)
+    rather than fully dumped, to keep the resulting JSON small and readable.
+    Long lists/tuples (more than 200 items) are truncated, keeping only the
+    first 10 elements plus their original length. Anything else that cannot
+    be converted falls back to ``str(value)`` or the literal string
+    ``"<non-serialisable>"``.
+
+    Args:
+        value (Any): Value to convert.
+
+    Returns:
+        Any: A JSON-serialisable representation of *value*.
+    """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, (np.integer,)):
@@ -143,7 +266,22 @@ def _to_json_safe(value: Any) -> Any:
 
 
 def _object_to_json_dict(obj: Any, extra_info: Optional[dict] = None) -> dict:
-    """Snapshot of *obj*'s public attributes as a JSON-safe dict."""
+    """Build a JSON-safe dict snapshot of every public (non-underscore)
+    attribute of *obj*, used as the payload written to the ``.json``
+    companion file in :func:`save_object_session`.
+
+    Args:
+        obj (Any): The instance whose public attributes should be captured.
+        extra_info (dict, optional): Extra key/value pairs (typically the
+            constructor inputs) to store under the ``"inputs"`` key.
+
+    Returns:
+        dict: A dict with ``timestamp``, ``class_name``,
+        ``pyweatherfiles_version``, optionally ``inputs``, and
+        ``attributes`` (every public attribute, converted via
+        :func:`_to_json_safe`; attributes that raise on access are recorded
+        as ``"<error reading attribute>"``).
+    """
     result: dict = {
         "timestamp": datetime.datetime.now().isoformat(),
         "class_name": type(obj).__name__,
@@ -169,7 +307,22 @@ def _function_result_to_json_dict(
     result: Any,
     extra: Optional[dict] = None,
 ) -> dict:
-    """JSON snapshot for a standalone function's result."""
+    """Build the JSON-safe payload used by :func:`save_function_session`
+    for a standalone function call (as opposed to a class instance).
+
+    Args:
+        func_name (str): Name of the function that was called.
+        inputs (dict): The arguments the function was called with.
+        result (Any): The function's return value.
+        extra (dict, optional): Any additional data worth recording
+            (e.g. intermediate DataFrames, flags).
+
+    Returns:
+        dict: A dict with ``timestamp``, ``function_name``,
+        ``pyweatherfiles_version``, ``inputs``, ``result`` and, if provided,
+        ``extra`` — all converted to JSON-safe values via
+        :func:`_to_json_safe`.
+    """
     d: dict = {
         "timestamp": datetime.datetime.now().isoformat(),
         "function_name": func_name,
@@ -188,8 +341,20 @@ def _function_result_to_json_dict(
 
 def _pickle_obj(obj: Any) -> bytes:
     """
-    Try to pickle *obj* as-is; if that fails, pickle a sanitised state dict
-    (non-picklable attributes are replaced with a string placeholder).
+    Serialise *obj* with :mod:`pickle`, tolerating attributes that cannot be
+    pickled (e.g. open file handles, some C-extension objects).
+
+    The function first tries a direct ``pickle.dumps(obj)``. If that raises
+    any exception, it falls back to pickling a **sanitised state dict**
+    instead: every attribute in ``vars(obj)`` is pickled individually, and
+    any attribute that fails is replaced with a ``"<non-picklable: TypeName>"``
+    placeholder string so the rest of the session is not lost.
+
+    Args:
+        obj (Any): Object to serialise.
+
+    Returns:
+        bytes: The pickled payload, ready to be written to a ``.pkl`` file.
     """
     try:
         return pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
@@ -217,23 +382,42 @@ def save_object_session(
     session_dir: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Save *obj* to a ``.pkl`` file and a ``.json`` metadata file.
+    Save a class instance to a ``.pkl`` file (full object, via
+    :func:`_pickle_obj`) plus a companion ``.json`` metadata file (via
+    :func:`_object_to_json_dict`), using a deterministic filename computed by
+    :func:`generate_session_filename`.
+
+    This is the function called internally, right after a heavy computation
+    finishes, by classes such as :class:`~pyweatherfiles.tmy.TMYGenerator` or
+    :class:`~pyweatherfiles.degree_hours.DegreeHoursCalculator` whenever
+    ``save_session=True`` (the default across the package).
 
     Parameters
     ----------
     obj : Any
-        Class instance to persist.
+        Class instance to persist (e.g. a fitted ``TMYGenerator``).
     prefix : str
         Human-readable filename prefix (e.g. ``'TMYGenerator'``).
     inputs_dict : dict
-        Key inputs used to build the unique filename.
+        Key inputs used to build the unique filename (e.g.
+        ``{"file_path": ..., "cdf_method": ...}``).
     session_dir : str, optional
-        Directory for the files. Inferred from *inputs_dict* if ``None``.
+        Directory for the files. Inferred from *inputs_dict* (directory of
+        the first path-like value found) if ``None``.
 
     Returns
     -------
     str or None
-        Path to the saved ``.pkl`` file, or ``None`` on failure.
+        Path to the saved ``.pkl`` file, or ``None`` if pickling failed
+        outright.
+
+    Example
+    -------
+    >>> class Dummy:
+    ...     def __init__(self):
+    ...         self.value = 123
+    >>> save_object_session(Dummy(), "Dummy", {"source": "manual"})  # doctest: +SKIP
+    '/current/dir/Dummy_manual_....pkl'
     """
     if session_dir is None:
         session_dir = _infer_output_dir(inputs_dict)
@@ -272,25 +456,44 @@ def save_function_session(
     extra: Optional[dict] = None,
 ) -> Optional[str]:
     """
-    Persist a standalone function's inputs + result as ``.pkl`` + ``.json``.
+    Persist a standalone function's inputs + result as a ``.pkl`` file
+    (a dict with ``inputs``/``result``/``extra`` keys) plus a companion
+    ``.json`` metadata file (via :func:`_function_result_to_json_dict`).
+
+    This is the function-style counterpart of :func:`save_object_session`,
+    used by module-level functions that are not tied to a class, such as
+    :func:`~pyweatherfiles.met_epw_converter.convert_met_to_epw` or
+    :func:`~pyweatherfiles.epw_comparator.create_comparison_hourly_dataframe`.
 
     Parameters
     ----------
     func_name : str
-        Function name used as filename prefix.
+        Function name used as the filename prefix (e.g.
+        ``'convert_met_to_epw'``).
     inputs_dict : dict
-        Inputs used to derive the unique filename.
+        Inputs used to derive the unique filename (e.g. the file paths the
+        function was called with).
     result : Any
-        The function's return value.
+        The function's return value (can be a bool, a DataFrame, etc.; it is
+        summarised, not fully dumped, in the JSON file).
     session_dir : str, optional
         Directory for the files. Inferred from *inputs_dict* if ``None``.
     extra : dict, optional
-        Additional data to include in the JSON (e.g. intermediate DataFrames).
+        Additional data to include in the JSON (e.g. flags, intermediate
+        DataFrames).
 
     Returns
     -------
     str or None
         Path to the saved ``.pkl`` file, or ``None`` on failure.
+
+    Example
+    -------
+    >>> def double(x):
+    ...     return x * 2
+    >>> x = 21
+    >>> save_function_session("double", {"x": x}, result=double(x))  # doctest: +SKIP
+    '/current/dir/double_21_....pkl'
     """
     if session_dir is None:
         session_dir = _infer_output_dir(inputs_dict)
@@ -330,12 +533,27 @@ def load_session(pkl_path: str) -> Any:
     Parameters
     ----------
     pkl_path : str
-        Path to the ``.pkl`` file.
+        Path to the ``.pkl`` file (as returned by either save function).
 
     Returns
     -------
     Any
-        The deserialised object or payload dict.
+        The deserialised object (for :func:`save_object_session`) or the
+        ``{"inputs": ..., "result": ..., "extra": ...}`` payload dict (for
+        :func:`save_function_session`). If the original object could not be
+        pickled directly, a ``{"__class__": ..., "__state__": ...}`` dict is
+        returned instead (see :func:`_pickle_obj`).
+
+    Raises
+    ------
+    FileNotFoundError
+        If *pkl_path* does not exist.
+
+    Example
+    -------
+    >>> from pyweatherfiles.session_manager import load_session
+    >>> session = load_session("TMYGenerator_weather_data_daily_3a1b9c04.pkl")  # doctest: +SKIP
+    >>> session.validation_full_summary  # doctest: +SKIP
     """
     if not os.path.exists(pkl_path):
         raise FileNotFoundError(f"Session file not found: {pkl_path}")

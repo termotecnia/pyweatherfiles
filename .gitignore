@@ -38,3 +38,11 @@ ENV/
 # Data
 onedrive_backup/
 /pyweatherfiles_backup/
+
+# Tutorial notebook generated outputs
+examples/tutorial_output/
+
+# Sphinx documentation build output and auto-generated API stubs
+docs/build/
+docs/source/api/
+

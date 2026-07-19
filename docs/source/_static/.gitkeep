@@ -1,0 +1,3 @@
+# Placeholder so this (otherwise empty) directory is kept under version control.
+# Sphinx looks for custom static assets (CSS/JS/images) here via html_static_path in conf.py.
+
