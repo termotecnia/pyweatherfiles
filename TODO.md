@@ -53,6 +53,16 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
 - **Status:** deferred — depends entirely on task 1 (still blocked, external module not received).
 - **Planned steps once task 1 unblocks:** add the new module to the Sphinx API reference (autodoc will pick it up automatically once it exists), document its data flow, and add a section/notebook cell to `examples/tutorial_pyweatherfiles.ipynb` if relevant.
 
+### 5. [ ] Publish the site on Read the Docs (import the repository on readthedocs.org)
+
+- **Status:** pending — blocked by access; requires someone with permissions in the `termotecnia` GitHub organization to import the repo on readthedocs.org.
+- **Context:** `.readthedocs.yaml` already exists in the repo (see task 3), configured with Sphinx (`docs/source/conf.py`) and installing the package with the `docs` extra; the only missing step is importing the project on the Read the Docs platform so `https://pyweatherfiles.readthedocs.io/` goes live.
+- **Planned steps:**
+  - [ ] Someone with access to the `termotecnia` organization must log into [readthedocs.org](https://readthedocs.org/), connect their GitHub account, and import the `pyweatherfiles` repository.
+  - [ ] Once imported, RTD will automatically detect the `.readthedocs.yaml` and build the site on every push.
+  - [ ] Enable the build also on the `main` branch (not only on `feature/proximity-normalization-methods`).
+  - [ ] Verify that the RTD build finishes without errors and that the published site matches expectations (including the rendered tutorial notebook).
+
 ---
 
 ## Notes on using this document

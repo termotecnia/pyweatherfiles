@@ -53,6 +53,16 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
 - **Estado:** aplazado — depende íntegramente de la tarea 1 (sigue bloqueada, módulo externo no recibido).
 - **Pasos previstos una vez se desbloquee la tarea 1:** añadir el nuevo módulo a la referencia de API de Sphinx (autodoc lo detectará automáticamente en cuanto exista), documentar su flujo de datos, y añadir una sección/celda al notebook `examples/tutorial_pyweatherfiles.ipynb` si procede.
 
+### 5. [ ] Publicar el sitio en Read the Docs (importar el repositorio en readthedocs.org)
+
+- **Estado:** pendiente — bloqueado por acceso; requiere que alguien con permisos en la organización de GitHub `termotecnia` importe el repo en readthedocs.org.
+- **Contexto:** ya existe `.readthedocs.yaml` en el repo (ver tarea 3), configurado con Sphinx (`docs/source/conf.py`) e instalando el paquete con el extra `docs`; falta únicamente el paso de importación en la plataforma de Read the Docs para que `https://pyweatherfiles.readthedocs.io/` quede publicado.
+- **Pasos previstos:**
+  - [ ] Alguien con acceso a la organización `termotecnia` debe entrar a [readthedocs.org](https://readthedocs.org/), conectar su cuenta de GitHub e importar el repositorio `pyweatherfiles`.
+  - [ ] Una vez importado, RTD detectará automáticamente el `.readthedocs.yaml` y construirá el sitio en cada push.
+  - [ ] Activar el build también sobre la rama `main` (no solo sobre `feature/proximity-normalization-methods`).
+  - [ ] Verificar que el build en RTD termina sin errores y que el sitio publicado coincide con lo esperado (incluyendo el notebook del tutorial renderizado).
+
 ---
 
 ## Notas de uso de este documento
