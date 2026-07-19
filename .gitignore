@@ -42,11 +42,14 @@ onedrive_backup/
 # Tutorial notebook generated outputs
 examples/tutorial_output/
 
-# Sphinx documentation build output and auto-generated API stubs
+# Sphinx documentation build output (final HTML, easily regenerated, not tracked)
 docs/build/
-docs/source/api/
-# Copied at build time from examples/tutorial_pyweatherfiles.ipynb (see docs/source/conf.py);
-# that file is the single source of truth and stays tracked under examples/.
-docs/source/tutorial_pyweatherfiles.ipynb
 docs/source/.jupyter_cache/
+
+# NOTE: docs/source/api/ (sphinx-apidoc stubs) and docs/source/tutorial_pyweatherfiles.ipynb
+# are auto-regenerated on every docs build (see dist_build_docs.bat / docs/source/conf.py),
+# but they ARE intentionally committed as a GitHub backup in case the Read the Docs build
+# or local toolchain is ever unavailable. examples/tutorial_pyweatherfiles.ipynb remains the
+# single source of truth for the notebook; the copy under docs/source/ must stay in sync with
+# it (re-run dist_build_docs.bat, or copy it manually, before committing changes to either).
 
