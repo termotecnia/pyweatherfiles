@@ -45,4 +45,8 @@ examples/tutorial_output/
 # Sphinx documentation build output and auto-generated API stubs
 docs/build/
 docs/source/api/
+# Copied at build time from examples/tutorial_pyweatherfiles.ipynb (see docs/source/conf.py);
+# that file is the single source of truth and stays tracked under examples/.
+docs/source/tutorial_pyweatherfiles.ipynb
+docs/source/.jupyter_cache/
 

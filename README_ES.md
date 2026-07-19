@@ -1,5 +1,7 @@
 # pyweatherfiles
 
+[![Documentation Status](https://readthedocs.org/projects/pyweatherfiles/badge/?version=latest)](https://pyweatherfiles.readthedocs.io/en/latest/?badge=latest)
+
 **`pyweatherfiles`** es un paquete de Python para la gestión integral de ficheros climáticos orientado a la simulación energética de edificios: generación de **Años Meteorológicos Típicos (TMY)**, conversión bidireccional entre formatos (EPW, `.met`, series horarias en CSV/Excel), cálculo de **grados-hora** de calefacción/refrigeración, **análisis de tendencias climáticas** multianuales, comparación de ficheros EPW y depuración/relleno de series horarias brutas.
 
 Este documento describe **al máximo nivel de detalle técnico el paquete completo**: todos sus módulos, clases, funciones, parámetros y fórmulas — incluidos aquellos que **no** se usan en el script de referencia del artículo (`generating epws seville.py`).
@@ -9,6 +11,9 @@ Este documento describe **al máximo nivel de detalle técnico el paquete comple
 > 🇬🇧 English version of this document: see [`README.md`](README.md).
 
 > Autor del paquete: Daniel Sánchez-García (Universidad de Cádiz) — `daniel.sanchezgarcia@uca.es`
+
+> 📘 **Documentación HTML completa** (alojada en Read the Docs — referencia de API autogenerada desde el código fuente, más esta misma guía, navegable y con buscador): **https://pyweatherfiles.readthedocs.io/**. Constrúyela localmente con `pip install -e ".[docs]"` y `dist_build_docs.bat` (ver `docs/source/installation.md`).
+> 📓 **Tutorial práctico en notebook** (se ejecuta de principio a fin con datos ya incluidos en este repositorio, sin descargas externas; también se muestra renderizado directamente en la documentación online): [`examples/tutorial_pyweatherfiles.ipynb`](examples/tutorial_pyweatherfiles.ipynb).
 
 ---
 

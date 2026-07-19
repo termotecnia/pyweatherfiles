@@ -1,12 +1,18 @@
 # Tutorial notebook
 
-A full, runnable walkthrough is available as a Jupyter Notebook:
+The full, runnable walkthrough is rendered right here in the documentation
+(with all of its real outputs and plots already embedded), and can also be
+opened interactively:
 
 ```{eval-rst}
-:download:`tutorial_pyweatherfiles.ipynb <../../examples/tutorial_pyweatherfiles.ipynb>`
+:download:`Download tutorial_pyweatherfiles.ipynb <../../examples/tutorial_pyweatherfiles.ipynb>`
 ```
 
-Location in the repository: `examples/tutorial_pyweatherfiles.ipynb`.
+- **Rendered notebook**: {doc}`tutorial_pyweatherfiles` (next page).
+- **Location in the repository**: `examples/tutorial_pyweatherfiles.ipynb` —
+  this is the single source of truth; the copy shown in this documentation
+  site is generated automatically at build time (see
+  `docs/source/conf.py`), so it never needs to be edited twice.
 
 ## What it covers
 

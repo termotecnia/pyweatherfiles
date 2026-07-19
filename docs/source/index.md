@@ -19,7 +19,7 @@ This site is generated with [Sphinx](https://www.sphinx-doc.org/) and hosts:
 
 ```{tip}
 New to the package? Start with {doc}`installation` and {doc}`quickstart`,
-then open the {doc}`tutorial`.
+then work through the {doc}`tutorial_pyweatherfiles` notebook.
 ```
 
 ## Module map
@@ -42,6 +42,7 @@ then open the {doc}`tutorial`.
 installation
 quickstart
 tutorial
+tutorial_pyweatherfiles
 ```
 
 ```{toctree}

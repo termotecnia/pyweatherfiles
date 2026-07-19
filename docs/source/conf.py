@@ -19,10 +19,25 @@ or manually::
     make html       # Linux/Mac
 
 The generated HTML is written to ``docs/build/html/index.html``.
+
+This project is also built automatically on `Read the Docs
+<https://readthedocs.org/>`_ using ``.readthedocs.yaml`` at the repository
+root, which installs the package with the ``docs`` extra and runs Sphinx
+against this same ``conf.py``.
+
+Tutorial notebook
+------------------
+``examples/tutorial_pyweatherfiles.ipynb`` is the single source of truth for
+the tutorial; it is copied (not duplicated by hand) into this ``source/``
+directory at build time (see :func:`_copy_tutorial_notebook` below) and
+rendered in place with ``myst-nb``, using the outputs already stored in the
+notebook (``nb_execution_mode = "off"``) so the docs build never needs to
+re-run the full TMY/degree-hours/trend pipeline.
 """
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -32,6 +47,25 @@ from pathlib import Path
 DOCS_SOURCE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DOCS_SOURCE_DIR.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+
+def _copy_tutorial_notebook() -> None:
+    """Copy ``examples/tutorial_pyweatherfiles.ipynb`` into ``docs/source/``.
+
+    Sphinx can only use source files that live inside its ``srcdir``
+    (``docs/source/``). Rather than keeping a second, hand-maintained copy
+    of the tutorial notebook there, this copies the real notebook from
+    ``examples/`` on every build (locally and on Read the Docs), so
+    ``examples/tutorial_pyweatherfiles.ipynb`` remains the only file anyone
+    needs to edit. The copied file is git-ignored (see ``.gitignore``).
+    """
+    src = REPO_ROOT / "examples" / "tutorial_pyweatherfiles.ipynb"
+    dst = DOCS_SOURCE_DIR / "tutorial_pyweatherfiles.ipynb"
+    if src.is_file():
+        shutil.copyfile(src, dst)
+
+
+_copy_tutorial_notebook()
 
 # -- Project information ------------------------------------------------------
 project = "pyweatherfiles"
@@ -53,14 +87,17 @@ extensions = [
     "sphinx.ext.viewcode",      # Adds links to highlighted source code
     "sphinx.ext.intersphinx",
     "sphinx.ext.todo",
-    "myst_parser",              # Allows writing pages in Markdown (.md)
+    "myst_nb",                  # Markdown (.md) pages *and* Jupyter notebook (.ipynb) rendering.
+                                 # myst_nb internally sets up myst_parser; do NOT also list
+                                 # "myst_parser" here or Sphinx double-registers its roles/directives.
 ]
 
-# Allow both .rst and .md source files.
-source_suffix = {
-    ".rst": "restructuredtext",
-    ".md": "markdown",
-}
+# NOTE: source_suffix is intentionally *not* set manually here. myst_nb
+# registers ".md" and ".ipynb" itself (via app.add_source_suffix(..., "myst-nb"));
+# overriding source_suffix with the plain "markdown" parser name would break
+# that registration (Sphinx would then look for a parser literally named
+# "markdown", which no longer exists once "myst_parser" is not also listed
+# above). ".rst" continues to work via Sphinx's own built-in default.
 
 myst_enable_extensions = [
     "colon_fence",
@@ -69,6 +106,17 @@ myst_enable_extensions = [
     "html_image",
 ]
 myst_heading_anchors = 3
+
+# -- myst-nb (notebook rendering) ---------------------------------------------
+# Render the tutorial notebook using the outputs it already contains instead
+# of re-executing it: the real pipeline needs the Seville dataset, an
+# EnergyPlus IDF, and several heavy optional dependencies (ladybug, pvlib...)
+# that should not be a hard requirement just to build the documentation.
+nb_execution_mode = "off"
+# Notebooks are the tutorial itself, not doctests to fail the build over.
+nb_execution_allow_errors = True
+# Merge consecutive stdout/stderr streams so long TMY console logs stay readable.
+nb_merge_streams = True
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]

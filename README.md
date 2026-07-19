@@ -1,5 +1,7 @@
 # pyweatherfiles
 
+[![Documentation Status](https://readthedocs.org/projects/pyweatherfiles/badge/?version=latest)](https://pyweatherfiles.readthedocs.io/en/latest/?badge=latest)
+
 **`pyweatherfiles`** is a Python package for comprehensive weather-file management aimed at building energy simulation: **Typical Meteorological Year (TMY)** generation, bidirectional format conversion (EPW, `.met`, hourly CSV/Excel series), **heating/cooling degree-hours** calculation, multi-year **climate trend analysis**, EPW file comparison, and gap-filling/cleaning of raw hourly series.
 
 This document describes **the entire package in maximum technical detail**: all its modules, classes, functions, parameters and formulas — including those **not** used in the article's reference script (`generating epws seville.py`).
@@ -8,6 +10,9 @@ This document describes **the entire package in maximum technical detail**: all 
 > ℹ️ For the document focused **exclusively** on the real workflow used in the article (Seville case study: `HourlyEPWConverter` + `convert_met_to_epw` + `TMYGenerator`), see [`ARTICLE_CONTEXT_SEVILLA.md`](ARTICLE_CONTEXT_SEVILLA.md) (Spanish).
 
 > Package author: Daniel Sánchez-García (University of Cádiz) — `daniel.sanchezgarcia@uca.es`
+
+> 📘 **Full HTML documentation** (hosted on Read the Docs — API reference auto-generated from the source code, plus this same guide, browsable and searchable): **https://pyweatherfiles.readthedocs.io/**. Build it locally with `pip install -e ".[docs]"` and `dist_build_docs.bat` (see `docs/source/installation.md`).
+> 📓 **Hands-on tutorial notebook** (runs end-to-end with data already bundled in this repo, no external downloads needed; also rendered directly in the online documentation): [`examples/tutorial_pyweatherfiles.ipynb`](examples/tutorial_pyweatherfiles.ipynb).
 
 ---
 
