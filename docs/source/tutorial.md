@@ -37,8 +37,15 @@ repository so every cell can be executed without any external download:
    historical year (from `longterm_epw/`) side by side, with multiple
    hour-of-day scenarios.
 6. **`EpwTrendAnalyzer`** (bonus) — fits per-city and global fixed-effects
-   warming trends over the full `longterm_epw/` collection (2005-2025,
-   illustrating how missing years are reported in the coverage table).
+   warming trends over the Seville subset of the `longterm_epw/` collection
+   (2005-2025, illustrating how missing years are reported in the coverage
+   table), plus the boxplot-per-year visual-QA figure via
+   `build_boxplot_figure()`.
+7. **`EpwGroupTrendAnalyzer`** (bonus) — batch heating/cooling degree-hour
+   trend analysis over the *entire* `longterm_epw/` folder, automatically
+   classified by filename into 5 independent Spanish climates (Granada,
+   León, Madrid, Málaga, Seville), each analysed fully independently, never
+   pooled together.
 
 ## Running it
 
