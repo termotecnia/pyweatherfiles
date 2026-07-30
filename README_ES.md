@@ -1,5 +1,6 @@
 # pyweatherfiles
 
+[![CI](https://github.com/termotecnia/pyweatherfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/termotecnia/pyweatherfiles/actions/workflows/ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/pyweatherfiles/badge/?version=latest)](https://pyweatherfiles.readthedocs.io/en/latest/?badge=latest)
 
 **`pyweatherfiles`** es un paquete de Python para la gestión integral de ficheros climáticos orientado a la simulación energética de edificios: generación de **Años Meteorológicos Típicos (TMY)**, conversión bidireccional entre formatos (EPW, `.met`, series horarias en CSV/Excel), cálculo de **grados-hora** de calefacción/refrigeración, **análisis de tendencias climáticas** multianuales, comparación de ficheros EPW y depuración/relleno de series horarias brutas.

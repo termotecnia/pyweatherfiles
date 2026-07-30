@@ -27,7 +27,8 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
 - **Context:** the scripts `dist_build_package.bat`, `dist_upload_test.bat`, and `dist_upload.bat` already exist.
 - **Planned steps:**
   - [x] Review `pyproject.toml` dependency list: `ladybug-core` is already a mandatory dependency, and `pvlib`/`tabulate`/`besos`/`eppy`/`accim` are now declared as optional extras (`climate`, `comparator`, `energyplus`, `accents`, plus a combined `full`), with their imports guarded by `try/except ImportError` in `climate_processor.py`/`epw_comparator.py` (they already were in `degree_hours.py`). See `INFORME_REVISION_GENERAL.md` §6 Fase 0.3.
-  - [ ] Still pending on `pyproject.toml`: bump the version number (currently `0.0.0`), review classifiers, and add a physical `LICENSE` file at the repo root (currently only declared as metadata: `license = "MIT"`, no `LICENSE` file exists — see `INFORME_REVISION_GENERAL.md` note).
+  - [x] Still pending on `pyproject.toml` — now also done: added a physical `LICENSE` file at the repo root (MIT, matches the `license = "MIT"` metadata), bumped `requires-python` from the stale `>=3.7` (EOL, incompatible with current pandas/numpy) to `>=3.10`, and added Python-version `classifiers` (3.10-3.13). Version number is still `0.0.0` — bump it as part of the actual release step below.
+  - [x] `dist_build_package.bat`'s `python -m build` step is now also exercised automatically on every push/PR via `.github/workflows/ci.yml` (Fase 3), so packaging breakage should surface before this manual step.
   - [ ] Run `dist_build_package.bat` (cleans `dist/`, `build/`, `*.egg-info` and runs `python -m build`).
   - [ ] Publish to TestPyPI with `dist_upload_test.bat` and validate installation in a clean virtual environment (`pip install -i https://test.pypi.org/simple/ pyweatherfiles`).
   - [ ] Test the examples in `examples/` against the package installed from TestPyPI (not from the local repo).

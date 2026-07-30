@@ -13,6 +13,10 @@ authors = [
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -25,7 +29,10 @@ dependencies = [
     "ladybug-core",
     "pyyaml"
 ]
-requires-python = ">=3.7"
+# NOTE: bumped from the previous ">=3.7" (EOL since 2023-06, and no longer
+# installable with the pinned dependencies above — e.g. modern pandas/numpy
+# require >=3.9/3.10). See INFORME_REVISION_GENERAL.md §6 Fase 3.
+requires-python = ">=3.10"
 
 [project.optional-dependencies]
 docs = [

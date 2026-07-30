@@ -36,6 +36,7 @@
 - Docs: `docs/` exists (Sphinx + myst-nb + Furo, config at `docs/source/conf.py`). Build locally with `pip install -e ".[docs]"` then `dist_build_docs.bat`; published on Read the Docs via `.readthedocs.yaml`. Tutorial notebook lives at `examples/tutorial_pyweatherfiles.ipynb` (single source of truth, copied into `docs/source/` at build time).
 - Branch sync helper: `sync_branch.bat <branch>` runs `git clean -fd` (destructive for untracked files).
 - **Tests**: `tests/` now exists (pytest, extra `test` in `pyproject.toml`: `pip install -e ".[test]"` then `python -m pytest tests/`). Coverage is still partial — only the pure physical/EPW-plumbing functions and the two EPW-writing pipelines have regression tests so far (see `INFORME_REVISION_GENERAL.md` §6 Fase 2, "Nivel 1"/"Nivel 2"); `tmy.py`/`degree_hours.py`/`epw_trend_analyzer.py` core logic is still untested. No CI config yet (Fase 3, still pending).
+- **CI**: `.github/workflows/ci.yml` runs on push to `main` and on every pull request — `pytest` across Python 3.10-3.13 on Ubuntu plus one Windows job (3.12), then a package-build sanity job (`python -m build`). `requires-python` was bumped from the stale `>=3.7` (EOL, incompatible with current pandas/numpy) to `>=3.10`.
 
 ## Project-specific patterns (follow these)
 - Keep backward compatibility in `tmy.py`: new `sandia_step_*` methods coexist with deprecated aliases and compatibility properties.

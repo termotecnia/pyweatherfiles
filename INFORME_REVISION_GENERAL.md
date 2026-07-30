@@ -197,10 +197,12 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 
 **Estado real tras esta pasada:** 37/37 tests en verde (`python -m pytest tests/`). Cobertura: módulo `epw_field_utils.py` (nuevo, Fase 1) y las funciones físicas puras de `met_epw_converter.py`/`hourly_epw_converter.py`. **Sin cubrir todavía:** `tmy.py` (el módulo más grande y crítico), `degree_hours.py`, `epw_trend_analyzer.py`, `climate_processor.py`, `epw_comparator.py`, `session_manager.py`.
 
-### Fase 3 — Integración continua (esfuerzo: 2-3 días, depende de la Fase 2)
+### Fase 3 — Integración continua (esfuerzo: 2-3 días, depende de la Fase 2) — ✅ COMPLETADA
 
-1. Añadir `.github/workflows/ci.yml`: matriz mínima (una versión de Python compatible con `requires-python = ">=3.7"` o revisar si conviene subir el mínimo), instala el paquete con extras de test, corre `pytest`.
-2. Job adicional (opcional) que ejecute `python -m build` (reutilizando `dist_build_package.bat` como referencia) para detectar roturas de empaquetado en cada PR, antes de que sea necesario descubrirlas manualmente al publicar en PyPI (tarea 2 de `TODO.md`).
+1. [x] Añadido `.github/workflows/ci.yml`: matriz de `pytest` en Ubuntu (Python 3.10, 3.11, 3.12, 3.13, `fail-fast: false`) más un job en Windows (3.12, dado que el desarrollo real ocurre en Windows y ya hubo al menos un bug específico de esa plataforma — ver `TODO.md`, `UnicodeEncodeError` con `cp1252`). Se ejecuta en cada push a `main` y en cada *pull request*. Instala el paquete con el extra `test` (`pip install -e ".[test]"`) y corre `pytest tests/ --cov=pyweatherfiles`. Se sube el reporte de cobertura (`coverage.xml`) como artefacto en el job de Ubuntu 3.12.
+2. [x] Job adicional `build`: ejecuta `python -m build` (sdist + wheel), replicando `dist_build_package.bat`, y sube los artefactos generados — validado también localmente antes del commit (build exitoso).
+3. [x] **Efecto secundario real:** al preparar la matriz de CI se detectó que `requires-python = ">=3.7"` estaba obsoleto (Python 3.7 EOL desde 2023-06, incompatible con las versiones actuales de `pandas`/`numpy` ya fijadas como dependencias). Se subió a `>=3.10` y se añadieron los `classifiers` de versión de Python correspondientes en `pyproject.toml`.
+4. [ ] No resuelto (anotado, no bloqueante): el problema de compatibilidad `pytest-cov`/`numpy` observado localmente en Windows + Python 3.14 (ver Fase 2 punto 6) no se ha podido reproducir/diagnosticar en un entorno de CI real todavía, porque la matriz de CI no incluye Python 3.14 (deliberadamente, por ser una versión demasiado reciente para tener *wheels* binarias garantizadas de todas las dependencias en el momento de escribir esto). Revisar si el problema persiste cuando 3.14 esté más consolidada.
 
 ### Fase 4 — Reducir el solapamiento `EpwTrendAnalyzer` / `EpwGroupTrendAnalyzer` (esfuerzo: 3-5 días, requiere acuerdo de diseño)
 
@@ -232,7 +234,7 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 | 1 | Fase 0 | ✅ Completada (rama `chore/general-review-improvements`) | Coste mínimo, corrige riesgos inmediatos de documentación/paquetado antes de seguir tocando código. |
 | 2 | Fase 2 (tests) | 🟡 En progreso (37 tests, Niveles 1-2 de 6 pasos) | Sin red de pruebas, cualquier refactor posterior (incluida la Fase 1) es más arriesgado de lo necesario. Se recomienda adelantar al menos el "Nivel 1" de la Fase 2 antes o en paralelo con la Fase 1. Nota: la Fase 1 ya se ejecutó igualmente, verificada solo con pruebas manuales de regresión (ver §6 Fase 1, punto 3) a falta de la suite automatizada. |
 | 3 | Fase 1 | ✅ Completada (misma rama), verificación manual | Elimina la duplicación de mayor severidad detectada (lógica EPW/MET), con alcance acotado y claramente delimitado. |
-| 4 | Fase 3 | ⬜ Pendiente | Consolida el beneficio de la Fase 2 impidiendo regresiones futuras. |
+| 4 | Fase 3 | ✅ Completada (`.github/workflows/ci.yml`) | Consolida el beneficio de la Fase 2 impidiendo regresiones futuras. |
 | 5 | Fase 4 | ⬜ Pendiente | Mejora de diseño de valor medio, no urgente. |
 | 6 | Fase 5 | ⬜ Pendiente | Mayor beneficio a largo plazo para mantenibilidad, pero mayor riesgo — condicionada a tener tests. |
 | Continua | Fase 6 | ⬜ Pendiente | Mejora incremental sin bloquear el resto del roadmap (`TODO.md` ya cubre documentación/PyPI). |
