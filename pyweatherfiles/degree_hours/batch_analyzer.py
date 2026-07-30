@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Union
 import pandas as pd
 
 from ..session_manager import save_object_session
+from .._export_utils import export_frames_to_excel
 from .calculator import DegreeHoursCalculator
 
 # Variables whose monthly aggregate is a SUM (energy); all others use MEAN
@@ -362,7 +363,7 @@ class EpwBatchAnalyzer:
                         sd = pd.to_datetime(f"{calc.year}/{sd_str}", format="%Y/%d/%m")
                         ed = pd.to_datetime(f"{calc.year}/{ed_str}", format="%Y/%d/%m") + pd.Timedelta(days=1, microseconds=-1)
                     except Exception as e:
-                        raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
+                        raise ValueError(f"Invalid date format. Use 'DD/MM': {e}")
 
                     if sd <= ed:
                         mask = mask & ((idx >= sd) & (idx <= ed))
@@ -441,7 +442,7 @@ class EpwBatchAnalyzer:
                 df_concat.columns.names = ['epw', 'variable']
                 self.results[freq] = df_concat
 
-        print("\n[BATCH] Análisis completado.")
+        print("\n[BATCH] Analysis completed.")
 
         # --- Session persistence ---
         if save_session and self.results:
@@ -456,7 +457,7 @@ class EpwBatchAnalyzer:
             try:
                 save_object_session(self, "EpwBatchAnalyzer", _inputs, session_dir=_dir)
             except Exception as _e:
-                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+                print(f"[SESSION] Could not save the session: {_e}")
 
         return self.results
 
@@ -495,18 +496,18 @@ class EpwBatchAnalyzer:
         if not self.results:
             raise ValueError("No results to export. Call run() first.")
 
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            for freq, df in self.results.items():
-                # Combined sheet for the frequency
-                df.to_excel(writer, sheet_name=f'all_epws_{freq}'[:31])
+        sheets: Dict[str, pd.DataFrame] = {}
+        for freq, df in self.results.items():
+            # Combined sheet for the frequency
+            sheets[f'all_epws_{freq}'] = df
 
-                # If there's only one frequency, also create individual EPW sheets
-                # (backward compatible layout)
-                if len(self.results) == 1:
-                    for epw_name in df.columns.get_level_values('epw').unique():
-                        epw_df = df[epw_name]
-                        sheet = epw_name[:31]
-                        epw_df.to_excel(writer, sheet_name=sheet)
+            # If there's only one frequency, also create individual EPW sheets
+            # (backward compatible layout)
+            if len(self.results) == 1:
+                for epw_name in df.columns.get_level_values('epw').unique():
+                    sheets[epw_name] = df[epw_name]
+
+        export_frames_to_excel(sheets, output_path)
 
         abs_path = os.path.abspath(output_path)
         print(f"[INFO] Results exported to: {abs_path}")

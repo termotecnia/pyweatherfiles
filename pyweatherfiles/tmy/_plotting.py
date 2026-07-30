@@ -381,7 +381,7 @@ class _PlottingMixin:
             hours_after_val = junction_params.get('hours_after', hours or default_params['hours_after'])
             s_factor_val = junction_params.get('s_factor', default_params['s_factor'])
 
-            # Comprobar si se usó un valor automático y está disponible
+            # Check if an automatic value was used and is available
             s_auto_val = junction_params.get('s_factor_auto', {}).get(var)
 
             if s_factor_val is None:
@@ -414,7 +414,7 @@ class _PlottingMixin:
 
             ax.plot(x_axis, data_raw[var], 'o-', color='royalblue', label='TMY without Smoothing')
 
-            # --- Estilo de línea actualizado ---
+            # --- Updated line style ---
             ax.plot(x_axis, data_final[var], 'ro--', lw=2, label='Smoothed TMY')
 
             ax.axvline(0, color='k', linestyle='-', lw=1, label='Month Junction')

@@ -70,10 +70,10 @@ try:
     from ladybug.sunpath import Sunpath
     from ladybug.analysisperiod import AnalysisPeriod
 except ImportError:
-    raise ImportError("La librería 'ladybug-core' no está instalada. Por favor, instálala con: pip install ladybug-core")
+    raise ImportError("The 'ladybug-core' library is not installed. Install it with: pip install ladybug-core")
 
 
-# --- GESTOR DE CONTEXTO ---
+# --- CONTEXT MANAGER ---
 @contextlib.contextmanager
 def suppress_stdout_stderr():
     """Context manager that temporarily redirects ``stdout``/``stderr`` to
@@ -102,7 +102,7 @@ def suppress_stdout_stderr():
             sys.stderr = saved_stderr
 
 
-# --- CONSTANTES Y DEFINICIONES DE COLUMNAS ---
+# --- CONSTANTS AND COLUMN DEFINITIONS ---
 # Exact physical constants as specified by the conversion formulas below.
 _STEFAN_BOLTZMANN = 5.6697e-8
 """float: Stefan-Boltzmann constant in W/(m2*K4), used to convert between
@@ -136,7 +136,7 @@ COLS_MET_15 = [
 columns kept only to match the file's column count)."""
 
 
-# --- FUNCIONES DE CÁLCULO AUXILIARES ---
+# --- AUXILIARY CALCULATION FUNCTIONS ---
 
 def _calculate_variable_pressure_from_met(temp_c, rel_hum, wabs, elevation_m):
     """
@@ -164,20 +164,21 @@ def _calculate_variable_pressure_from_met(temp_c, rel_hum, wabs, elevation_m):
     Returns:
         float: Atmospheric station pressure in Pascals.
     """
-    # Si la humedad absoluta es 0 (aire extremadamente seco o error de datos),
-    # evitamos división por cero y devolvemos la presión constante por altitud.
+    # If absolute humidity is 0 (extremely dry air or data error),
+    # avoid division by zero and return the constant pressure for the elevation.
     if wabs <= 0 or rel_hum <= 0:
         return _calculate_atmos_pressure(elevation_m)
 
-    # Calcular presión de vapor actual (pv)
+    # Calculate the current vapour pressure (pv)
     e_s = 610.78 * (10 ** (7.5 * temp_c / (237.3 + temp_c)))
     e = e_s * (rel_hum / 100.0)
 
-    # Despejar P_atm de la fórmula del Apéndice A.3
+    # Solve for P_atm from the Appendix A.3 formula
     p_atm = e * (1.0 + (0.62198 / wabs))
 
-    # Filtro de seguridad: Si por redondeos del .met el valor es un disparate físico
-    # (fuera del rango 50,000 Pa - 110,000 Pa), usamos la presión estándar por altitud.
+    # Safety filter: if rounding noise in the .met file produces a physically
+    # implausible value (outside the 50,000 Pa - 110,000 Pa range), fall back
+    # to the standard elevation-based pressure.
     if 50000 < p_atm < 110000:
         return p_atm
     else:
@@ -328,7 +329,7 @@ def _get_epw_values(epw_obj, field_name):
     return _shared_get_epw_values(epw_obj, field_name)
 
 
-# --- CONVERSIÓN MET -> EPW ---
+# --- MET -> EPW CONVERSION ---
 def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace_unused_with_missing: bool = False, save_session: bool = True, session_dir: str = None) -> bool:
     """
     Convert a Spanish ``.met`` reference-climate file into an EPW file.
@@ -390,24 +391,24 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         ... )  # doctest: +SKIP
         True
     """
-    print(f"Iniciando conversión de '{met_path}' a '{epw_path}'...")
+    print(f"Starting conversion of '{met_path}' to '{epw_path}'...")
 
     try:
         epw_data = EPW(base_epw_path)
     except Exception as e:
-        print(f"Error al cargar plantilla: {e}")
+        print(f"Error loading template: {e}")
         return False
 
     try:
         with open(met_path, 'r') as f:
             lines = [line.strip() for line in f.readlines() if line.strip()]
     except FileNotFoundError:
-        print(f"Error: Archivo no encontrado.")
+        print(f"Error: File not found.")
         return False
 
-    # --- PROCESAMIENTO DE CABECERA ---
+    # --- HEADER PROCESSING ---
     if len(lines) < 3:
-        print("Error Crítico: El archivo .met es demasiado corto.")
+        print("Critical Error: The .met file is too short.")
         return False
 
     meta_line_index = 1
@@ -432,7 +433,7 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         lon = float(header2[1])
         elev = float(header2[2])
     else:
-        print("Error Crítico: No se encontraron metadatos geográficos válidos.")
+        print("Critical Error: No valid geographic metadata found.")
         return False
 
     tz_hour = round(lon / 15.0)
@@ -442,10 +443,10 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
     epw_data.location.longitude = lon
     epw_data.location.time_zone = tz_hour
     epw_data.location.elevation = elev
-    epw_data.comments_1 = f"Convertido desde {os.path.basename(met_path)}"
-    epw_data.comments_2 = "Radiacion Directa Normal recalculada astronomicamente."
+    epw_data.comments_1 = f"Converted from {os.path.basename(met_path)}"
+    epw_data.comments_2 = "Direct Normal Radiation recalculated astronomically."
 
-    # --- DETECCIÓN DEL INICIO DE DATOS ---
+    # --- DATA START DETECTION ---
     data_start_index = meta_line_index + 1
     first_data_line = lines[data_start_index].split()
 
@@ -456,7 +457,7 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
                 data_start_index = i
                 break
 
-    # --- LECTURA PANDAS ---
+    # --- PANDAS READ ---
     from io import StringIO
     data_str = "\n".join(lines[data_start_index:])
 
@@ -471,21 +472,21 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
             df.columns = COLS_MET_15
             wind_direction_data = [0] * len(df)
         else:
-            print(f"Error Crítico: El archivo tiene {num_cols} columnas.")
+            print(f"Critical Error: The file has {num_cols} columns.")
             return False
 
     except Exception as e:
-        print(f"Error al procesar datos del MET: {e}")
+        print(f"Error processing MET data: {e}")
         return False
 
-    # --- CORRECCIÓN AÑO ESTÁNDAR ---
+    # --- STANDARD YEAR CORRECTION ---
     try:
         epw_data._analysis_period = AnalysisPeriod(st_month=1, st_day=1, st_hour=1, end_month=12, end_day=31, end_hour=24)
         epw_data._is_leap_year = False
     except Exception:
         pass
 
-    # --- ASIGNACIÓN DIRECTA CON DESFASE CORREGIDO ---
+    # --- DIRECT ASSIGNMENT WITH CORRECTED OFFSET ---
     _set_epw_values(epw_data, 'dry_bulb_temperature', df['DryBulb'].tolist())
     _set_epw_values(epw_data, 'relative_humidity', df['RelHum'].tolist())
     _set_epw_values(epw_data, 'diffuse_horizontal_radiation', df['RadDifusaHoriz'].tolist())
@@ -498,7 +499,7 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
     ]
     _set_epw_values(epw_data, 'atmospheric_station_pressure', patm_values)
 
-    # --- CONVERSIÓN DE RADIACIÓN INFRARROJA ---
+    # --- INFRARED RADIATION CONVERSION ---
     ir_values = []
     for t_sky in df['SkyTemp']:
         t_sky_k = t_sky + 273.15
@@ -506,9 +507,9 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         ir_values.append(ir)
     _set_epw_values(epw_data, 'horizontal_infrared_radiation_intensity', ir_values)
 
-    # --- CONVERSIÓN DE RADIACIÓN SOLAR CON PRECISIÓN ASTRONÓMICA ---
-    print("  - Recalculando ángulo cenital (theta_z) y balanceando radiación...")
-    # CORRECCIÓN: Sunpath no recibe 'elevation', solo lat, lon, y tz.
+    # --- SOLAR RADIATION CONVERSION WITH ASTRONOMICAL PRECISION ---
+    print("  - Recalculating zenith angle (theta_z) and balancing radiation...")
+    # FIX: Sunpath does not accept 'elevation', only lat, lon, and tz.
     sp = Sunpath(latitude=lat, longitude=lon, time_zone=tz_hour)
 
     ghi_values = []
@@ -525,27 +526,27 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         if raw_dir_horiz < 0:
             negative_direct_input_count += 1
 
-        # Evita propagar radiación negativa de entrada por ruido/redondeo del MET.
+        # Avoids propagating negative input radiation caused by MET rounding/noise.
         dir_horiz = max(0.0, raw_dir_horiz)
         diff_horiz = max(0.0, raw_diff_horiz)
 
-        # 1. GHI = Directa Horizontal + Difusa Horizontal
+        # 1. GHI = Direct Horizontal + Diffuse Horizontal
         ghi = dir_horiz + diff_horiz
         ghi_values.append(ghi)
 
-        # 2. Calcular theta_z preciso para el punto medio de la hora
-        # NOTA sobre el desfase -0.5 (ver también hourly_epw_converter.py, que
-        # usa +0.5): la columna `Hour` de los ficheros .met va de 1 a 24 y
-        # marca el FIN del intervalo horario (p.ej. Hour=10 -> intervalo
-        # [9:00, 10:00)), cuyo punto medio es Hour - 0.5. Los ficheros CSV/XLSX
-        # horarios usan en cambio `dt.hour` de 0 a 23 marcando el INICIO del
-        # intervalo, cuyo punto medio es hour + 0.5. Ambos son correctos para
-        # su convención de origen respectiva; no es una inconsistencia a corregir.
+        # 2. Calculate the precise theta_z for the midpoint of the hour
+        # NOTE on the -0.5 offset (see also hourly_epw_converter.py, which
+        # uses +0.5): the `Hour` column of .met files runs from 1 to 24 and
+        # marks the END of the hourly interval (e.g. Hour=10 -> the
+        # [9:00, 10:00) interval), whose midpoint is Hour - 0.5. CSV/XLSX
+        # hourly files instead use `dt.hour` from 0 to 23 marking the START of
+        # the interval, whose midpoint is hour + 0.5. Both are correct for
+        # their respective source convention; this is not an inconsistency to fix.
         calc_hour = float(h) - 0.5
         sun = sp.calculate_sun(month=int(m), day=int(d), hour=calc_hour)
         zenith_deg = 90.0 - sun.altitude
 
-        # 3. Calcular DNI
+        # 3. Calculate DNI
         cos_zenith = math.cos(math.radians(zenith_deg))
 
         if cos_zenith <= _COS_ZENITH_MIN or dir_horiz <= 0.0:
@@ -567,7 +568,7 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         print(
             "  - QA DNI -> "
             f"min={np.min(dni_arr):.1f}, p95={np.percentile(dni_arr, 95):.1f}, max={np.max(dni_arr):.1f} W/m2 | "
-            f"sol_bajo={low_sun_count}, recortes={dni_clipped_count}, dir_horiz_negativa={negative_direct_input_count}"
+            f"low_sun={low_sun_count}, clipped={dni_clipped_count}, negative_dir_horiz={negative_direct_input_count}"
         )
         print(
             "  - QA balance (GHI - (DHI + DNI*cos(theta_z))) -> "
@@ -578,8 +579,8 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
     _set_epw_values(epw_data, 'direct_normal_radiation', dni_values)
 
     if replace_unused_with_missing:
-        # Solo se incluyen las variables marcadas con 'N' (No usadas por EnergyPlus)
-        # (mapa y lógica compartidos con hourly_epw_converter.py — ver
+        # Only variables marked 'N' (Not used by EnergyPlus) are included
+        # (map and logic shared with hourly_epw_converter.py — see
         # pyweatherfiles.epw_field_utils.neutralize_unused_epw_fields)
         neutralize_unused_epw_fields(epw_data, len(df))
 
@@ -587,10 +588,10 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         with suppress_stdout_stderr():
             epw_data.save(epw_path)
     except Exception as e:
-        print(f"Error al guardar EPW: {e}")
+        print(f"Error saving EPW: {e}")
         return False
 
-    print("¡Conversión MET -> EPW completada (Balance de radiación asegurado)!")
+    print("MET -> EPW conversion completed (radiation balance ensured)!")
 
     # --- Session persistence ---
     if save_session:
@@ -605,12 +606,12 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
             save_function_session("convert_met_to_epw", _inputs, result=True,
                                   session_dir=_dir, extra=_extra)
         except Exception as _e:
-            print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+            print(f"[SESSION] Could not save the session: {_e}")
 
     return True
 
 
-# --- CONVERSIÓN EPW -> MET ---
+# --- EPW -> MET CONVERSION ---
 def convert_epw_to_met(epw_path: str, met_path: str) -> bool:
     """
     Convert an EPW file back into the 13-column ``.met`` reference-climate
@@ -659,7 +660,7 @@ def convert_epw_to_met(epw_path: str, met_path: str) -> bool:
         ... )  # doctest: +SKIP
         True
     """
-    print(f"\n--- Iniciando conversión de '{epw_path}' a '{met_path}' ---")
+    print(f"\n--- Starting conversion of '{epw_path}' to '{met_path}' ---")
 
     try:
         epw_obj = EPW(epw_path)
@@ -677,7 +678,7 @@ def convert_epw_to_met(epw_path: str, met_path: str) -> bool:
         horiz_ir = np.array(_get_epw_values(epw_obj, 'horizontal_infrared_radiation_intensity'))
 
     except Exception as e:
-        print(f"Error al leer EPW: {e}")
+        print(f"Error reading EPW: {e}")
         return False
 
     df_met = pd.DataFrame()
@@ -689,7 +690,7 @@ def convert_epw_to_met(epw_path: str, met_path: str) -> bool:
 
     df_met['Taire'] = dry_bulb
 
-    # RESTAURADA: Función _calculate_sky_temperature
+    # RESTORED: _calculate_sky_temperature function
     df_met['Tcielo'] = [_calculate_sky_temperature(x) for x in horiz_ir]
 
     rad_directa_horiz = glob_horiz - diff_horiz
@@ -719,9 +720,9 @@ def convert_epw_to_met(epw_path: str, met_path: str) -> bool:
 
         df_met[cols_out].to_csv(met_path, mode='a', sep=' ', header=False, index=False, float_format='%.4f')
 
-        print("¡Conversión EPW -> MET completada!")
+        print("EPW -> MET conversion completed!")
         return True
 
     except Exception as e:
-        print(f"Error al escribir MET: {e}")
+        print(f"Error writing MET: {e}")
         return False

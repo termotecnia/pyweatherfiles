@@ -72,7 +72,7 @@ try:
     from ladybug.sunpath import Sunpath
     from ladybug.analysisperiod import AnalysisPeriod
 except ImportError:
-    raise ImportError("La librería 'ladybug-core' no está instalada.")
+    raise ImportError("The 'ladybug-core' library is not installed. Install it with: pip install ladybug-core")
 
 
 class HourlyEPWConverter:
@@ -218,7 +218,7 @@ class HourlyEPWConverter:
                 be determined either explicitly or from *base_epw_path*.
         """
 
-        # Atributos geográficos
+        # Geographic attributes
         self.file_path = file_path
         self.base_epw_path = base_epw_path
         
@@ -231,20 +231,20 @@ class HourlyEPWConverter:
                 extracted_elev = float(epw_data.location.elevation)
                 extracted_tz = float(epw_data.location.time_zone)
             except Exception as e:
-                print(f"Advertencia: No se pudieron extraer datos base de '{self.base_epw_path}': {e}")
-                
+                print(f"Warning: Could not extract base data from '{self.base_epw_path}': {e}")
+
         self.lat = lat if lat is not None else extracted_lat
         self.lon = lon if lon is not None else extracted_lon
         self.elev = elev if elev is not None else extracted_elev
         self.tz_hour = tz_hour if tz_hour is not None else extracted_tz
         
         if None in (self.lat, self.lon, self.elev, self.tz_hour):
-            raise ValueError("No se pudieron determinar todos los parámetros geográficos (lat, lon, elev, tz_hour). Introdúzcalos manualmente.")
-            
+            raise ValueError("Could not determine all geographic parameters (lat, lon, elev, tz_hour). Please provide them manually.")
+
         self.preserve_extra = preserve_extra
         self.remove_leap_day = remove_leap_day
         
-        # Mapeo de columnas (se pueden ajustar al instanciar)
+        # Column mapping (can be adjusted at instantiation)
         self.col_mapping = {
             'datetime': datetime_col,
             'temp': col_temp,
@@ -276,11 +276,11 @@ class HourlyEPWConverter:
         self.col_cloud_cover = self.col_mapping['cloud_cover']
         self.col_irh = self.col_mapping['irh']
         
-        # Atributos de datos
+        # Data attributes
         self.df = None
         self.available_years =[]
         
-        # Inicialización automática
+        # Automatic initialization
         self._load_file()
 
     def _load_file(self):
@@ -306,17 +306,17 @@ class HourlyEPWConverter:
         if not pd.api.types.is_datetime64_any_dtype(self.df[self.datetime_col]):
             self.df[self.datetime_col] = pd.to_datetime(self.df[self.datetime_col])
             
-        # Ordenar cronológicamente
+        # Sort chronologically
         self.df = self.df.sort_values(by=self.datetime_col).reset_index(drop=True)
         
-        # Conversiones condicionales de unidades
+        # Conditional unit conversions
         if self.col_wind in self.df.columns:
             self.df[self.col_wind] = pd.to_numeric(self.df[self.col_wind], errors='coerce') / 3.6
             
         if self.col_pres in self.df.columns:
             self.df[self.col_pres] = pd.to_numeric(self.df[self.col_pres], errors='coerce') * 100.0
             
-        # Guardar en atributo los años disponibles
+        # Store the available years in an attribute
         self.available_years = sorted(self.df[self.datetime_col].dt.year.dropna().unique().tolist())
         self.available_years = [int(i) for i in self.available_years]
 
@@ -340,7 +340,7 @@ class HourlyEPWConverter:
             True
         """
         if year not in self.available_years:
-            raise ValueError(f"El año {year} no está disponible en este archivo.")
+            raise ValueError(f"Year {year} is not available in this file.")
         return self.df[self.df[self.datetime_col].dt.year == year].copy()
 
     def _calculate_rh(self, tdb, tdp):
@@ -449,7 +449,7 @@ class HourlyEPWConverter:
         df_y = df_year.copy()
         df_y = df_y.sort_values(by=self.datetime_col).reset_index(drop=True)
 
-        # Filtro de bisiestos (Feb 29) - EnergyPlus usa típicamente 8760 horas
+        # Leap-day filter (Feb 29) - EnergyPlus typically uses 8760 hours
         is_leap_year = False
         is_leap_day = (df_y[self.datetime_col].dt.month == 2) & (df_y[self.datetime_col].dt.day == 29)
         
@@ -458,33 +458,33 @@ class HourlyEPWConverter:
             
         if self.remove_leap_day and is_leap_year:
             df_y = df_y[~is_leap_day].reset_index(drop=True)
-            is_leap_year = False # Al removerlo, deja de considerarse bisiesto para la salida
-            
+            is_leap_year = False # Once removed, it is no longer considered a leap year for the output
+
         if is_leap_year:
             if len(df_y) < 8784:
-                print(f"Advertencia: El año bisiesto proporcionado solo tiene {len(df_y)} horas disponibles.")
+                print(f"Warning: The provided leap year only has {len(df_y)} hours available.")
             elif len(df_y) > 8784:
                 df_y = df_y.head(8784)
         else:
             if len(df_y) < 8760:
-                print(f"Advertencia: El año proporcionado solo tiene {len(df_y)} horas disponibles.")
+                print(f"Warning: The provided year only has {len(df_y)} hours available.")
             elif len(df_y) > 8760:
                 df_y = df_y.head(8760)
 
-        # Carga EPW Base
+        # Load base EPW
         try:
             epw_data = EPW(base_epw_path)
         except Exception as e:
-            print(f"Error al cargar base EPW '{base_epw_path}': {e}")
+            print(f"Error loading base EPW '{base_epw_path}': {e}")
             return False
 
-        # Actualización de Headers
+        # Header update
         epw_data.location.latitude = self.lat
         epw_data.location.longitude = self.lon
         epw_data.location.time_zone = self.tz_hour
         epw_data.location.elevation = self.elev
-        epw_data.comments_1 = f"Convertido automáticamente desde archivo horario a partir de plantilla {os.path.basename(base_epw_path)}"
-        
+        epw_data.comments_1 = f"Automatically converted from hourly file using template {os.path.basename(base_epw_path)}"
+
         try:
             if is_leap_year:
                 try:
@@ -498,7 +498,7 @@ class HourlyEPWConverter:
         except Exception:
             pass
 
-        # Extracción a variables
+        # Extract to variables
         t_db = df_y[self.col_temp].tolist()
         t_dp = df_y[self.col_dew].tolist()
         wind_spd = df_y[self.col_wind].tolist()
@@ -521,7 +521,7 @@ class HourlyEPWConverter:
         else:
             p_atm = [self._calculate_atmos_pressure()] * len(df_y)
 
-        # Cálculo de Irradiancia Difusa (DHI)
+        # Diffuse Irradiance (DHI) calculation
         if self.col_dhi in df_y.columns:
             dhi_values = df_y[self.col_dhi].tolist()
         else:
@@ -556,7 +556,7 @@ class HourlyEPWConverter:
                     
                 dhi_values.append(max(0.0, float(val_dhi)))
 
-        # Inyección de datos al objeto Ladybug
+        # Inject data into the Ladybug object
         self._set_epw_values(epw_data, 'dry_bulb_temperature', t_db)
         self._set_epw_values(epw_data, 'dew_point_temperature', t_dp)
         self._set_epw_values(epw_data, 'relative_humidity', rel_hum)
@@ -576,8 +576,8 @@ class HourlyEPWConverter:
             irh_vals = df_y[self.col_irh].tolist()
             self._set_epw_values(epw_data, 'horizontal_infrared_radiation_intensity', irh_vals)
 
-        # Desactivación de variables obsoletas de EnergyPlus
-        # (mapa y lógica compartidos con met_epw_converter.py — ver
+        # Neutralization of EnergyPlus-unused variables
+        # (map and logic shared with met_epw_converter.py — see
         # pyweatherfiles.epw_field_utils.neutralize_unused_epw_fields)
         skip_fields = None
         if self.preserve_extra and self.col_cloud_cover in df_y.columns:
@@ -585,12 +585,12 @@ class HourlyEPWConverter:
 
         neutralize_unused_epw_fields(epw_data, len(df_y), skip_fields=skip_fields)
 
-        # Guardado del EPW en disco
+        # Save the EPW to disk
         try:
             epw_data.save(output_epw_path)
             return True
         except Exception as e:
-            print(f"Error al guardar el EPW de salida: {e}")
+            print(f"Error saving the output EPW: {e}")
             return False
 
     def process(self, output_dir=".", years=None, remove_leap_day=None, output_pattern=None, base_epw_path=None, save_session=True, session_dir=None, **kwargs):
@@ -646,19 +646,19 @@ class HourlyEPWConverter:
         
         for year in years:
             if year not in self.available_years:
-                print(f"Año {year} no hallado en los datos. Ignorando...")
+                print(f"Year {year} not found in the data. Skipping...")
                 continue
                 
-            print(f"\n--- Procesando año {year} de forma directa ---")
+            print(f"\n--- Processing year {year} directly ---")
             df_year = self.get_year_data(year)
             
-            # Formatos automáticos de salida
+            # Automatic output formats
             int_year = int(year)
             if output_pattern:
                 try:
                     filename = output_pattern.format(year=int_year, **kwargs)
                 except KeyError as e:
-                    print(f"Falla de formato de nombre de archivo con KeyError: {e}")
+                    print(f"Filename format failed with KeyError: {e}")
                     filename = f"{basename}_{int_year}.epw"
             else:
                 filename = f"{basename}_{int_year}.epw"
@@ -668,10 +668,10 @@ class HourlyEPWConverter:
             # Pasamos directamente el df_year asumiendo que ya no tiene nulos
             success = self.transform_to_epw(df_year, output_path, base_epw_path=base_epw_path)
             if success:
-                print(f"¡Éxito! Año {year} guardado en: {output_path}")
+                print(f"Success! Year {year} saved to: {output_path}")
                 success_list.append(year)
             else:
-                print(f"Fallo al procesar guardado de {year}.")
+                print(f"Failed to process/save year {year}.")
 
         # --- Session persistence ---
         if save_session and success_list:
@@ -684,7 +684,7 @@ class HourlyEPWConverter:
             try:
                 save_object_session(self, "HourlyEPWConverter", _inputs, session_dir=_dir)
             except Exception as _e:
-                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+                print(f"[SESSION] Could not save the session: {_e}")
 
         return success_list
 
@@ -743,19 +743,19 @@ class BatchHourlyEPWConverter:
         Example:
             >>> from pyweatherfiles.hourly_epw_converter import BatchHourlyEPWConverter
             >>> BatchHourlyEPWConverter.get_mandatory_config_keys()
-            Las llaves de configuración obligatorias para cada archivo son:
-             - 'file_path': Ruta al Excel u origen de datos horario.
-             - 'base_epw_path': Plantilla .epw a usar como base para este archivo.
-            Las llaves opcionales (pero recomendables si no se pueden extraer del EPW de base) son: 'lat', 'lon', 'elev', 'tz_hour'.
+            The mandatory configuration keys for each file are:
+             - 'file_path': Path to the Excel/hourly data source.
+             - 'base_epw_path': .epw template to use as a base for this file.
+            The optional keys (but recommended if they cannot be extracted from the base EPW) are: 'lat', 'lon', 'elev', 'tz_hour'.
             ['file_path', 'base_epw_path']
         """
-        print("Las llaves de configuración obligatorias para cada archivo son:")
+        print("The mandatory configuration keys for each file are:")
         for key in cls.MANDATORY_KEYS:
             if key == 'file_path':
-                print(f" - '{key}': Ruta al Excel u origen de datos horario.")
+                print(f" - '{key}': Path to the Excel/hourly data source.")
             elif key == 'base_epw_path':
-                print(f" - '{key}': Plantilla .epw a usar como base para este archivo.")
-        print("Las llaves opcionales (pero recomendables si no se pueden extraer del EPW de base) son: 'lat', 'lon', 'elev', 'tz_hour'.")
+                print(f" - '{key}': .epw template to use as a base for this file.")
+        print("The optional keys (but recommended if they cannot be extracted from the base EPW) are: 'lat', 'lon', 'elev', 'tz_hour'.")
         return cls.MANDATORY_KEYS
 
     def __init__(self, cities_config, output_dir="."):
@@ -826,7 +826,7 @@ class BatchHourlyEPWConverter:
             ... )  # doctest: +SKIP
             >>> batch = hourly_epw_converter.BatchHourlyEPWConverter(config, output_dir="output/")  # doctest: +SKIP
         """
-        # Permite pasar directamente la ruta a los directorios o listas de archivos
+        # Allows passing directory paths or lists of files directly
         if isinstance(data_files, str) and os.path.isdir(data_files):
             data_files = [os.path.join(data_files, f) for f in os.listdir(data_files) if f.endswith(('.xlsx', '.csv'))]
         if isinstance(base_epw_files, str) and os.path.isdir(base_epw_files):
@@ -837,19 +837,19 @@ class BatchHourlyEPWConverter:
         for identifier in identifiers:
             ident_str = str(identifier).lower()
 
-            # Buscar el archivo de datos que contenga el identificador
+            # Find the data file containing the identifier
             matched_data = next((f for f in data_files if ident_str in os.path.basename(f).lower()), None)
 
-            # Buscar el EPW base que contenga el identificador
+            # Find the base EPW containing the identifier
             matched_epw = next((f for f in base_epw_files if ident_str in os.path.basename(f).lower()), None)
 
             if matched_data and matched_epw:
-                print(f"Match exitoso para '{identifier}':\n  -> Archivo horario: {os.path.basename(matched_data)}\n  -> Plantilla EPW: {os.path.basename(matched_epw)}")
+                print(f"Successful match for '{identifier}':\n  -> Hourly file: {os.path.basename(matched_data)}\n  -> EPW template: {os.path.basename(matched_epw)}")
                 try:
-                    # Extraer toda la información obligatoria desde Ladybug
+                    # Extract all mandatory information from Ladybug
                     epw_obj = EPW(matched_epw)
                     config = {
-                        'identifier': identifier,  # Variable libre a inyectar en output_pattern
+                        'identifier': identifier,  # Free-form variable to inject into output_pattern
                         'file_path': matched_data,
                         'base_epw_path': matched_epw,
                         'lat': float(epw_obj.location.latitude),
@@ -859,11 +859,11 @@ class BatchHourlyEPWConverter:
                     }
                     suggested_config.append(config)
                 except Exception as e:
-                    print(f"Error al extraer info geográfica del EPW base {matched_epw}: {e}")
+                    print(f"Error extracting geographic info from base EPW {matched_epw}: {e}")
             else:
-                print(f"Advertencia: No se pudo hacer pareja para '{identifier}'.")
-                print(f" - Horario encontrado: {os.path.basename(matched_data) if matched_data else 'NINGUNO'}")
-                print(f" - Plantilla EPW encontrada: {os.path.basename(matched_epw) if matched_epw else 'NINGUNO'}")
+                print(f"Warning: Could not find a match for '{identifier}'.")
+                print(f" - Hourly file found: {os.path.basename(matched_data) if matched_data else 'NONE'}")
+                print(f" - EPW template found: {os.path.basename(matched_epw) if matched_epw else 'NONE'}")
 
         return suggested_config
 
@@ -914,10 +914,10 @@ class BatchHourlyEPWConverter:
         results_summary = {}
         for config in self.cities_config:
 
-            # Verificación estructural obligatoria
+            # Mandatory structural check
             missing_keys = [k for k in self.MANDATORY_KEYS if k not in config]
             if missing_keys:
-                print(f"Error: La configuración omite los atributos obligatorios {missing_keys} en:\n{config}\nIgnorando archivo...")
+                print(f"Error: The configuration is missing the mandatory attributes {missing_keys} in:\n{config}\nSkipping file...")
                 continue
 
             file_path = config['file_path']
@@ -928,11 +928,11 @@ class BatchHourlyEPWConverter:
             tz_hour = config.get('tz_hour')
 
             print(f"\n=======================================================")
-            print(f"Iniciando procesamiento masivo para: {file_path}")
-            print(f"Base EPW asignada: {base_epw_path}")
+            print(f"Starting batch processing for: {file_path}")
+            print(f"Assigned base EPW: {base_epw_path}")
             print(f"=======================================================")
 
-            # Preparar argumentos opcionales a pasar al converter base
+            # Prepare optional arguments to pass to the base converter
             kwargs_for_converter = {
                 'file_path': file_path, 'base_epw_path': base_epw_path
             }
@@ -953,10 +953,10 @@ class BatchHourlyEPWConverter:
             try:
                 converter = HourlyEPWConverter(**kwargs_for_converter)
             except Exception as e:
-                print(f"Error al inicializar conversor para {file_path}: {e}")
+                print(f"Error initializing converter for {file_path}: {e}")
                 continue
 
-            # Combinar kwargs globales con los específicos de esta ciudad
+            # Merge global kwargs with this city's specific ones
             pattern_kwargs = global_kwargs.copy()
             ignored_pattern_keys = self.MANDATORY_KEYS + ['years'] + optional_keys
 
@@ -966,7 +966,7 @@ class BatchHourlyEPWConverter:
 
             years_to_process = config.get('years', None)
 
-            # Delegamos a la clase base
+            # Delegate to the base class
             success_years = converter.process(
                 base_epw_path=base_epw_path,
                 output_dir=self.output_dir,
@@ -979,9 +979,9 @@ class BatchHourlyEPWConverter:
             results_summary[file_path] = success_years
 
         print("\n=======================================================")
-        print("RESUMEN DE BATCH PROCESSING")
+        print("BATCH PROCESSING SUMMARY")
         for f, yrs in results_summary.items():
-            print(f"{os.path.basename(f)} -> Años convertidos: {yrs}")
+            print(f"{os.path.basename(f)} -> Converted years: {yrs}")
 
         # --- Session persistence ---
         if save_session and results_summary:
@@ -994,6 +994,6 @@ class BatchHourlyEPWConverter:
             try:
                 save_object_session(self, "BatchHourlyEPWConverter", _inputs, session_dir=_dir)
             except Exception as _e:
-                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+                print(f"[SESSION] Could not save the session: {_e}")
 
         return results_summary

@@ -148,8 +148,8 @@ class _AssemblySmoothingMixin:
                     print(f"  - Warning: Could not fit spline for {col} at month {month1}-{month2} junction. Skipping. Error: {e}")
                     continue
 
-                # --- CORRECCIÓN v4.08: Obtener el valor de 's' y aplicar el suavizado ---
-                # Si s es automático, capturar el valor calculado
+                # --- FIX v4.08: Get the 's' value and apply smoothing ---
+                # If s is automatic, capture the computed value
                 if s_factor is None:
                     s_val_auto = spl.get_residual()
                     if 's_factor_auto' not in junction_params:
@@ -161,7 +161,7 @@ class _AssemblySmoothingMixin:
 
                 tmy_final.loc[application_window_timestamps, col] = smoothed_y
 
-            # Actualizar la configuración guardada con los valores automáticos de 's'
+            # Update the saved configuration with the automatic 's' values
             self.smoothing_config[month1] = junction_params
 
         # --- FIX: Final Safety Clip after smoothing ---
@@ -310,7 +310,7 @@ class _AssemblySmoothingMixin:
             try:
                 save_object_session(self, "TMYGenerator", _inputs, session_dir=_dir)
             except Exception as _e:
-                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+                print(f"[SESSION] Could not save the session: {_e}")
 
         return self
 

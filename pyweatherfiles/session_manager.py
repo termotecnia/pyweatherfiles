@@ -359,7 +359,7 @@ def _pickle_obj(obj: Any) -> bytes:
     try:
         return pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
     except Exception as e:
-        print(f"[SESSION] Advertencia: pickle directo falló ({e}). Guardando estado parcial…")
+        print(f"[SESSION] Warning: direct pickle failed ({e}). Saving partial state…")
         state: dict = {}
         for k, v in vars(obj).items():
             try:
@@ -431,9 +431,9 @@ def save_object_session(
         data = _pickle_obj(obj)
         with open(pkl_path, "wb") as f:
             f.write(data)
-        print(f"[SESSION] Pickle guardado en: {pkl_path}")
+        print(f"[SESSION] Pickle saved to: {pkl_path}")
     except Exception as e:
-        print(f"[SESSION] ERROR al guardar pickle: {e}")
+        print(f"[SESSION] ERROR saving pickle: {e}")
         return None
 
     # --- JSON ---
@@ -441,9 +441,9 @@ def save_object_session(
         json_dict = _object_to_json_dict(obj, extra_info=inputs_dict)
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_dict, f, indent=2, ensure_ascii=False, default=str)
-        print(f"[SESSION] JSON guardado en:   {json_path}")
+        print(f"[SESSION] JSON saved to:    {json_path}")
     except Exception as e:
-        print(f"[SESSION] ERROR al guardar JSON: {e}")
+        print(f"[SESSION] ERROR saving JSON: {e}")
 
     return pkl_path
 
@@ -508,9 +508,9 @@ def save_function_session(
     try:
         with open(pkl_path, "wb") as f:
             pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
-        print(f"[SESSION] Pickle guardado en: {pkl_path}")
+        print(f"[SESSION] Pickle saved to: {pkl_path}")
     except Exception as e:
-        print(f"[SESSION] ERROR al guardar pickle: {e}")
+        print(f"[SESSION] ERROR saving pickle: {e}")
         return None
 
     # --- JSON ---
@@ -518,9 +518,9 @@ def save_function_session(
         json_dict = _function_result_to_json_dict(func_name, inputs_dict, result, extra)
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_dict, f, indent=2, ensure_ascii=False, default=str)
-        print(f"[SESSION] JSON guardado en:   {json_path}")
+        print(f"[SESSION] JSON saved to:    {json_path}")
     except Exception as e:
-        print(f"[SESSION] ERROR al guardar JSON: {e}")
+        print(f"[SESSION] ERROR saving JSON: {e}")
 
     return pkl_path
 
@@ -559,5 +559,5 @@ def load_session(pkl_path: str) -> Any:
         raise FileNotFoundError(f"Session file not found: {pkl_path}")
     with open(pkl_path, "rb") as f:
         obj = pickle.load(f)
-    print(f"[SESSION] Sesión cargada desde: {pkl_path}")
+    print(f"[SESSION] Session loaded from: {pkl_path}")
     return obj

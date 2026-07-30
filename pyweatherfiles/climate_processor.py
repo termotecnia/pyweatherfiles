@@ -44,6 +44,8 @@ import numpy as np
 import time
 import os
 
+from ._export_utils import export_frames_to_excel
+
 try:
     import pvlib
 except ImportError:
@@ -686,11 +688,11 @@ class ClimateProcessor:
             'quality.xlsx'
         """
         self._log(f"Saving {output_name}...")
-        with pd.ExcelWriter(output_name, engine='openpyxl') as writer:
-            if not self.annual_stats.empty:
-                self.annual_stats.to_excel(writer, sheet_name='annual_stats')
-            if not self.max_gaps_df.empty:
-                self.max_gaps_df.to_excel(writer, sheet_name='max_gaps', index=False)
+        export_frames_to_excel(
+            {"annual_stats": self.annual_stats, "max_gaps": self.max_gaps_df},
+            output_name,
+            index={"max_gaps": False},
+        )
         return output_name
 
     def export_complete_report(self, output_name='FILLED_with_gaps_report.xlsx'):
@@ -713,16 +715,17 @@ class ClimateProcessor:
             'full_report.xlsx'
         """
         self._log(f"Saving {output_name}...")
-        with pd.ExcelWriter(output_name, engine='openpyxl') as writer:
-            self.df[self.working_cols].reset_index().to_excel(writer, sheet_name='filled', index=False)
-            if self.summary is not None:
-                self.summary.to_excel(writer, sheet_name='summary', index=False)
-            if not self.gaps_df.empty:
-                self.gaps_df.to_excel(writer, sheet_name='gaps', index=False)
-            if not self.annual_stats.empty:
-                self.annual_stats.to_excel(writer, sheet_name='annual_stats')
-            if not self.max_gaps_df.empty:
-                self.max_gaps_df.to_excel(writer, sheet_name='max_gaps', index=False)
+        export_frames_to_excel(
+            {
+                "filled": self.df[self.working_cols].reset_index(),
+                "summary": self.summary,
+                "gaps": self.gaps_df,
+                "annual_stats": self.annual_stats,
+                "max_gaps": self.max_gaps_df,
+            },
+            output_name,
+            index={"filled": False, "summary": False, "gaps": False, "max_gaps": False},
+        )
         return output_name
 
 

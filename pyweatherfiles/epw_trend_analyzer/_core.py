@@ -30,6 +30,7 @@ from typing import Dict, Optional
 import pandas as pd
 
 from ..trend_stats import FixedEffectResult
+from .._export_utils import export_frames_to_excel
 from ._config import OutputConfig, TrendConfig
 from ._metrics import _MetricsMixin
 from ._models import _ModelsMixin
@@ -287,13 +288,16 @@ class EpwTrendAnalyzer(_MetricsMixin, _ModelsMixin, _PlottingMixin, _ReportMixin
 
         if self.output_config.save_xlsx:
             xlsx_path = self.output_config.output_dir / self.output_config.xlsx_filename
-            with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-                annual_df.to_excel(writer, sheet_name="annual_metrics", index=False)
-                city_trends_df.to_excel(writer, sheet_name="city_trends", index=False)
-                pd.DataFrame([asdict(v) for v in global_results.values()]).to_excel(
-                    writer, sheet_name="global_trend", index=False
-                )
-                coverage_df.to_excel(writer, sheet_name="coverage_summary", index=False)
+            export_frames_to_excel(
+                {
+                    "annual_metrics": annual_df,
+                    "city_trends": city_trends_df,
+                    "global_trend": pd.DataFrame([asdict(v) for v in global_results.values()]),
+                    "coverage_summary": coverage_df,
+                },
+                xlsx_path,
+                index=False,
+            )
             created["xlsx_outputs"] = xlsx_path
 
         created.update(self.plot())

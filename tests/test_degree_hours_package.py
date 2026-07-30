@@ -64,6 +64,18 @@ class TestDegreeHoursCalculatorEndToEnd:
         assert results["monthly"]["heating_dh"].sum() == pytest.approx(6.0 * 8760, rel=1e-6)
         assert results["monthly"]["cooling_dh"].sum() == pytest.approx(0.0)
 
+    def test_export_results_creates_expected_sheets(self, tmp_path):
+        epw_path = _write_synthetic_epw(tmp_path / "export_test_2020.epw", "test", constant_temp=15.0)
+        calc = DegreeHoursCalculator(epw_path)
+        calc.calculate(SETPOINTS, frequency=["monthly", "yearly"], save_session=False)
+
+        out = tmp_path / "degree_hours.xlsx"
+        result = calc.export_results(str(out))
+
+        assert result == str(out.resolve()) or result == str(out)
+        sheets = pd.read_excel(out, sheet_name=None)
+        assert set(sheets.keys()) == {"monthly", "yearly"}
+
 
 class TestEpwGroupTrendAnalyzerEndToEnd:
     def _make_epw_dir(self, tmp_path):
@@ -102,6 +114,20 @@ class TestEpwGroupTrendAnalyzerEndToEnd:
         global_result = analyzer.fit_global_trend("heating_dh_allday")
         assert global_result.n_cities == 2
 
+    def test_export_results_xlsx_creates_expected_sheets(self, tmp_path):
+        epw_dir = self._make_epw_dir(tmp_path)
+        analyzer = EpwGroupTrendAnalyzer(epw_dir=str(epw_dir), setpoint_source=SETPOINTS)
+        analyzer.run(save_session=False)
+        analyzer.compute_trends("heating_dh_allday")
+
+        out = tmp_path / "group_trends.xlsx"
+        result_path = analyzer.export_results(str(out))
+
+        assert result_path == str(out.resolve()) or result_path == str(out)
+        sheets = pd.read_excel(out, sheet_name=None)
+        assert "results" in sheets
+        assert "trend_heating_dh_allday" in sheets
+
 
 class TestEpwBatchAnalyzerEndToEnd:
     def test_run_produces_multiindex_columns(self, tmp_path):
@@ -116,4 +142,23 @@ class TestEpwBatchAnalyzerEndToEnd:
         assert "monthly" in results
         epw_names = set(results["monthly"].columns.get_level_values("epw"))
         assert epw_names == {"cityA_2020", "cityB_2020"}
+
+    def test_export_creates_combined_and_individual_sheets(self, tmp_path):
+        p1 = _write_synthetic_epw(tmp_path / "cityC_2020.epw", "cityC", constant_temp=15.0)
+        p2 = _write_synthetic_epw(tmp_path / "cityD_2020.epw", "cityD", constant_temp=25.0)
+
+        batch = EpwBatchAnalyzer(
+            epw_paths=[p1, p2], setpoint_source=SETPOINTS, frequencies=["monthly"],
+        )
+        batch.run(save_session=False)
+
+        out = tmp_path / "batch_degree_hours.xlsx"
+        result_path = batch.export(str(out))
+
+        assert result_path == str(out.resolve()) or result_path == str(out)
+        sheets = pd.read_excel(out, sheet_name=None)
+        # Single frequency -> combined sheet + one sheet per individual EPW
+        assert "all_epws_monthly" in sheets
+        assert "cityC_2020" in sheets
+        assert "cityD_2020" in sheets
 

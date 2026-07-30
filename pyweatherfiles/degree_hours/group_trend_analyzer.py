@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from ..session_manager import save_object_session
+from .._export_utils import export_frames_to_excel
 from .calculator import DegreeHoursCalculator
 
 
@@ -348,7 +349,7 @@ class EpwGroupTrendAnalyzer:
                     'n_files': str(sum(len(v) for v in self.file_groups.values())),
                 }, session_dir=_dir)
             except Exception as _e:
-                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+                print(f"[SESSION] Could not save the session: {_e}")
 
         return self.results
 
@@ -765,10 +766,9 @@ class EpwGroupTrendAnalyzer:
             raise ValueError("No results to export. Call run() first.")
 
         if output_path.lower().endswith('.xlsx'):
-            with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-                self.results.to_excel(writer, sheet_name='results', index=False)
-                for value_col, trend_df in self.trend_stats_.items():
-                    trend_df.to_excel(writer, sheet_name=f'trend_{value_col}'[:31])
+            sheets = {'results': self.results}
+            sheets.update({f'trend_{value_col}': trend_df for value_col, trend_df in self.trend_stats_.items()})
+            export_frames_to_excel(sheets, output_path, index={'results': False})
         else:
             self.results.to_csv(output_path, index=False)
 

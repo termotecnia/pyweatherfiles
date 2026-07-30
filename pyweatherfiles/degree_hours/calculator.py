@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from ..session_manager import save_object_session
+from .._export_utils import export_frames_to_excel
 from ._helpers import (
     EP_DAYTYPE_WEEKDAYS as _EP_DAYTYPE_WEEKDAYS,
     WEEKDAILY_FIELD as _WEEKDAILY_FIELD,
@@ -35,7 +36,7 @@ from ._helpers import (
 try:
     from ladybug.epw import EPW
 except ImportError:
-    raise ImportError("La librería 'ladybug-core' no está instalada.")
+    raise ImportError("The 'ladybug-core' library is not installed. Install it with: pip install ladybug-core")
 
 try:
     from accim.utils import remove_accents
@@ -215,13 +216,13 @@ class DegreeHoursCalculator:
             try:
                 return get_building(idf_path)
             except Exception as e:
-                print(f"[WARNING] besos.get_building falló: {e}. Probando eppy...")
+                print(f"[WARNING] besos.get_building failed: {e}. Trying eppy...")
 
         try:
             from eppy.modeleditor import IDF as EppyIDF
             return EppyIDF(idf_path)
         except Exception as e:
-            raise RuntimeError(f"No se pudo cargar el IDF con besos ni eppy: {e}")
+            raise RuntimeError(f"Could not load the IDF with besos or eppy: {e}")
 
     # =========================================================================
     # SCHEDULE:COMPACT parser
@@ -655,7 +656,7 @@ class DegreeHoursCalculator:
             if dual_obj is None and dual_by_name:
                 dual_obj = next(iter(dual_by_name.values()))
             if dual_obj is None:
-                print(f"[WARNING] No se encontró consigna dual para zona '{t_zone}'")
+                print(f"[WARNING] No dual setpoint found for zone '{t_zone}'")
                 continue
 
             h_sch = str(dual_obj.Heating_Setpoint_Temperature_Schedule_Name).strip()
@@ -671,11 +672,11 @@ class DegreeHoursCalculator:
 
         if not result:
             raise ValueError(
-                "No se encontraron consignas en el IDF.\n"
-                f"Zones disponibles: {avail['zones']}"
+                "No setpoints found in the IDF.\n"
+                f"Available zones: {avail['zones']}"
             )
 
-        print(f"[SUCCESS] Consignas extraídas para {len(result)} zona(s).")
+        print(f"[SUCCESS] Setpoints extracted for {len(result)} zone(s).")
 
         # --- Availability schedules (ZoneHVAC:IdealLoadsAirSystem) ----------
         avail_dict = self._extract_availability_from_idf(idf, zone_name)
@@ -787,8 +788,8 @@ class DegreeHoursCalculator:
             return pd.Series(h_arr, index=idx), pd.Series(c_arr, index=idx)
 
         raise ValueError(
-            f"Tipo de configuración desconocido: '{tipo}'. "
-            "Valores válidos: 'constant', 'daily', 'weekly', 'hourly_weekly'."
+            f"Unknown configuration type: '{tipo}'. "
+            "Valid values: 'constant', 'daily', 'weekly', 'hourly_weekly'."
         )
 
     # =========================================================================
@@ -941,10 +942,10 @@ class DegreeHoursCalculator:
         valid_freqs = {'hourly', 'daily', 'monthly', 'yearly'}
         bad = set(frequency) - valid_freqs
         if bad:
-            raise ValueError(f"Frecuencias no válidas: {bad}. Usa: {valid_freqs}")
+            raise ValueError(f"Invalid frequencies: {bad}. Use: {valid_freqs}")
 
         if mode not in ('heating', 'cooling', 'both'):
-            raise ValueError("mode debe ser 'heating', 'cooling' o 'both'.")
+            raise ValueError("mode must be 'heating', 'cooling' or 'both'.")
 
         # ------------------------------------------------------------------
         # Resolve setpoints
@@ -970,7 +971,7 @@ class DegreeHoursCalculator:
             h_sp, c_sp = self._setpoints_from_dict(setpoint_source)
         else:
             raise TypeError(
-                "setpoint_source debe ser una ruta a IDF (str) o un dict de configuración."
+                "setpoint_source must be a path to an IDF (str) or a configuration dict."
             )
 
         # ------------------------------------------------------------------
@@ -1018,8 +1019,8 @@ class DegreeHoursCalculator:
                 sd = pd.to_datetime(f"{self.year}/{sd_str}", format="%Y/%d/%m")
                 ed = pd.to_datetime(f"{self.year}/{ed_str}", format="%Y/%d/%m") + pd.Timedelta(days=1, microseconds=-1)
             except Exception as e:
-                raise ValueError(f"Formato de fecha inválido. Usa 'DD/MM': {e}")
-            
+                raise ValueError(f"Invalid date format. Use 'DD/MM': {e}")
+
             if sd <= ed:
                 mask = mask & ((idx >= sd) & (idx <= ed))
             else:
@@ -1054,7 +1055,7 @@ class DegreeHoursCalculator:
             self.result_yearly = self._build_result_df(hdh, cdh, mode, agg_freq='YE')
             results['yearly'] = self.result_yearly
 
-        print("[INFO] Cálculo completado.")
+        print("[INFO] Calculation completed.")
         for freq_key, df in results.items():
             print(f"  {freq_key}: {df.shape} -> {df.sum().to_dict()}")
 
@@ -1070,7 +1071,7 @@ class DegreeHoursCalculator:
             try:
                 save_object_session(self, "DegreeHoursCalculator", _inputs, session_dir=_dir)
             except Exception as _e:
-                print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+                print(f"[SESSION] Could not save the session: {_e}")
 
         return results
 
@@ -1136,10 +1137,10 @@ class DegreeHoursCalculator:
             import matplotlib.pyplot as plt
             import matplotlib.dates as mdates
         except ImportError:
-            raise ImportError("matplotlib es necesario para visualización.")
+            raise ImportError("matplotlib is required for visualization.")
 
         if period not in ('year', 'month', 'week', 'day'):
-            raise ValueError("period debe ser 'year', 'month', 'week' o 'day'.")
+            raise ValueError("period must be 'year', 'month', 'week' or 'day'.")
 
         # --- Resolve setpoint series ----------------------------------------
         if isinstance(setpoint_source, str):
@@ -1215,10 +1216,10 @@ class DegreeHoursCalculator:
         fig, ax = plt.subplots(figsize=(14, 5))
 
         period_labels = {
-            'year':  'Año completo — media diaria con banda min/máx',
-            'month': f'Mes(es) {period_value} — resolución horaria',
-            'week':  f'Semana(s) ISO {period_value} — resolución horaria',
-            'day':   f'Día(s) {period_value} — resolución horaria',
+            'year':  'Full year — daily mean with min/max band',
+            'month': f'Month(s) {period_value} — hourly resolution',
+            'week':  f'ISO week(s) {period_value} — hourly resolution',
+            'day':   f'Day(s) {period_value} — hourly resolution',
         }
 
         if period == 'year':
@@ -1226,35 +1227,35 @@ class DegreeHoursCalculator:
             if h_plot is not None:
                 daily_h = h_plot.resample('D').agg(['min', 'max', 'mean'])
                 ax.fill_between(daily_h.index, daily_h['min'], daily_h['max'],
-                                alpha=0.2, color='tab:red', label='Calefacción (min/máx)')
+                                alpha=0.2, color='tab:red', label='Heating (min/max)')
                 ax.plot(daily_h.index, daily_h['mean'],
-                        color='tab:red', linewidth=1.5, label='Calefacción (media diaria)')
+                        color='tab:red', linewidth=1.5, label='Heating (daily mean)')
             if c_plot is not None:
                 daily_c = c_plot.resample('D').agg(['min', 'max', 'mean'])
                 ax.fill_between(daily_c.index, daily_c['min'], daily_c['max'],
-                                alpha=0.2, color='tab:blue', label='Refrigeración (min/máx)')
+                                alpha=0.2, color='tab:blue', label='Cooling (min/max)')
                 ax.plot(daily_c.index, daily_c['mean'],
-                        color='tab:blue', linewidth=1.5, label='Refrigeración (media diaria)')
+                        color='tab:blue', linewidth=1.5, label='Cooling (daily mean)')
             if air_plot is not None:
                 daily_a = air_plot.resample('D').agg(['min', 'max', 'mean'])
                 ax.fill_between(daily_a.index, daily_a['min'], daily_a['max'],
-                                alpha=0.15, color='tab:green', label='T. aire (min/máx)')
+                                alpha=0.15, color='tab:green', label='Air temp (min/max)')
                 ax.plot(daily_a.index, daily_a['mean'],
                         color='tab:green', linewidth=1.2, linestyle='--',
-                        label='T. aire (media diaria)')
+                        label='Air temp (daily mean)')
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%b'))
             ax.xaxis.set_major_locator(mdates.MonthLocator())
         else:
             if h_plot is not None:
                 ax.plot(h_plot.index, h_plot.values,
-                        color='tab:red', linewidth=1.2, label='Consigna calefacción')
+                        color='tab:red', linewidth=1.2, label='Heating setpoint')
             if c_plot is not None:
                 ax.plot(c_plot.index, c_plot.values,
-                        color='tab:blue', linewidth=1.2, label='Consigna refrigeración')
+                        color='tab:blue', linewidth=1.2, label='Cooling setpoint')
             if air_plot is not None:
                 ax.plot(air_plot.index, air_plot.values,
                         color='tab:green', linewidth=0.9, linestyle='--',
-                        alpha=0.8, label='T. aire (EPW)')
+                        alpha=0.8, label='Air temp (EPW)')
             if period == 'day':
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
                 ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
@@ -1314,12 +1315,10 @@ class DegreeHoursCalculator:
         available = {k: v for k, v in sheets.items() if v is not None}
         if not available:
             raise ValueError(
-                "No hay resultados para exportar. Ejecute calculate() primero."
+                "No results to export. Call calculate() first."
             )
 
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            for sheet_name, df in available.items():
-                df.to_excel(writer, sheet_name=sheet_name)
+        export_frames_to_excel(available, output_path)
 
         abs_path = os.path.abspath(output_path)
         print(f"[INFO] Resultados exportados a: {abs_path}")

@@ -55,7 +55,7 @@ except ImportError:
 try:
     from ladybug.epw import EPW
 except ImportError:
-    raise ImportError("La librería 'ladybug-core' no está instalada. Por favor, instálala con: pip install ladybug-core")
+    raise ImportError("The 'ladybug-core' library is not installed. Install it with: pip install ladybug-core")
 
 
 def explore_epw_structure(epw_path: str):
@@ -88,37 +88,36 @@ def explore_epw_structure(epw_path: str):
         print(f"No se pudo cargar el archivo EPW: {e}")
         return
 
-    print("\n[1] Intentando volcar el objeto a un diccionario con .to_dict()")
     try:
         epw_dict = epw.to_dict()
-        print("  -> .to_dict() se ejecutó con éxito.")
+        print("  -> .to_dict() executed successfully.")
     except Exception as e:
-        print(f"  -> .to_dict() falló con el error: {e}")
+        print(f"  -> .to_dict() failed with error: {e}")
         return
 
-    print("\n[2] Claves encontradas en el diccionario y tipo de valor asociado:")
+    print("\n[2] Keys found in the dict and their associated value type:")
     if not isinstance(epw_dict, dict):
-        print(f"  -> El resultado de .to_dict() NO es un diccionario, es un: {type(epw_dict)}")
+        print(f"  -> The result of .to_dict() is NOT a dict, it is a: {type(epw_dict)}")
         return
 
     if not epw_dict:
-        print("  -> El diccionario está vacío.")
+        print("  -> The dict is empty.")
         return
 
     for key, value in epw_dict.items():
         value_type = type(value)
         value_preview = ""
         if isinstance(value, list):
-            value_preview = f"(Lista con {len(value)} elementos)"
+            value_preview = f"(List with {len(value)} elements)"
         elif isinstance(value, dict):
-            value_preview = f"(Diccionario con {len(value)} claves)"
+            value_preview = f"(Dict with {len(value)} keys)"
         else:
-            value_preview = f"({str(value)[:50]}...)"  # Muestra los primeros 50 caracteres
+            value_preview = f"({str(value)[:50]}...)"  # Shows the first 50 characters
 
-        print(f"  - Clave: '{key}'".ljust(40) + f"| Tipo: {value_type.__name__}".ljust(25) + f"| Vista Previa: {value_preview}")
+        print(f"  - Key: '{key}'".ljust(40) + f"| Type: {value_type.__name__}".ljust(25) + f"| Preview: {value_preview}")
 
-    print("\n--- Exploración Finalizada ---")
-    print("Por favor, usa la información de arriba para identificar la clave que contiene los datos horarios (listas de 8760 elementos).")
+    print("\n--- Exploration Finished ---")
+    print("Please use the information above to identify the key containing the hourly data (lists of 8760 elements).")
 
 
 def compare_epw_files(base_epw_path: str, generated_epw_path: str):
@@ -133,7 +132,7 @@ def compare_epw_files(base_epw_path: str, generated_epw_path: str):
     and direction).
 
     Both files are loaded with ``ladybug.epw.EPW``; any field that cannot be
-    read is reported as ``"Error al leer"`` instead of raising.
+    read is reported as ``"Error reading"`` instead of raising.
 
     Args:
         base_epw_path (str): Path to the reference/base EPW file.
@@ -148,39 +147,39 @@ def compare_epw_files(base_epw_path: str, generated_epw_path: str):
         >>> epw_comparator.compare_epw_files(
         ...     "ESP_Sevilla.083910_IWEC.epw", "sevilla_tmy.epw"
         ... )  # doctest: +SKIP
-        --- Iniciando Comparación de Archivos EPW ---
+        --- Starting EPW File Comparison ---
         ...
     """
-    print("--- Iniciando Comparación de Archivos EPW ---")
-    print(f"  Archivo Base:      '{base_epw_path}'")
-    print(f"  Archivo Generado:  '{generated_epw_path}'")
+    print("--- Starting EPW File Comparison ---")
+    print(f"  Base File:         '{base_epw_path}'")
+    print(f"  Generated File:    '{generated_epw_path}'")
     print("-" * 40)
 
     try:
         epw_base = EPW(base_epw_path)
         epw_gen = EPW(generated_epw_path)
     except FileNotFoundError as e:
-        print(f"Error Crítico: No se pudo encontrar uno de los archivos. {e}")
+        print(f"Critical Error: Could not find one of the files. {e}")
         return
     except Exception as e:
-        print(f"Error al cargar los archivos EPW con Ladybug: {e}")
+        print(f"Error loading the EPW files with Ladybug: {e}")
         return
 
-    print("\n[1] Comparación de Metadatos (Cabecera)\n")
+    print("\n[1] Metadata Comparison (Header)\n")
     header_data = [
-        ["Ciudad", epw_base.location.city, epw_gen.location.city],
-        ["Latitud", epw_base.location.latitude, epw_gen.location.latitude],
-        ["Longitud", epw_base.location.longitude, epw_gen.location.longitude],
-        ["Zona Horaria (TZ)", epw_base.location.time_zone, epw_gen.location.time_zone],
-        ["Elevación (m)", epw_base.location.elevation, epw_gen.location.elevation],
-        ["Comentario 1", epw_base.comments_1, epw_gen.comments_1],
-        ["Comentario 2", epw_base.comments_2, epw_gen.comments_2],
+        ["City", epw_base.location.city, epw_gen.location.city],
+        ["Latitude", epw_base.location.latitude, epw_gen.location.latitude],
+        ["Longitude", epw_base.location.longitude, epw_gen.location.longitude],
+        ["Time Zone (TZ)", epw_base.location.time_zone, epw_gen.location.time_zone],
+        ["Elevation (m)", epw_base.location.elevation, epw_gen.location.elevation],
+        ["Comment 1", epw_base.comments_1, epw_gen.comments_1],
+        ["Comment 2", epw_base.comments_2, epw_gen.comments_2],
     ]
-    print(tabulate(header_data, headers=["Parámetro", "Valor en Base", "Valor en Generado"], tablefmt="grid"))
-    
-    # Nota: Para la comparación estadística rápida en consola, seguimos usando getattr
-    # porque es solo para visualización rápida de campos estándar.
-    print("\n[2] Resumen Estadístico de la Diferencia (Generado - Base)\n")
+    print(tabulate(header_data, headers=["Parameter", "Base Value", "Generated Value"], tablefmt="grid"))
+
+    # Note: for the quick console statistical comparison, we still use getattr
+    # since this is only for quick visualization of standard fields.
+    print("\n[2] Statistical Summary of the Difference (Generated - Base)\n")
     fields_to_compare = [
         "dry_bulb_temperature", "dew_point_temperature", "relative_humidity",
         "atmospheric_station_pressure", "direct_normal_radiation",
@@ -197,20 +196,20 @@ def compare_epw_files(base_epw_path: str, generated_epw_path: str):
             difference = series_gen - series_base
             stats = difference.describe()
             if difference.abs().sum() == 0:
-                stats_results.append([field, "Sin cambios", "-", "-", "-", "-"])
+                stats_results.append([field, "No changes", "-", "-", "-", "-"])
             else:
                 stats_results.append([
                     field, stats['count'], stats['mean'], stats['std'], stats['min'], stats['max']
                 ])
         except Exception:
-            stats_results.append([field, "Error al leer", "-", "-", "-", "-"])
+            stats_results.append([field, "Error reading", "-", "-", "-", "-"])
 
     print(tabulate(
         stats_results,
-        headers=["Variable Climática", "Valores Cambiados", "Media(Dif)", "Std(Dif)", "Min(Dif)", "Max(Dif)"],
+        headers=["Climate Variable", "Changed Values", "Mean(Diff)", "Std(Diff)", "Min(Diff)", "Max(Diff)"],
         tablefmt="grid", floatfmt=".2f"
     ))
-    print("\n--- Comparación Finalizada ---")
+    print("\n--- Comparison Finished ---")
 
 
 def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> pd.DataFrame:
@@ -245,21 +244,21 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
         ... )  # doctest: +SKIP
         >>> df[["TempBulboSeco_Base", "TempBulboSeco_Generado"]].head()  # doctest: +SKIP
     """
-    print("\n--- Creando DataFrame Comparativo (Método Ladybug) ---")
+    print("\n--- Creating Comparison DataFrame (Ladybug Method) ---")
     try:
         epw_base = EPW(base_epw_path)
         epw_gen = EPW(generated_epw_path)
     except Exception as e:
-        print(f"Error al cargar archivos EPW: {e}")
+        print(f"Error loading EPW files: {e}")
         return pd.DataFrame()
 
     try:
         base_collections = epw_base.to_dict()['data_collections']
         gen_collections = epw_gen.to_dict()['data_collections']
 
-        # --- CORRECCIÓN AQUÍ: Usamos .get('name') para ser más seguros ---
-        # Intentamos obtener el nombre. Si 'header' es un dict, buscamos 'name'.
-        # Si 'header' es un string (versiones antiguas), lo usamos directamente.
+        # --- FIX HERE: we use .get('name') to be safer ---
+        # We try to get the name. If 'header' is a dict, we look for 'name'.
+        # If 'header' is a string (older versions), we use it directly.
         def get_header_name(collection):
             """Return the human-readable variable name of a Ladybug data
             collection dict, handling both the modern (``header`` is a dict
@@ -277,11 +276,11 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
         df_gen = pd.DataFrame(data_dict_gen)
 
     except Exception as e:
-        print(f"Error al procesar diccionarios de Ladybug: {e}")
+        print(f"Error processing Ladybug dictionaries: {e}")
         return pd.DataFrame()
 
-    # Mapeo de nombres (ajustado a los nombres estándar que suele devolver Ladybug en 'name')
-    # Nota: Las claves aquí deben coincidir con lo que devuelve get_header_name
+    # Name mapping (adjusted to the standard names Ladybug usually returns in 'name')
+    # Note: the keys here must match what get_header_name returns
     column_map = {
         "Dry Bulb Temperature": "TempBulboSeco",
         "Dew Point Temperature": "TempPuntoRocio",
@@ -297,18 +296,18 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
     df_final = pd.DataFrame()
     
     try:
-        # Intentamos construir el índice de tiempo
-        # Nota: Si esto falla, devolveremos el DF sin índice de tiempo o usaremos un genérico
+        # We try to build the time index
+        # Note: if this fails, we return the DF without a time index or use a generic one
         dates = pd.to_datetime(df_base[['year', 'month', 'day']])
         hours_timedelta = pd.to_timedelta(df_base['hour'], unit='h')
         df_final.index = dates + hours_timedelta
         df_final.index.name = 'Timestamp'
     except Exception:
-        print("Advertencia: No se pudo crear el índice de tiempo exacto. Se usará índice numérico.")
+        print("Warning: Could not create the exact time index. A numeric index will be used.")
 
-    # Poblar el DataFrame final
+    # Populate the final DataFrame
     for original_name, short_name in column_map.items():
-        # Búsqueda insensible a mayúsculas/minúsculas por si acaso
+        # Case-insensitive search just in case
         col_base = next((col for col in df_base.columns if col.lower() == original_name.lower()), None)
         col_gen = next((col for col in df_gen.columns if col.lower() == original_name.lower()), None)
 
@@ -316,7 +315,7 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
             df_final[f'{short_name}_Base'] = df_base[col_base]
             df_final[f'{short_name}_Generado'] = df_gen[col_gen]
 
-    print("DataFrame creado con éxito.")
+    print("DataFrame created successfully.")
     return df_final
 
 
@@ -363,7 +362,7 @@ def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: s
         ... )  # doctest: +SKIP
         >>> (df["Generated_DryBulbTemp"] - df["Base_DryBulbTemp"]).describe()  # doctest: +SKIP
     """
-    print("\n--- Comparando Archivos EPW con Nombres de Columna Descriptivos ---")
+    print("\n--- Comparing EPW Files with Descriptive Column Names ---")
 
     EPW_DATA_COLUMNS = [
         'Year', 'Month', 'Day', 'Hour', 'Minute', 'UncertaintyFlags',
@@ -379,22 +378,22 @@ def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: s
     ]
 
     try:
-        # --- CORRECCIÓN DE CODIFICACIÓN AQUÍ ---
-        # Usamos 'latin-1' que acepta tildes y caracteres especiales comunes en archivos EPW españoles
+        # --- ENCODING FIX HERE ---
+        # We use 'latin-1', which accepts accents and special characters common in Spanish-origin EPW files
         df_base = pd.read_csv(base_epw_path, skiprows=8, header=None, encoding='latin-1')
         df_gen = pd.read_csv(generated_epw_path, skiprows=8, header=None, encoding='latin-1')
-        print("  -> Archivos leídos con éxito como CSV.")
+        print("  -> Files read successfully as CSV.")
 
     except FileNotFoundError as e:
-        print(f"Error: No se pudo encontrar uno de los archivos: {e}")
+        print(f"Error: Could not find one of the files: {e}")
         return pd.DataFrame()
     except Exception as e:
-        print(f"Error al leer los archivos con Pandas: {e}")
+        print(f"Error reading the files with Pandas: {e}")
         return pd.DataFrame()
 
     if df_base.shape[1] != len(EPW_DATA_COLUMNS):
-        print(f"Advertencia: El archivo base tiene {df_base.shape[1]} columnas, se esperaban {len(EPW_DATA_COLUMNS)}.")
-    
+        print(f"Warning: The base file has {df_base.shape[1]} columns, expected {len(EPW_DATA_COLUMNS)}.")
+
     df_comparison = pd.DataFrame()
     num_columns = min(df_base.shape[1], df_gen.shape[1])
     
@@ -407,7 +406,7 @@ def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: s
         df_comparison[f'Base_{col_name}'] = df_base[i]
         df_comparison[f'Generated_{col_name}'] = df_gen[i]
 
-    print("DataFrame de comparación con nombres descriptivos creado con éxito.")
+    print("Comparison DataFrame with descriptive column names created successfully.")
 
     # --- Session persistence ---
     if save_session and not df_comparison.empty:
@@ -427,6 +426,6 @@ def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: s
                 extra=_extra,
             )
         except Exception as _e:
-            print(f"[SESSION] No se pudo guardar la sesión: {_e}")
+            print(f"[SESSION] Could not save the session: {_e}")
 
     return df_comparison
