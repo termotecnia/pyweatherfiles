@@ -24,7 +24,7 @@ Este documento describe **al máximo nivel de detalle técnico el paquete comple
 3. [`tmy` — `TMYGenerator` (generación de TMY, metodología Sandia/TMY3)](#3-tmy--tmygenerator-generación-de-tmy-metodología-sandiatmy3)
 4. [`hourly_epw_converter` — `HourlyEPWConverter` / `BatchHourlyEPWConverter`](#4-hourly_epw_converter--hourlyepwconverter--batchhourlyepwconverter)
 5. [`met_epw_converter` — `convert_met_to_epw` / `convert_epw_to_met`](#5-met_epw_converter--convert_met_to_epw--convert_epw_to_met)
-6. [`degree_hours` — `DegreeHoursCalculator` / `EpwBatchAnalyzer`](#6-degree_hours--degreehourscalculator--epwbatchanalyzer)
+6. [`degree_hours` — `DegreeHoursCalculator` / `EpwBatchAnalyzer` / `EpwGroupTrendAnalyzer`](#6-degree_hours--degreehourscalculator--epwbatchanalyzer--epwgrouptrendanalyzer)
 7. [`epw_trend_analyzer` — `EpwTrendAnalyzer`](#7-epw_trend_analyzer--epwtrendanalyzer)
 8. [`epw_comparator` — comparación de ficheros EPW](#8-epw_comparator--comparación-de-ficheros-epw)
 9. [`climate_processor` — `ClimateProcessor` (depuración/relleno de series horarias)](#9-climate_processor--climateprocessor-depuraciónrelleno-de-series-horarias)
@@ -46,7 +46,7 @@ Este documento describe **al máximo nivel de detalle técnico el paquete comple
 | `tmy` | `TMYGenerator` | Generación de un Año Meteorológico Típico (TMY) a partir de series históricas, método Sandia/TMY3 en 7 pasos |
 | `hourly_epw_converter` | `HourlyEPWConverter`, `BatchHourlyEPWConverter` | Convierte series horarias (CSV/Excel) ya depuradas a ficheros `.epw`, uno por año o en lote multi-ciudad |
 | `met_epw_converter` | `convert_met_to_epw`, `convert_epw_to_met` | Conversión bidireccional entre el formato `.met` (LIDER/CALENER-CTE) y `.epw` |
-| `degree_hours` | `DegreeHoursCalculator`, `EpwBatchAnalyzer` | Grados-hora de calefacción/refrigeración desde EPW + consignas (IDF o dict), individual o comparativa multi-EPW |
+| `degree_hours` | `DegreeHoursCalculator`, `EpwBatchAnalyzer`, `EpwGroupTrendAnalyzer` | Grados-hora de calefacción/refrigeración desde EPW + consignas (IDF o dict); individual, comparativa multi-EPW, o análisis de tendencia de grados-hora sobre una carpeta completa clasificada por nombre de archivo |
 | `epw_trend_analyzer` | `EpwTrendAnalyzer`, `TrendConfig`, `OutputConfig` | Tendencias climáticas multianuales (calentamiento, olas de calor) sobre colecciones de EPW anuales |
 | `epw_comparator` | `explore_epw_structure`, `compare_epw_files`, `create_comparison_dataframe`, `create_comparison_hourly_dataframe` | Comparación estructural/estadística/horaria entre dos ficheros EPW |
 | `climate_processor` | `ClimateProcessor` | Depuración, reindexado y relleno de huecos de series horarias brutas de estación (pre-procesado, aguas arriba de `tmy`/`hourly_epw_converter`) |
@@ -85,9 +85,13 @@ Estación / fuente de datos brutos (huecos, ruido)
         │                                     │
         ├─────────────┬───────────────────────┤
         ▼             ▼                       ▼
- EpwTrendAnalyzer  DegreeHoursCalculator   epw_comparator
- (tendencias        / EpwBatchAnalyzer      (comparación EPW vs EPW)
-  multianuales)      (grados-hora)
+  EpwTrendAnalyzer  DegreeHoursCalculator   epw_comparator
+  (tendencias        / EpwBatchAnalyzer      (comparación EPW vs EPW)
+   multianuales,      / EpwGroupTrendAnalyzer
+   calentamiento/     (grados-hora: EPW individual,
+   olas de calor)      comparativa multi-EPW, o
+                       tendencia sobre carpeta completa
+                       clasificada por nombre, p. ej. ciudad)
 
  convert_met_to_epw / convert_epw_to_met: conversión independiente .met ↔ .epw
  (p. ej. ficheros de referencia normativa CTE/LIDER-CALENER)
@@ -566,7 +570,7 @@ Reconstruye un `.met` (formato de 13 columnas) a partir de un EPW existente:
 
 ---
 
-## 6. `degree_hours` — `DegreeHoursCalculator` / `EpwBatchAnalyzer`
+## 6. `degree_hours` — `DegreeHoursCalculator` / `EpwBatchAnalyzer` / `EpwGroupTrendAnalyzer`
 
 ```python
 from pyweatherfiles.degree_hours import DegreeHoursCalculator
@@ -644,6 +648,55 @@ batch.export('batch_degree_hours.xlsx')
 - Resultado: DataFrame(s) con columnas **MultiIndex** `(epw, variable)`, uno por frecuencia solicitada — ideal para tablas comparativas de un artículo (TMY vs. años reales vs. fichero de referencia normativo).
 - `export()` escribe una hoja combinada `all_epws_<freq>` por frecuencia (y, si solo se pidió una frecuencia, además una hoja por EPW).
 
+### 6.6 `EpwGroupTrendAnalyzer` — grados-hora por lotes + análisis de tendencia sobre un conjunto de EPW clasificado
+
+```python
+from pyweatherfiles.degree_hours import EpwGroupTrendAnalyzer
+
+analyzer = EpwGroupTrendAnalyzer(
+    epw_dir='longterm_epw/',                                   # escanea '*.epw', clasificados por nombre de fichero
+    setpoint_source={'type': 'constant', 'heating': 20.0, 'cooling': 25.0},
+    hours_scenarios={
+        'allday': {'hours': None, 'mode': 'both'},
+        'night_0_8h': {'hours': list(range(8)), 'mode': 'cooling'},
+    },
+    extra_epw_variables={'global_horizontal_radiation': ['sum']},
+    scale_factors={'global_horizontal_radiation_sum': 0.001},   # Wh/m2 -> kWh/m2
+)
+results = analyzer.run()                        # DataFrame en formato largo, una fila por grupo-año
+trends = analyzer.compute_trends('heating_dh_allday')
+analyzer.plot_overview_grid(out_path='fig_overview.png')
+```
+
+A diferencia de `EpwBatchAnalyzer` (§6.5) — diseñado para comparar un *puñado* de EPW nombrados individualmente (p. ej. "TMY vs. fichero oficial vs. un año real") en una sola tabla MultiIndex — `EpwGroupTrendAnalyzer` está pensado para la situación opuesta: **un conjunto completo de ficheros EPW que cubre varios climas independientes a lo largo de muchos años cada uno** (p. ej. `longterm_epw/granada_2005.epw` … `longterm_epw/seville_2025.epw`), donde cada clima debe analizarse de forma **totalmente independiente** — nunca promediado/agrupado con otro — para exponer una tendencia interanual genuina de cualquier indicador de grados-hora.
+
+**Clasificación por nombre de fichero** (`pyweatherfiles.epw_utils.classify_epw_files`, un pequeño helper compartido): cada EPW dentro de `epw_dir` (o en la lista explícita `epw_paths`) se compara contra una expresión regular con grupos nombrados `group` (la clave de clasificación, p. ej. ciudad) y `year` (4 dígitos); patrón por defecto `r'^(?P<group>[a-zA-Z]+)_(?P<year>\d{4})\.epw$'` (coincide p. ej. con `'granada_2005.epw'`). Los ficheros que no coinciden se omiten con un aviso. Resultado guardado en `file_groups: {group: {year: path}}`.
+
+**Parámetros del constructor:**
+
+| Parámetro | Defecto | Descripción |
+|---|---|---|
+| `epw_dir` / `epw_paths` | — | Carpeta a escanear en busca de `*.epw`, o una lista explícita de rutas (se requiere uno de los dos) |
+| `filename_pattern` | regex `'<group>_<year>.epw'` | Expresión regular con grupos nombrados usada para la clasificación |
+| `setpoint_source` | `{'type':'constant','heating':20.0,'cooling':25.0}` | Reenviado a cada llamada de `DegreeHoursCalculator.calculate()` (ruta IDF o dict, §6.2) |
+| `hours_scenarios` | `{'allday': {'hours': None, 'mode': 'both'}}` | `{etiqueta: {'hours': [...]\|None, 'mode': 'heating'\|'cooling'\|'both'}}` — un cálculo de grados-hora por escenario, generando columnas `heating_dh_<etiqueta>`/`cooling_dh_<etiqueta>` |
+| `extra_epw_variables` | `{}` | `{variable_epw: [aggfunc,...]}` — variables climáticas anuales adicionales (p. ej. GHI) junto a los grados-hora; aggfuncs: `sum`/`mean`/`max`/`min`/`std` |
+| `scale_factors` | `{}` | `{columna_resultado: factor}` conversión de unidades multiplicativa aplicada tras el cálculo (p. ej. Wh/m² → kWh/m²) |
+| `group_order`, `group_labels`, `group_colors`, `group_zone` | `None` / `{}` | Personalización de visualización opcional, usada solo por los métodos de trazado (p. ej. orden de frío a cálido, nombres de ciudad con tildes, etiquetas de zona climática CTE) |
+| `year_override` | `None` | Sobrescribe el año asignado al índice horario de cada EPW en vez del año extraído del nombre de fichero |
+
+**Atributos** (inputs y resultados guardados explícitamente, según el diseño de reproducibilidad de la clase): `inputs` (dict, cada argumento del constructor tal cual), `file_groups` (dict), `results` (`pandas.DataFrame` en formato largo, una fila por grupo-año, poblado por `run()`), `trend_stats_` (dict de `pandas.DataFrame`, cacheado por columna de valor mediante `compute_trends()`), `calculators` (dict de `DegreeHoursCalculator`, uno por fichero procesado, dando acceso a los datos horarios completos si se necesita).
+
+**Métodos:**
+
+| Método | Descripción |
+|---|---|
+| `run(save_session=True)` | Calcula cada escenario de `hours_scenarios` + `extra_epw_variables` para cada fichero clasificado → `results` |
+| `compute_trends(value_col)` | Regresión lineal independiente por grupo (`scipy.stats.linregress`) de `value_col` frente al año → DataFrame indexado por grupo (`n, slope, intercept, r2, pvalue, significant`) |
+| `plot_variable_grid(value_col, ncols=3, harmonize_ylim=True, out_path=None)` | Rejilla de pequeños múltiplos, un subplot por grupo: barras de cada año + su propia línea de tendencia OLS |
+| `plot_overview_grid(variables=None, harmonize_ylim=True, out_path=None)` | Filas = variables, columnas = grupos — cada celda con sus propias barras + línea de tendencia, eje Y armonizado dentro de cada fila (una línea de tendencia que baja de cero en un grupo propaga su rango al resto de esa fila) |
+| `export_results(output_path)` | `results` (+ `trend_stats_` cacheado) a CSV o XLSX |
+
 ---
 
 ## 7. `epw_trend_analyzer` — `EpwTrendAnalyzer`
@@ -664,7 +717,7 @@ Analiza **tendencias climáticas multianuales** (calentamiento, olas de calor) s
 
 `TrendConfig`: `root_dir`, `file_glob="*_????.epw"`, `filename_regex=r"^(?P<city>[A-Za-z]+)_(?P<year>\d{4})\.epw$"`, `abs_hot_threshold_c=35.0`, `local_hot_percentile=90.0`, `min_heatwave_length_days=3`, `city_trend_targets=("t_mean_annual","t_p95_annual")`, `primary_target="t_mean_annual"`, `secondary_target="t_p95_annual"`, `min_slope_for_practical_significance=0.02`.
 
-`OutputConfig`: `output_dir` + flags de qué artefactos generar (`save_csv`, `save_xlsx`, `save_plots`, `save_report`, `save_markdown_report`, `write_config_snapshot`) + nombres de fichero configurables para cada salida.
+`OutputConfig`: `output_dir` + flags de qué artefactos generar (`save_csv`, `save_xlsx`, `save_plots`, `save_boxplot_plot`, `save_report`, `save_markdown_report`, `write_config_snapshot`) + nombres de fichero configurables para cada salida, incluidas las figuras de boxplot por año (`city_boxplot_grid_filename`, `city_boxplot_row_filename`).
 
 Constructores alternativos: `EpwTrendAnalyzer.from_dict(config)`, `.from_json(path)`, `.from_yaml(path)` (YAML requiere `pyyaml`).
 
@@ -675,13 +728,14 @@ Constructores alternativos: `EpwTrendAnalyzer.from_dict(config)`, `.from_json(pa
    - Umbral climatológico local por día del año (`month-day`): percentil `local_hot_percentile` del Tmax de ese día concreto a lo largo de todos los años de esa ciudad (con *fallback* al percentil de toda la ciudad si faltan datos para ese día-mes exacto).
    - Un día es "caluroso" si supera ese umbral local (`hot_local`) o el umbral absoluto fijo (`hot_abs`).
    - Rachas de días calurosos consecutivos de longitud ≥ `min_heatwave_length_days` cuentan como eventos de ola de calor (`heatwave_events_local/abs`, `heatwave_days_local/abs`).
+   Como efecto secundario, la serie horaria bruta de temperatura de bulbo seco de cada fichero se guarda en `hourly_by_city` (`{city: {year: pandas.Series}}`), usada por `build_boxplot_figure()` (§7.3) para dibujar las figuras de boxplot por año.
 3. **`fit_city_trends()`**: regresión lineal OLS (`scipy.stats.linregress`) por ciudad de cada métrica de `city_trend_targets` frente al año → pendiente (°C/año), intercepto, R², p-valor, error estándar.
 4. **`fit_global_models()` / `fit_global_model(target)`**: ajusta un **modelo global de efectos fijos** `target ~ year + C(city)` por mínimos cuadrados ordinarios (matriz de diseño con `pd.get_dummies(city, drop_first=True)` + intercepto + año; resuelto vía `(XᵀX)⁻¹XᵀY`, con pseudo-inversa como respaldo si la matriz es singular). Reporta la **pendiente común a todas las ciudades tras controlar por el nivel climático propio de cada una** (°C/año), su error estándar, estadístico t, p-valor bilateral (t de Student con `n_obs − n_parámetros` grados de libertad), intervalo de confianza al 95%, R² y tamaños muestrales — un estimador de **panel de datos** con efectos fijos por ciudad, técnica estadísticamente rigurosa y citable en la sección de métodos si se usa análisis de tendencias en el artículo.
-5. **`export_outputs()`**: escribe `annual_metrics.csv`, `city_trends.csv`, `global_trend.csv`, `coverage_summary.csv`, un `trend_outputs.xlsx` combinado, 3 figuras PNG (panel de tendencia por ciudad para la media anual y para el P95, y un gráfico "ajustado" globalmente tras eliminar los efectos fijos de ciudad), un informe de texto `conclusion_report.txt` con un veredicto automático (positivo/significativo/relevante en la práctica según los umbrales configurados), un informe Markdown más detallado `conclusion_report.md`, y una instantánea `used_config.json` de la configuración exacta usada (reproducibilidad).
+5. **`export_outputs()`**: escribe `annual_metrics.csv`, `city_trends.csv`, `global_trend.csv`, `coverage_summary.csv`, un `trend_outputs.xlsx` combinado, 3 figuras PNG (panel de tendencia por ciudad para la media anual y para el P95, y un gráfico "ajustado" globalmente tras eliminar los efectos fijos de ciudad), **además, si `save_boxplot_plot=True` (por defecto), 2 figuras adicionales de pequeños múltiplos con boxplot por año** — un subplot por ciudad, las lecturas horarias brutas de temperatura de bulbo seco de cada año como una caja, con la línea de tendencia de la media anual superpuesta (`city_boxplot_grid_filename`: rejilla multi-columna; `city_boxplot_row_filename`: una sola fila, una columna por ciudad) — un informe de texto `conclusion_report.txt` con un veredicto automático (positivo/significativo/relevante en la práctica según los umbrales configurados), un informe Markdown más detallado `conclusion_report.md`, y una instantánea `used_config.json` de la configuración exacta usada (reproducibilidad).
 
 ### 7.3 Otros métodos públicos
 
-`plot()` (genera solo las figuras), `get_results()` (devuelve todo en memoria), `to_json()` (serializa la configuración efectiva), `build_city_figure()` / `build_global_adjusted_figure()` (para personalizar figuras antes de guardarlas), `export_markdown_report()`. Función de conveniencia a nivel de módulo: `run_analysis(root_dir, output_dir)` (pipeline completo con configuración por defecto).
+`plot()` (genera solo las figuras), `get_results()` (devuelve todo en memoria), `to_json()` (serializa la configuración efectiva), `build_city_figure()` / `build_global_adjusted_figure()` / `build_boxplot_figure(target_col='t_mean_annual', ncols=3)` (para personalizar figuras antes de guardarlas — este último dibuja, a partir de `hourly_by_city` cacheado, el panel de boxplot por año descrito arriba), `export_markdown_report()`. Función de conveniencia a nivel de módulo: `run_analysis(root_dir, output_dir)` (pipeline completo con configuración por defecto).
 
 ---
 
@@ -848,6 +902,17 @@ from pyweatherfiles import EpwTrendAnalyzer, TrendConfig, OutputConfig
 
 analyzer = EpwTrendAnalyzer(TrendConfig(root_dir='longterm_epw/'), OutputConfig(output_dir='trends/'))
 analyzer.run()
+```
+
+**Grados-hora por lotes + tendencia independiente por clima sobre una carpeta completa de EPWs** (`analysis_scripts/climate_evolution_trend_separate_climates.py`):
+
+```python
+from pyweatherfiles.degree_hours import EpwGroupTrendAnalyzer
+
+analyzer = EpwGroupTrendAnalyzer(epw_dir='longterm_epw/')
+results = analyzer.run()
+analyzer.compute_trends('heating_dh_allday')
+analyzer.plot_overview_grid(out_path='fig_overview.png')
 ```
 
 ---

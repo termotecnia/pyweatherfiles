@@ -51,8 +51,18 @@ or run the equivalent commands manually:
 ```bash
 python -m sphinx.ext.apidoc --force -o docs/source/api pyweatherfiles
 cd docs
-make.bat html     REM Windows
-# make html       # Linux/Mac
+make.bat clean && make.bat html     REM Windows
+# make clean && make html           # Linux/Mac
+```
+
+```{note}
+Always `clean` before rebuilding manually: Sphinx's incremental build only
+checks the mtime of each page's own source file, so it does **not** detect
+changes to `README.md`/`README_ES.md`/`ARTICLE_CONTEXT_SEVILLA.md` when they
+are pulled in via `` {include} `` (used by `full_reference_en`,
+`full_reference_es` and `article_context`) — a stale `docs/build/` can
+silently keep showing outdated content otherwise. `dist_build_docs.bat`
+already does this for you.
 ```
 
 The generated site is written to `docs/build/html/index.html`.

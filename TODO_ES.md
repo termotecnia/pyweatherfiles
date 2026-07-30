@@ -2,7 +2,7 @@
 
 Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Marcar con `[x]` cuando se complete una tarea y mover el detalle relevante a `README.md`/`README_ES.md` si procede.
 
-> 🇬🇧 English version: [`TODO.md`](TODO.md).
+>  English version: [`TODO.md`](TODO.md).
 
 ---
 

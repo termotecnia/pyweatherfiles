@@ -20,6 +20,12 @@ baseline climate?* It provides a configurable, class-based workflow to:
   and a **global fixed-effects trend** that controls for each city's own
   climate level (:meth:`EpwTrendAnalyzer.fit_global_models`) - a panel-data
   estimator suitable for citing in a methods section.
+- Draw a **boxplot-per-year small-multiples figure** (one subplot per city,
+  every year's ~8760 raw hourly readings as one box, with the fitted
+  annual-mean trend line overlaid) via
+  :meth:`EpwTrendAnalyzer.build_boxplot_figure` - the direct visual warming
+  check requested for the manuscript's Section 3.1, in addition to the
+  line-plot city/global-adjusted figures above.
 - Export reproducible CSV/XLSX tables, PNG figures, and a text/Markdown
   conclusion report (:meth:`EpwTrendAnalyzer.export_outputs`).
 
@@ -170,8 +176,18 @@ class OutputConfig:
         Whether to write a combined ``trend_outputs.xlsx`` workbook (one
         sheet per table above). Defaults to ``True``.
     save_plots : bool
-        Whether to generate the 3 PNG figures (per-city mean trend, per-city
-        P95 trend, globally city-adjusted trend). Defaults to ``True``.
+        Whether to generate the 3 default PNG figures (per-city mean trend,
+        per-city P95 trend, globally city-adjusted trend). Defaults to
+        ``True``.
+    save_boxplot_plot : bool
+        Whether to additionally generate the boxplot-per-year small-multiples
+        figures (:meth:`EpwTrendAnalyzer.build_boxplot_figure`) - one subplot
+        per city, every year's raw hourly readings as a box, with the
+        annual-mean trend line overlaid. Two files are written: a
+        multi-column grid (``city_boxplot_grid_filename``) and a single-row
+        layout with one column per city (``city_boxplot_row_filename``).
+        Only takes effect if ``save_plots`` is also ``True``. Defaults to
+        ``True``.
     save_report : bool
         Whether to write the plain-text ``conclusion_report.txt`` with an
         automatic verdict. Defaults to ``True``.
@@ -196,6 +212,7 @@ class OutputConfig:
     save_csv: bool = True
     save_xlsx: bool = True
     save_plots: bool = True
+    save_boxplot_plot: bool = True
     save_report: bool = True
     save_markdown_report: bool = True
     write_config_snapshot: bool = True
@@ -209,6 +226,8 @@ class OutputConfig:
     city_mean_plot_filename: str = "fig_city_timeseries.png"
     city_p95_plot_filename: str = "fig_city_p95_timeseries.png"
     global_plot_filename: str = "fig_global_adjusted.png"
+    city_boxplot_grid_filename: str = "fig_city_boxplot_grid.png"
+    city_boxplot_row_filename: str = "fig_city_boxplot_row.png"
     conclusion_filename: str = "conclusion_report.txt"
     markdown_report_filename: str = "conclusion_report.md"
     snapshot_filename: str = "used_config.json"
@@ -308,6 +327,11 @@ class EpwTrendAnalyzer:
         One row per city-year-day with the daily maximum dry-bulb
         temperature (``tmax``) and its calendar ``month_day``. Populated by
         :meth:`compute_metrics`.
+    hourly_by_city : dict
+        ``{city: {year: pandas.Series}}`` - the raw hourly dry-bulb
+        temperature series for every discovered EPW, cached as a side
+        effect of :meth:`compute_metrics` and used by
+        :meth:`build_boxplot_figure` to draw the boxplot-per-year figures.
     annual_df : pandas.DataFrame or None
         One row per city-year with all computed annual metrics and heatwave
         indicators. Populated by :meth:`compute_metrics`.
@@ -358,6 +382,7 @@ class EpwTrendAnalyzer:
 
         self.files_df: Optional[pd.DataFrame] = None
         self.daily_df: Optional[pd.DataFrame] = None
+        self.hourly_by_city: Dict[str, Dict[int, pd.Series]] = {}
         self.annual_df: Optional[pd.DataFrame] = None
         self.coverage_df: Optional[pd.DataFrame] = None
         self.city_trends_df: Optional[pd.DataFrame] = None
@@ -729,6 +754,25 @@ class EpwTrendAnalyzer:
             created["fig_city_p95_timeseries"] = p95_plot
             created["fig_global_adjusted"] = global_plot
 
+            if self.output_config.save_boxplot_plot:
+                boxplot_grid_path = self.output_config.output_dir / self.output_config.city_boxplot_grid_filename
+                boxplot_row_path = self.output_config.output_dir / self.output_config.city_boxplot_row_filename
+                n_cities = annual_df["city"].nunique()
+
+                fig_boxplot_grid, _ = self.build_boxplot_figure(
+                    annual_df=annual_df, trend_df=city_trends_df, ncols=3,
+                )
+                fig_boxplot_row, _ = self.build_boxplot_figure(
+                    annual_df=annual_df, trend_df=city_trends_df, ncols=max(n_cities, 1),
+                )
+                fig_boxplot_grid.savefig(boxplot_grid_path, dpi=self.output_config.plot_dpi)
+                fig_boxplot_row.savefig(boxplot_row_path, dpi=self.output_config.plot_dpi)
+                plt.close(fig_boxplot_grid)
+                plt.close(fig_boxplot_row)
+
+                created["fig_city_boxplot_grid"] = boxplot_grid_path
+                created["fig_city_boxplot_row"] = boxplot_row_path
+
         self.outputs.update(created)
         return created
 
@@ -953,6 +997,64 @@ class EpwTrendAnalyzer:
         annual_df = annual_df if annual_df is not None else self._require(self.annual_df, "annual_df", "Call compute_metrics() first.")
         return self._plot_global_adjusted(annual_df, output_path=None)
 
+    def build_boxplot_figure(
+        self,
+        annual_df: Optional[pd.DataFrame] = None,
+        trend_df: Optional[pd.DataFrame] = None,
+        target_col: str = "t_mean_annual",
+        ncols: int = 3,
+        title: Optional[str] = None,
+    ):
+        """Build a per-city boxplot-per-year panel figure (one subplot per
+        city; every year's ~8760 raw hourly dry-bulb temperature readings as
+        one box, with the fitted annual-mean trend line overlaid) **without**
+        saving it to disk - the direct visual warming check requested for
+        the manuscript's Section 3.1 (each city/climate analysed fully
+        independently, never pooled).
+
+        Args:
+            annual_df (pandas.DataFrame, optional): Annual metrics table.
+                Defaults to :attr:`annual_df` (requires
+                :meth:`compute_metrics`).
+            trend_df (pandas.DataFrame, optional): Per-city trend table used
+                to draw the overlaid trend line. Defaults to
+                :attr:`city_trends_df` (requires :meth:`fit_city_trends`).
+            target_col (str, optional): Annual-metric column whose fitted
+                OLS trend line is overlaid on each city's boxplot. Defaults
+                to ``'t_mean_annual'`` (the raw hourly boxplots always show
+                dry-bulb temperature, i.e. :attr:`hourly_by_city`,
+                regardless of *target_col*).
+            ncols (int, optional): Number of columns in the subplot grid.
+                Use ``ncols=<number of cities>`` for a single-row layout.
+                Defaults to 3.
+            title (str, optional): Figure title. ``None`` (default) omits
+                the ``suptitle``.
+
+        Returns:
+            tuple[matplotlib.figure.Figure, numpy.ndarray]: ``(fig, axes)``
+            so callers can further customise it before calling
+            ``fig.savefig(...)`` themselves.
+
+        Raises:
+            RuntimeError: If :meth:`compute_metrics`/:meth:`fit_city_trends`
+                have not been called yet.
+
+        Example:
+            >>> analyzer.compute_metrics(); analyzer.fit_city_trends()  # doctest: +SKIP
+            >>> fig, axes = analyzer.build_boxplot_figure(ncols=5)  # doctest: +SKIP
+            >>> fig.savefig("fig_hourly_temperature_boxplot_1x5.png", dpi=200)  # doctest: +SKIP
+        """
+        annual_df = annual_df if annual_df is not None else self._require(self.annual_df, "annual_df", "Call compute_metrics() first.")
+        trend_df = trend_df if trend_df is not None else self._require(self.city_trends_df, "city_trends_df", "Call fit_city_trends() first.")
+        return self._plot_city_boxplots(
+            annual_df=annual_df,
+            trend_df=trend_df,
+            target_col=target_col,
+            ncols=ncols,
+            output_path=None,
+            title=title,
+        )
+
     def export_markdown_report(self, output_path: Optional[Path] = None) -> Path:
         """Export a detailed Markdown report (executive summary, model
         definition, top-5 warming cities, sensitivity model if configured,
@@ -1086,12 +1188,16 @@ class EpwTrendAnalyzer:
             tuple[pandas.DataFrame, pandas.DataFrame]: ``(daily_df,
             annual_df)`` — per city-year-day daily-Tmax table, and per
             city-year annual-metrics table (without heatwave columns yet).
+            As a side effect, also (re)populates :attr:`hourly_by_city` with
+            the raw hourly dry-bulb temperature series of every file.
         """
         daily_rows: List[pd.DataFrame] = []
         annual_rows: List[Dict[str, object]] = []
+        self.hourly_by_city = {}
 
         for row in files_df.itertuples(index=False):
             hourly_t = self._load_hourly_temperature(row.epw_path)
+            self.hourly_by_city.setdefault(row.city, {})[row.year] = hourly_t
             daily_tmax = hourly_t.resample("D").max()
 
             daily_rows.append(
@@ -1415,6 +1521,90 @@ class EpwTrendAnalyzer:
             axes_flat[j].axis("off")
 
         fig.suptitle(title)
+        plt.tight_layout()
+        if output_path is not None:
+            fig.savefig(output_path, dpi=self.output_config.plot_dpi)
+            plt.close(fig)
+        return fig, axes
+
+    def _plot_city_boxplots(
+        self,
+        annual_df: pd.DataFrame,
+        trend_df: pd.DataFrame,
+        target_col: str,
+        ncols: int,
+        output_path: Optional[Path],
+        title: Optional[str],
+    ):
+        """Build (and optionally save) the per-city boxplot-per-year panel
+        figure used by :meth:`build_boxplot_figure`/:meth:`plot`: one
+        subplot per city, drawing every year's raw hourly dry-bulb
+        temperature readings (from :attr:`hourly_by_city`) as a box, with
+        the fitted OLS trend line (from *trend_df*) overlaid.
+
+        Args:
+            annual_df (pandas.DataFrame): Annual metrics table (used only to
+                enumerate which cities/years to draw).
+            trend_df (pandas.DataFrame): Per-city trend table (as returned
+                by :meth:`fit_city_trends`).
+            target_col (str): Annual-metric column whose fitted trend line
+                is overlaid.
+            ncols (int): Number of columns in the subplot grid.
+            output_path (pathlib.Path or None): If given, the figure is
+                saved (at :attr:`OutputConfig.plot_dpi`) and closed;
+                otherwise returned open for further editing.
+            title (str or None): Overall figure title (``fig.suptitle``);
+                omitted if ``None``.
+
+        Returns:
+            tuple[matplotlib.figure.Figure, numpy.ndarray]: ``(fig, axes)``.
+        """
+        cities = sorted(annual_df["city"].unique())
+        nrows = int(math.ceil(len(cities) / ncols)) if cities else 1
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(4.6 * ncols, 3.8 * nrows), squeeze=False)
+        axes_flat = axes.flatten()
+
+        for i, city in enumerate(cities):
+            ax = axes_flat[i]
+            years = sorted(self.hourly_by_city.get(city, {}).keys())
+            data_by_year = [self.hourly_by_city[city][y].to_numpy(dtype=float) for y in years]
+
+            ax.boxplot(
+                data_by_year, positions=years, widths=0.65, showfliers=False,
+                patch_artist=True, manage_ticks=False,
+                boxprops=dict(facecolor="tab:blue", alpha=0.55, edgecolor="0.25"),
+                medianprops=dict(color="black", linewidth=1.3),
+                whiskerprops=dict(color="0.35"), capprops=dict(color="0.35"),
+                showmeans=True,
+                meanprops=dict(marker="D", markerfacecolor="white", markeredgecolor="black", markersize=4),
+            )
+
+            row = trend_df[(trend_df["city"] == city) & (trend_df["target"] == target_col)]
+            if not row.empty and np.isfinite(row.iloc[0]["slope_c_per_year"]) and len(years) >= 2:
+                slope = float(row.iloc[0]["slope_c_per_year"])
+                intercept = float(row.iloc[0]["intercept"])
+                pvalue = float(row.iloc[0]["p_value"])
+                x_line = np.array([min(years), max(years)], dtype=float)
+                sig = " *" if pvalue < 0.05 else ""
+                ax.plot(
+                    x_line, intercept + slope * x_line,
+                    color="crimson", linestyle="--", linewidth=1.8, zorder=5,
+                    label=f"trend {slope:+.3f} C/yr ({slope * 10:+.2f} C/decade), p={pvalue:.3f}{sig}",
+                )
+                ax.legend(fontsize=7, loc="upper left")
+
+            ax.set_title(city)
+            ax.set_xlabel("year")
+            ax.set_ylabel("dry-bulb temperature (C)")
+            ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+            ax.grid(alpha=0.3)
+
+        for j in range(len(cities), len(axes_flat)):
+            axes_flat[j].axis("off")
+
+        if title:
+            fig.suptitle(title)
         plt.tight_layout()
         if output_path is not None:
             fig.savefig(output_path, dpi=self.output_config.plot_dpi)

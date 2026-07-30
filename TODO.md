@@ -2,7 +2,7 @@
 
 Document for tracking pending tasks for the `pyweatherfiles` project. Mark with `[x]` once a task is completed, and move relevant details to `README.md`/`README_ES.md` if appropriate.
 
-> 🇪🇸 Versión en español: [`TODO_ES.md`](TODO_ES.md).
+>  Versión en español: [`TODO_ES.md`](TODO_ES.md).
 
 ---
 

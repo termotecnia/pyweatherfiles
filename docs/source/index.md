@@ -29,7 +29,7 @@ then work through the {doc}`tutorial_pyweatherfiles` notebook.
 | `tmy` | `TMYGenerator` | Generates a TMY from historical series, Sandia/TMY3 method in 7 steps |
 | `hourly_epw_converter` | `HourlyEPWConverter`, `BatchHourlyEPWConverter` | Converts clean hourly series (CSV/Excel) into `.epw` files |
 | `met_epw_converter` | `convert_met_to_epw`, `convert_epw_to_met` | Bidirectional conversion between `.met` (LIDER/CALENER-CTE) and `.epw` |
-| `degree_hours` | `DegreeHoursCalculator`, `EpwBatchAnalyzer` | Heating/cooling degree-hours from an EPW + setpoints (IDF or dict) |
+| `degree_hours` | `DegreeHoursCalculator`, `EpwBatchAnalyzer`, `EpwGroupTrendAnalyzer` | Heating/cooling degree-hours from an EPW + setpoints (IDF or dict); single-EPW, multi-EPW comparative, or whole-folder trend analysis classified by filename |
 | `epw_trend_analyzer` | `EpwTrendAnalyzer`, `TrendConfig`, `OutputConfig` | Multi-year climate trends over collections of annual EPWs |
 | `epw_comparator` | `compare_epw_files`, `create_comparison_hourly_dataframe`, ... | Structural/statistical/hourly comparison between two EPW files |
 | `climate_processor` | `ClimateProcessor` | Cleaning, reindexing and gap-filling of raw hourly station series |

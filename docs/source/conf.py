@@ -15,10 +15,20 @@ or manually::
 
     python -m sphinx.ext.apidoc --force -o docs/source/api pyweatherfiles
     cd docs
-    make.bat html   # Windows
-    make html       # Linux/Mac
+    make.bat clean && make.bat html   # Windows
+    make clean && make html           # Linux/Mac
 
 The generated HTML is written to ``docs/build/html/index.html``.
+
+.. note::
+   Always ``clean`` before rebuilding manually: Sphinx's incremental build
+   only checks the mtime of each page's own source file, so it does *not*
+   detect changes to ``README.md``/``README_ES.md``/
+   ``ARTICLE_CONTEXT_SEVILLA.md`` when they are pulled in via MyST's
+   ``{include}`` directive (used by ``full_reference_en``,
+   ``full_reference_es`` and ``article_context``) -- a stale ``docs/build/``
+   can silently keep showing outdated content otherwise.
+   ``dist_build_docs.bat`` already cleans ``docs/build`` before every run.
 
 This project is also built automatically on `Read the Docs
 <https://readthedocs.org/>`_ using ``.readthedocs.yaml`` at the repository

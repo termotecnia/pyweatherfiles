@@ -36,6 +36,14 @@ pyweatherfiles.epw\_trend\_analyzer module
    :show-inheritance:
    :undoc-members:
 
+pyweatherfiles.epw\_utils module
+--------------------------------
+
+.. automodule:: pyweatherfiles.epw_utils
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 pyweatherfiles.hourly\_epw\_converter module
 --------------------------------------------
 

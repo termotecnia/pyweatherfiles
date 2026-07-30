@@ -583,8 +583,8 @@ Tras generar `seville_tmy.epw`, el script del artículo realiza dos comprobacion
 
 No usadas en el caso de Sevilla descrito, pero disponibles en el paquete:
 
-- **`DegreeHoursCalculator` / `EpwBatchAnalyzer`** (`degree_hours.py`): cálculo de grados-hora de calefacción/refrigeración a partir de EPW, individual o comparativo multi-EPW.
-- **`EpwTrendAnalyzer`, `TrendConfig`, `OutputConfig`** (`epw_trend_analyzer.py`): análisis de tendencias climáticas multianuales.
+- **`DegreeHoursCalculator` / `EpwBatchAnalyzer` / `EpwGroupTrendAnalyzer`** (`degree_hours.py`): cálculo de grados-hora de calefacción/refrigeración a partir de EPW, individual, comparativo multi-EPW, o análisis de tendencia sobre una carpeta completa de EPW clasificados por nombre de fichero (p. ej. una ciudad por grupo, cada clima analizado de forma independiente).
+- **`EpwTrendAnalyzer`, `TrendConfig`, `OutputConfig`** (`epw_trend_analyzer.py`): análisis de tendencias climáticas multianuales (tendencia OLS por ciudad, modelo global de efectos fijos, olas de calor, y un panel de boxplot por año de las lecturas horarias con `build_boxplot_figure()`).
 - **`climate_processor.py`**: utilidades basadas en `pvlib`.
 - **`epw_comparator.py`**: comparación tabular/estadística entre EPWs (usa `tabulate`).
 - Métodos avanzados de `TMYGenerator` no usados en este flujo pero disponibles para análisis y diagnóstico: `plot_cdfs`, `plot_fs_details`, `plot_junctions`, `plot_smoothing_comparison`, `plot_persistence_runs`, `plot_annual_cdfs`, `plot_monthly_means`, `plot_monthly_cdfs`, `get_candidate_stats`, `analyze_selection`, `correct_selection_by_temperature`, `plot_monthly_trend`, `plot_monthly_series`, `compare_tmy_versions`.
