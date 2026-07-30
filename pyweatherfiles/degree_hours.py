@@ -1953,7 +1953,10 @@ class EpwGroupTrendAnalyzer:
        collecting everything into the long-format :attr:`results`
        DataFrame (one row per group-year).
     3. Call :meth:`compute_trends` for the linear year-over-year regression
-       of any result column, per group (never pooled).
+       of any result column, per group (never pooled) — or
+       :meth:`fit_global_trend` for the equivalent *global* fixed-effects
+       trend common to every group at once (same estimator as
+       :meth:`~pyweatherfiles.epw_trend_analyzer.EpwTrendAnalyzer.fit_global_model`).
     4. Call :meth:`plot_variable_grid` (one variable, small multiples — one
        subplot per group) or :meth:`plot_overview_grid` (several variables
        stacked as rows, groups as columns) to visualise.
@@ -2306,6 +2309,63 @@ class EpwGroupTrendAnalyzer:
         df = pd.DataFrame(rows).set_index('group')
         self.trend_stats_[value_col] = df
         return df
+
+    def fit_global_trend(self, value_col: str):
+        """
+        Fit a **global** fixed-effects linear trend, ``value_col ~ year +
+        C(group)``, across every group at once — unlike :meth:`compute_trends`
+        (which fits each group's trend fully independently), this estimates
+        the rate of change common to *all* groups after controlling for
+        each group's own baseline level (a panel-data/fixed-effects
+        estimator, the same technique used for the manuscript's global
+        warming-rate estimate). Reuses the exact same estimator as
+        :meth:`~pyweatherfiles.epw_trend_analyzer.EpwTrendAnalyzer.fit_global_model`
+        via the shared
+        :func:`~pyweatherfiles.trend_stats.fit_fixed_effects_model` (see
+        ``INFORME_REVISION_GENERAL.md`` §3.3/Fase 4 — before this method
+        existed, only ``EpwTrendAnalyzer`` had a global fixed-effects
+        model; ``EpwGroupTrendAnalyzer`` could only fit independent
+        per-group regressions via :meth:`compute_trends`).
+
+        Parameters
+        ----------
+        value_col : str
+            A numeric column of :attr:`results` (e.g. ``'heating_dh_allday'``).
+
+        Returns
+        -------
+        pyweatherfiles.trend_stats.FixedEffectResult
+            The fitted model summary. Note the field names are inherited
+            from their original city-centric use in ``EpwTrendAnalyzer``:
+            ``slope_c_per_year`` here means "slope per year in
+            *value_col*'s own units" (not necessarily degrees Celsius —
+            e.g. °C·h/year for a degree-hours column), and ``n_cities``
+            means "number of groups".
+
+        Raises
+        ------
+        ValueError
+            If :meth:`run` has not been called yet, *value_col* does not
+            exist in :attr:`results`, or there are not enough observations
+            relative to the number of groups (degrees of freedom exhausted).
+
+        Example
+        -------
+        >>> analyzer.run()  # doctest: +SKIP
+        >>> global_result = analyzer.fit_global_trend("heating_dh_allday")  # doctest: +SKIP
+        >>> global_result.slope_c_per_year  # doctest: +SKIP
+        """
+        if self.results is None:
+            raise ValueError("No results yet. Call run() first.")
+        if value_col not in self.results.columns:
+            raise ValueError(
+                f"'{value_col}' not found in results. Available: "
+                f"{[c for c in self.results.columns if c not in ('group', 'year')]}"
+            )
+
+        from .trend_stats import fit_fixed_effects_model
+
+        return fit_fixed_effects_model(self.results, target=value_col, group_col='group')
 
     # -------------------------------------------------------------------------
     # Display helpers (labels/colors/zone tags — purely cosmetic)

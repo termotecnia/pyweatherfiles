@@ -44,9 +44,10 @@ def classify_epw_files(
         *epw_dir*.
     filename_pattern : str, optional
         Regex matched against ``os.path.basename(path)``. Must define named
-        groups ``group`` and ``year``. Default matches
-        ``'<group>_<year>.epw'`` (e.g. ``'granada_2005.epw'``). Files that
-        do not match are skipped with a warning.
+        groups ``group`` (or ``city``, accepted as an alias — see below)
+        and ``year``. Default matches ``'<group>_<year>.epw'`` (e.g.
+        ``'granada_2005.epw'``). Files that do not match are skipped with
+        a warning.
 
     Returns
     -------
@@ -59,6 +60,17 @@ def classify_epw_files(
         If neither *epw_dir* nor *epw_paths* is provided, or if
         *filename_pattern* does not define a usable ``year`` group for a
         matched file.
+
+    Notes
+    -----
+    The classification key is read from the regex's ``group`` named group
+    if present, falling back to ``city`` (the name used by
+    :class:`~pyweatherfiles.epw_trend_analyzer.EpwTrendAnalyzer`'s
+    ``TrendConfig.filename_regex``, e.g. ``r"^(?P<city>[A-Za-z]+)_(?P<year>\\d{4})\\.epw$"``),
+    and finally to the file name without its extension. This lets both
+    analyzers in the package share this single classification helper
+    regardless of which name they historically gave to that regex group
+    (see ``INFORME_REVISION_GENERAL.md`` §3.3/Fase 4).
 
     Example
     -------
@@ -79,7 +91,7 @@ def classify_epw_files(
             print(f"[WARNING] Filename does not match filename_pattern, skipping: {fname}")
             continue
         gd = m.groupdict()
-        group = gd.get('group', os.path.splitext(fname)[0])
+        group = gd.get('group') or gd.get('city') or os.path.splitext(fname)[0]
         try:
             year = int(gd['year'])
         except (KeyError, TypeError, ValueError):

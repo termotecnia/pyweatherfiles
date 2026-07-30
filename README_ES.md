@@ -1,6 +1,5 @@
 # pyweatherfiles
 
-[![CI](https://github.com/termotecnia/pyweatherfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/termotecnia/pyweatherfiles/actions/workflows/ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/pyweatherfiles/badge/?version=latest)](https://pyweatherfiles.readthedocs.io/en/latest/?badge=latest)
 
 **`pyweatherfiles`** es un paquete de Python para la gestión integral de ficheros climáticos orientado a la simulación energética de edificios: generación de **Años Meteorológicos Típicos (TMY)**, conversión bidireccional entre formatos (EPW, `.met`, series horarias en CSV/Excel), cálculo de **grados-hora** de calefacción/refrigeración, **análisis de tendencias climáticas** multianuales, comparación de ficheros EPW y depuración/relleno de series horarias brutas.
@@ -753,6 +752,23 @@ Constructores alternativos: `EpwTrendAnalyzer.from_dict(config)`, `.from_json(pa
 ### 7.3 Otros métodos públicos
 
 `plot()` (genera solo las figuras), `get_results()` (devuelve todo en memoria), `to_json()` (serializa la configuración efectiva), `build_city_figure()` / `build_global_adjusted_figure()` / `build_boxplot_figure(target_col='t_mean_annual', ncols=3)` (para personalizar figuras antes de guardarlas — este último dibuja, a partir de `hourly_by_city` cacheado, el panel de boxplot por año descrito arriba), `export_markdown_report()`. Función de conveniencia a nivel de módulo: `run_analysis(root_dir, output_dir)` (pipeline completo con configuración por defecto).
+
+### 7.4 `EpwTrendAnalyzer` frente a `EpwGroupTrendAnalyzer` — cuál usar
+
+Ambas clases analizan una *colección* completa de ficheros EPW clasificados por grupo (ciudad/clima) y año — incluyendo, desde la Fase 4 de `INFORME_REVISION_GENERAL.md` (§3.3/§6), exactamente los mismos bloques compartidos para la clasificación de ficheros (`pyweatherfiles.epw_utils.classify_epw_files`) y para el estimador de tendencia global de efectos fijos (`pyweatherfiles.trend_stats.fit_fixed_effects_model`). Lo que difiere es su *dominio* y cuánto del pipeline viene ya construido para él:
+
+| | `EpwTrendAnalyzer` (esta sección) | `EpwGroupTrendAnalyzer` (§6.6) |
+|---|---|---|
+| **Dominio** | Investigación climática/de temperatura pura (calentamiento, olas de calor) | Proxy de demanda energética de edificios (grados-hora de calefacción/refrigeración + cualquier variable EPW auxiliar) |
+| **¿Requiere consignas/IDF?** | No | Sí — un `setpoint_source` (ruta IDF o dict, §6.2) es obligatorio |
+| **Descubrimiento de ficheros** | `discover_files()` → `files_df` (DataFrame) | `_discover_files()` (interno) → `file_groups` (dict anidado) |
+| **Tendencia por grupo** | `fit_city_trends()` (`scipy.stats.linregress`, una fila por ciudad×objetivo) | `compute_trends(value_col)` (equivalente, una fila por grupo) |
+| **Tendencia global (panel de datos)** | `fit_global_models()` / `fit_global_model(target)` | `fit_global_trend(value_col)` |
+| **Indicadores de olas de calor** | Sí (percentil local + umbral absoluto, §7.2 paso 2) | No |
+| **Informe integrado** | Sí — CSV/XLSX/PNG + informe de texto/Markdown con veredicto + figuras boxplot por año (`export_outputs()`) | Parcial — exportación CSV/XLSX + rejillas de pequeños múltiplos/overview (`export_results()`, `plot_variable_grid()`, `plot_overview_grid()`), sin informe de veredicto en texto/Markdown |
+| **Cuándo usarla** | "¿Se está calentando este clima, y cuánto?" para una o varias ciudades, independiente de cualquier modelo de edificio | "¿Cómo evoluciona el proxy de demanda de calefacción/refrigeración de un edificio?", para uno o varios climas, ligado a una consigna concreta |
+
+Si tu análisis necesita *ambos* enfoques (p. ej. calentamiento **y** su efecto en la demanda de calefacción/refrigeración para el mismo conjunto de ciudades), ejecuta ambos analizadores en paralelo sobre el mismo `epw_dir` — clasificarán exactamente los mismos ficheros de forma idéntica, ya que comparten `classify_epw_files`.
 
 ---
 

@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -70,9 +69,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-from scipy.stats import linregress, t
+from scipy.stats import linregress
 
 from .degree_hours import DegreeHoursCalculator
+from .trend_stats import FixedEffectResult, build_fixed_effects_design, fit_fixed_effects_model
 
 
 @dataclass
@@ -246,56 +246,12 @@ class OutputConfig:
             raise ValueError("plot_dpi should be >= 72.")
 
 
-@dataclass
-class FixedEffectResult:
-    """Container for the summary of one global fixed-effects trend model
-    (``target ~ year + C(city)``), as returned by
-    :meth:`EpwTrendAnalyzer.fit_global_model`.
-
-    Parameters
-    ----------
-    target : str
-        Name of the annual-metric column the model was fit on (e.g.
-        ``'t_mean_annual'``).
-    slope_c_per_year : float
-        Estimated common warming/cooling rate in degrees Celsius per year,
-        after controlling for each city's own baseline level (the
-        coefficient on ``year`` in the fixed-effects regression).
-    intercept : float
-        Model intercept (fitted value at ``year=0`` for the reference city).
-    std_error : float
-        Standard error of :attr:`slope_c_per_year`.
-    t_stat : float
-        t-statistic for the slope (``slope / std_error``).
-    p_value : float
-        Two-sided p-value for the slope, computed from a Student's t
-        distribution with :attr:`df_resid` degrees of freedom.
-    ci95_low : float
-        Lower bound of the 95% confidence interval for the slope.
-    ci95_high : float
-        Upper bound of the 95% confidence interval for the slope.
-    r2 : float
-        Coefficient of determination of the fitted model.
-    n_obs : int
-        Number of city-year observations used in the fit.
-    n_cities : int
-        Number of distinct cities included in the fit.
-    df_resid : int
-        Residual degrees of freedom (``n_obs - n_params``).
-    """
-
-    target: str
-    slope_c_per_year: float
-    intercept: float
-    std_error: float
-    t_stat: float
-    p_value: float
-    ci95_low: float
-    ci95_high: float
-    r2: float
-    n_obs: int
-    n_cities: int
-    df_resid: int
+# NOTE: FixedEffectResult now lives in pyweatherfiles.trend_stats (Fase 4 of
+# INFORME_REVISION_GENERAL.md §3.3/§6 — extracted so that
+# EpwGroupTrendAnalyzer.fit_global_trend() in degree_hours.py can reuse the
+# exact same panel-data estimator). Re-imported above and re-exported here
+# (via the module-level import) so `from pyweatherfiles.epw_trend_analyzer
+# import FixedEffectResult` keeps working unchanged.
 
 
 class EpwTrendAnalyzer:
@@ -378,7 +334,9 @@ class EpwTrendAnalyzer:
         self.trend_config.validate()
         self.output_config.validate()
 
-        self._filename_re = re.compile(self.trend_config.filename_regex)
+        # NOTE: file discovery/classification now delegates to
+        # pyweatherfiles.epw_utils.classify_epw_files() inside discover_files()
+        # (Fase 4) instead of pre-compiling its own regex here.
 
         self.files_df: Optional[pd.DataFrame] = None
         self.daily_df: Optional[pd.DataFrame] = None
@@ -500,7 +458,11 @@ class EpwTrendAnalyzer:
     def discover_files(self) -> pd.DataFrame:
         """Discover and parse ``city_year.epw`` files from
         :attr:`trend_config`'s ``root_dir``, matching :attr:`TrendConfig.file_glob`
-        and parsing ``city``/``year`` via :attr:`TrendConfig.filename_regex`.
+        and parsing ``city``/``year`` via :attr:`TrendConfig.filename_regex`
+        (delegating the actual classification to the shared
+        :func:`~pyweatherfiles.epw_utils.classify_epw_files` helper — also
+        used by :class:`~pyweatherfiles.degree_hours.EpwGroupTrendAnalyzer`
+        — see ``INFORME_REVISION_GENERAL.md`` §3.3/Fase 4).
 
         Also computes :attr:`coverage_df` (per-city year count, min/max year
         and any missing years within that range) as a side effect.
@@ -518,22 +480,26 @@ class EpwTrendAnalyzer:
             >>> analyzer.discover_files()  # doctest: +SKIP
             >>> analyzer.coverage_df  # doctest: +SKIP
         """
-        records: List[Dict[str, object]] = []
-        for path in self.trend_config.root_dir.glob(self.trend_config.file_glob):
-            match = self._filename_re.match(path.name)
-            if not match:
-                continue
-            records.append(
-                {
-                    "city": match.group("city").lower(),
-                    "year": int(match.group("year")),
-                    "epw_path": str(path.resolve()),
-                }
+        from .epw_utils import classify_epw_files
+
+        candidate_paths = [str(p) for p in self.trend_config.root_dir.glob(self.trend_config.file_glob)]
+        if not candidate_paths:
+            raise FileNotFoundError(
+                f"No EPW files were found in {self.trend_config.root_dir} with pattern {self.trend_config.file_glob}."
             )
+
+        grouped = classify_epw_files(epw_paths=candidate_paths, filename_pattern=self.trend_config.filename_regex)
+
+        records: List[Dict[str, object]] = [
+            {"city": city.lower(), "year": year, "epw_path": str(Path(path).resolve())}
+            for city, years in grouped.items()
+            for year, path in years.items()
+        ]
 
         if not records:
             raise FileNotFoundError(
-                f"No EPW files were found in {self.trend_config.root_dir} with pattern {self.trend_config.file_glob}."
+                f"No EPW files were found in {self.trend_config.root_dir} with pattern {self.trend_config.file_glob} "
+                f"matching filename_regex {self.trend_config.filename_regex!r}."
             )
 
         self.files_df = pd.DataFrame(records).sort_values(["city", "year"]).reset_index(drop=True)
@@ -1367,7 +1333,11 @@ class EpwTrendAnalyzer:
         """Build the fixed-effects design matrix ``X`` for the model
         ``target ~ year + C(city)``: an intercept column, the ``year``
         column, and one-hot ("dummy") columns for every city except the
-        first (dropped as the reference level).
+        first (dropped as the reference level). Thin wrapper around the
+        shared :func:`~pyweatherfiles.trend_stats.build_fixed_effects_design`
+        (also used by
+        :meth:`~pyweatherfiles.degree_hours.EpwGroupTrendAnalyzer.fit_global_trend`
+        — see ``INFORME_REVISION_GENERAL.md`` §3.3/Fase 4).
 
         Args:
             df (pandas.DataFrame): Must contain ``city`` and ``year``
@@ -1379,24 +1349,16 @@ class EpwTrendAnalyzer:
             corresponding column names (``'intercept'``, ``'year'``,
             ``'city_<name>'``, ...).
         """
-        city_dummies = pd.get_dummies(df["city"], prefix="city", drop_first=True)
-        X_df = pd.concat(
-            [
-                pd.Series(1.0, index=df.index, name="intercept"),
-                df["year"].astype(float).rename("year"),
-                city_dummies.astype(float),
-            ],
-            axis=1,
-        )
-        return X_df.to_numpy(dtype=float), X_df.columns.tolist()
+        return build_fixed_effects_design(df, group_col="city")
 
     def _fit_global_fixed_effect(self, annual_df: pd.DataFrame, target: str) -> FixedEffectResult:
         """Estimate the global fixed-effects model ``target ~ year +
-        C(city)`` by ordinary least squares, solved via the normal
-        equations ``beta = (X'X)^-1 X'y`` (falling back to the
-        Moore-Penrose pseudo-inverse if ``X'X`` is singular), and derive the
-        full inferential summary (standard errors, t-statistic, two-sided
-        p-value via a Student's t distribution, 95% CI, R2).
+        C(city)`` by ordinary least squares (see
+        :func:`~pyweatherfiles.trend_stats.fit_fixed_effects_model` for the
+        estimation details: normal equations, with a Moore-Penrose
+        pseudo-inverse fallback if the design matrix is singular, plus the
+        full inferential summary). Thin wrapper around that shared
+        function — see ``INFORME_REVISION_GENERAL.md`` §3.3/Fase 4.
 
         Args:
             annual_df (pandas.DataFrame): Must contain ``city``, ``year``
@@ -1412,59 +1374,7 @@ class EpwTrendAnalyzer:
                 the number of model parameters (``n_obs <= n_params``, i.e.
                 zero or negative residual degrees of freedom).
         """
-        df = annual_df[["city", "year", target]].dropna().copy()
-        y = df[target].to_numpy(dtype=float)
-        X, col_names = self._build_fe_design(df)
-
-        n_obs, n_params = X.shape
-        if n_obs <= n_params:
-            raise ValueError(
-                f"Insufficient degrees of freedom for global FE model on {target}: n={n_obs}, p={n_params}."
-            )
-
-        xtx = X.T @ X
-        try:
-            xtx_inv = np.linalg.inv(xtx)
-        except np.linalg.LinAlgError:
-            xtx_inv = np.linalg.pinv(xtx)
-
-        beta = xtx_inv @ (X.T @ y)
-        y_hat = X @ beta
-        resid = y - y_hat
-
-        sse = float(resid.T @ resid)
-        sst = float(((y - y.mean()) ** 2).sum())
-        df_resid = n_obs - n_params
-        sigma2 = sse / df_resid
-
-        cov = sigma2 * xtx_inv
-        se = np.sqrt(np.diag(cov))
-
-        year_idx = col_names.index("year")
-        slope = float(beta[year_idx])
-        slope_se = float(se[year_idx])
-        t_stat = slope / slope_se if slope_se > 0 else np.nan
-        p_value = 2.0 * (1.0 - t.cdf(abs(t_stat), df_resid)) if np.isfinite(t_stat) else np.nan
-
-        tcrit = t.ppf(0.975, df_resid)
-        ci95_low = slope - tcrit * slope_se
-        ci95_high = slope + tcrit * slope_se
-
-        r2 = 1.0 - (sse / sst if sst > 0 else np.nan)
-        return FixedEffectResult(
-            target=target,
-            slope_c_per_year=slope,
-            intercept=float(beta[col_names.index("intercept")]),
-            std_error=slope_se,
-            t_stat=float(t_stat),
-            p_value=float(p_value),
-            ci95_low=float(ci95_low),
-            ci95_high=float(ci95_high),
-            r2=float(r2),
-            n_obs=int(n_obs),
-            n_cities=int(df["city"].nunique()),
-            df_resid=int(df_resid),
-        )
+        return fit_fixed_effects_model(annual_df, target, group_col="city")
 
     def _plot_city_series(
         self,

@@ -708,6 +708,7 @@ Unlike `EpwBatchAnalyzer` (§6.5) — designed to compare a *handful* of individ
 |---|---|
 | `run(save_session=True)` | Computes every `hours_scenarios` degree-hour scenario + `extra_epw_variables` for every classified file → `results` |
 | `compute_trends(value_col)` | Independent per-group linear regression (`scipy.stats.linregress`) of `value_col` against year → DataFrame indexed by group (`n, slope, intercept, r2, pvalue, significant`) |
+| `fit_global_trend(value_col)` | **Global** fixed-effects trend (`value_col ~ year + C(group)`) common to *every* group at once, after controlling for each group's own baseline level — reuses the exact same estimator as `EpwTrendAnalyzer.fit_global_model()` (§7) via the shared `pyweatherfiles.trend_stats.fit_fixed_effects_model` (see §7.4 below) |
 | `plot_variable_grid(value_col, ncols=3, harmonize_ylim=True, out_path=None)` | Small-multiples grid, one subplot per group: bars for every year + its own OLS trend line |
 | `plot_overview_grid(variables=None, harmonize_ylim=True, out_path=None)` | Rows = variables, columns = groups — every cell its own bars + trend line, y-axis harmonised within each row (a trend line dipping below zero in one group propagates its range to the rest of that row) |
 | `export_results(output_path)` | `results` (+ cached `trend_stats_`) to CSV or XLSX |
@@ -745,12 +746,29 @@ Alternative constructors: `EpwTrendAnalyzer.from_dict(config)`, `.from_json(path
    - Runs of consecutive hot days of length ≥ `min_heatwave_length_days` count as heatwave events (`heatwave_events_local/abs`, `heatwave_days_local/abs`).
    As a side effect, the raw hourly dry-bulb temperature series of every file is cached in `hourly_by_city` (`{city: {year: pandas.Series}}`), used by `build_boxplot_figure()` (§7.3) to draw the boxplot-per-year figures.
 3. **`fit_city_trends()`**: per-city OLS linear regression (`scipy.stats.linregress`) of each `city_trend_targets` metric against year → slope (°C/year), intercept, R², p-value, standard error.
-4. **`fit_global_models()` / `fit_global_model(target)`**: fits a **global fixed-effects model** `target ~ year + C(city)` by ordinary least squares (design matrix with `pd.get_dummies(city, drop_first=True)` + intercept + year; solved via `(XᵀX)⁻¹XᵀY`, with a pseudo-inverse fallback if the matrix is singular). Reports the **slope common to all cities after controlling for each city's own climate level** (°C/year), its standard error, t-statistic, two-sided p-value (Student's t with `n_obs − n_params` degrees of freedom), 95% confidence interval, R² and sample sizes — a **panel-data** estimator with city fixed effects, a statistically rigorous technique that is citable in the methods section if trend analysis is used in the article.
+4. **`fit_global_models()` / `fit_global_model(target)`**: fits a **global fixed-effects model** `target ~ year + C(city)` via the shared `pyweatherfiles.trend_stats.fit_fixed_effects_model` (ordinary least squares, design matrix with `pd.get_dummies(city, drop_first=True)` + intercept + year; solved via `(XᵀX)⁻¹XᵀY`, with a pseudo-inverse fallback if the matrix is singular — see §7.4 for the same estimator reused by `EpwGroupTrendAnalyzer.fit_global_trend()`, §6.6). Reports the **slope common to all cities after controlling for each city's own climate level** (°C/year), its standard error, t-statistic, two-sided p-value (Student's t with `n_obs − n_params` degrees of freedom), 95% confidence interval, R² and sample sizes — a **panel-data** estimator with city fixed effects, a statistically rigorous technique that is citable in the methods section if trend analysis is used in the article.
 5. **`export_outputs()`**: writes `annual_metrics.csv`, `city_trends.csv`, `global_trend.csv`, `coverage_summary.csv`, a combined `trend_outputs.xlsx`, 3 PNG figures (per-city trend panel for the annual mean and for the P95, plus a "globally adjusted" plot after removing city fixed effects), **plus, if `save_boxplot_plot=True` (default), 2 additional boxplot-per-year small-multiples figures** — one subplot per city, every year's raw hourly dry-bulb temperature readings as a box, with the fitted annual-mean trend line overlaid (`city_boxplot_grid_filename`: multi-column grid; `city_boxplot_row_filename`: single row, one column per city) — a plain-text `conclusion_report.txt` with an automatic verdict (positive/significant/practically relevant according to the configured thresholds), a more detailed Markdown report `conclusion_report.md`, and a `used_config.json` snapshot of the exact configuration used (reproducibility).
 
 ### 7.3 Other public methods
 
 `plot()` (generates only the figures), `get_results()` (returns everything in memory), `to_json()` (serializes the effective configuration), `build_city_figure()` / `build_global_adjusted_figure()` / `build_boxplot_figure(target_col='t_mean_annual', ncols=3)` (to customize figures before saving them — the latter draws, from the cached `hourly_by_city`, the boxplot-per-year panel described above), `export_markdown_report()`. Module-level convenience function: `run_analysis(root_dir, output_dir)` (full pipeline with default configuration).
+
+### 7.4 `EpwTrendAnalyzer` vs. `EpwGroupTrendAnalyzer` — which one to use
+
+Both classes analyse a whole *collection* of EPW files classified by group (city/climate) and year — including, since Fase 4 of `INFORME_REVISION_GENERAL.md` (§3.3/§6), the exact same shared building blocks for file classification (`pyweatherfiles.epw_utils.classify_epw_files`) and for the global fixed-effects trend estimator (`pyweatherfiles.trend_stats.fit_fixed_effects_model`). What differs is their *domain* and how much of the pipeline is pre-built for it:
+
+| | `EpwTrendAnalyzer` (this section) | `EpwGroupTrendAnalyzer` (§6.6) |
+|---|---|---|
+| **Domain** | Pure climate/temperature research (warming, heatwaves) | Building-energy-demand proxy (heating/cooling degree-hours + any auxiliary EPW variable) |
+| **Requires setpoints/IDF?** | No | Yes — a `setpoint_source` (IDF path or dict, §6.2) is mandatory |
+| **File discovery** | `discover_files()` → `files_df` (DataFrame) | `_discover_files()` (internal) → `file_groups` (nested dict) |
+| **Per-group trend** | `fit_city_trends()` (`scipy.stats.linregress`, one row per city×target) | `compute_trends(value_col)` (equivalent, one row per group) |
+| **Global (panel-data) trend** | `fit_global_models()` / `fit_global_model(target)` | `fit_global_trend(value_col)` |
+| **Heatwave indicators** | Yes (local-percentile + absolute threshold, §7.2 step 2) | No |
+| **Built-in report** | Yes — CSV/XLSX/PNG + text/Markdown conclusion report + boxplot-per-year figures (`export_outputs()`) | Partial — CSV/XLSX export + small-multiples/overview grids (`export_results()`, `plot_variable_grid()`, `plot_overview_grid()`), no text/Markdown verdict report |
+| **When to reach for it** | "Is this climate warming, and by how much?" for one or more cities, independent of any building model | "How is a building's heating/cooling demand proxy trending?", for one or many climates, tied to a specific setpoint schedule |
+
+If your analysis needs *both* angles (e.g. warming **and** its effect on heating/cooling demand for the same city set), run both analyzers side by side on the same `epw_dir` — they will classify the exact same files identically, since they share `classify_epw_files`.
 
 ---
 
