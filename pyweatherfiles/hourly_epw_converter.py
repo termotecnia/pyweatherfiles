@@ -474,6 +474,11 @@ class HourlyEPWConverter:
         # Load base EPW
         try:
             epw_data = EPW(base_epw_path)
+            # EPW() lazily loads the file: the constructor itself never
+            # raises for a missing/corrupt file, only a later attribute
+            # access does. Touch .location here so any such error surfaces
+            # inside this try/except instead of the unprotected code below.
+            _ = epw_data.location
         except Exception as e:
             print(f"Error loading base EPW '{base_epw_path}': {e}")
             return False
