@@ -35,7 +35,7 @@
 - Upload to TestPyPI/PyPI: `dist_upload_test.bat`, `dist_upload.bat` (expect `.pypirc` + `dist/*`).
 - Docs: `docs/` exists (Sphinx + myst-nb + Furo, config at `docs/source/conf.py`). Build locally with `pip install -e ".[docs]"` then `dist_build_docs.bat`; published on Read the Docs via `.readthedocs.yaml`. Tutorial notebook lives at `examples/tutorial_pyweatherfiles.ipynb` (single source of truth, copied into `docs/source/` at build time).
 - Branch sync helper: `sync_branch.bat <branch>` runs `git clean -fd` (destructive for untracked files).
-- **There is still no `tests/` directory or CI config in repo** (see `INFORME_REVISION_GENERAL.md` §4.2/Fase 2); validation is done via example/revision scripts, `analysis_scripts/verify_new_tmy.py`, and generated reports/figures.
+- **Tests**: `tests/` now exists (pytest, extra `test` in `pyproject.toml`: `pip install -e ".[test]"` then `python -m pytest tests/`). Coverage is still partial — only the pure physical/EPW-plumbing functions and the two EPW-writing pipelines have regression tests so far (see `INFORME_REVISION_GENERAL.md` §6 Fase 2, "Nivel 1"/"Nivel 2"); `tmy.py`/`degree_hours.py`/`epw_trend_analyzer.py` core logic is still untested. No CI config yet (Fase 3, still pending).
 
 ## Project-specific patterns (follow these)
 - Keep backward compatibility in `tmy.py`: new `sandia_step_*` methods coexist with deprecated aliases and compatibility properties.

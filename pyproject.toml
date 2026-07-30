@@ -52,6 +52,10 @@ accents = [
 full = [
     "pyweatherfiles[climate,comparator,energyplus,accents]",
 ]
+test = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/termotecnia/pyweatherfiles"
@@ -61,3 +65,7 @@ full = [
 [tool.setuptools.packages.find]
 include = ["pyweatherfiles*"]
 exclude = ["onedrive_backup*", "examples*", "analysis_scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

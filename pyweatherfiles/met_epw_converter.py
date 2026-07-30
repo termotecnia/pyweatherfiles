@@ -201,7 +201,7 @@ def _calculate_dew_point(temp_c, rh_percent):
 
     Example:
         >>> round(_calculate_dew_point(25.0, 50.0), 2)
-        13.86
+        13.85
     """
     if rh_percent <= 0: return temp_c
     b = 17.62

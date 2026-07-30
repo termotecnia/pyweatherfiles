@@ -186,14 +186,16 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 
 *(Pendiente, no abordado en esta pasada — mismo esfuerzo/impacto medio):* extraer un módulo `_psychrometrics.py` con las variantes de Magnus usadas en `hourly_epw_converter.py`, `met_epw_converter.py` y `climate_processor.py` (§3.2), decidiendo un único juego de constantes salvo que exista una razón documentada para mantener variantes.
 
-### Fase 2 — Tests automatizados (esfuerzo: 1-2 semanas, la de mayor prioridad estructural)
+### Fase 2 — Tests automatizados (esfuerzo: 1-2 semanas, la de mayor prioridad estructural) — 🟡 EN PROGRESO
 
-1. Crear carpeta `tests/` + añadir `pytest` (y `pytest-cov`) como dependencia de desarrollo (`[project.optional-dependencies].dev` o `[dependency-groups]` en `pyproject.toml`).
-2. **Nivel 1 — funciones físicas puras** (coste bajo, alto retorno): convertir los ejemplos `# doctest: +SKIP` ya existentes en los docstrings de `met_epw_converter.py`/`hourly_epw_converter.py`/`climate_processor.py` en tests reales de `pytest` (barométrica, Magnus, Stefan-Boltzmann, `_compute_cdf`, estadístico FS).
-3. **Nivel 2 — regresión de los refactors de la Fase 1**: test que genera un EPW de muestra con `HourlyEPWConverter` y con `convert_met_to_epw`, y compara sus campos numéricos frente a un *snapshot* de referencia.
-4. **Nivel 3 — smoke test end-to-end** de `TMYGenerator.generate_tmy()` sobre el dataset sintético reproducible que ya existe para el tutorial (`examples/tutorial_pyweatherfiles.ipynb`, según `TODO.md` tarea 3) — reutilizarlo en vez de generar uno nuevo.
-5. Añadir `session_manager` a los tests (guardar/cargar sesión y verificar *round-trip*).
-6. Configurar un umbral mínimo de cobertura razonable (no 100%, pero sí que cubra al menos los módulos de la Fase 1).
+1. [x] Crear carpeta `tests/` + añadir `pytest`/`pytest-cov` como extra opcional `test` en `pyproject.toml` (`pip install -e ".[test]"`, configuración en `[tool.pytest.ini_options]`).
+2. [x] **Nivel 1 — funciones físicas puras** (coste bajo, alto retorno): 35 tests en `tests/test_epw_field_utils.py`, `tests/test_met_epw_converter_physics.py`, `tests/test_hourly_epw_converter_physics.py` cubriendo `calculate_atmos_pressure`, `set_epw_values`/`get_epw_values`, `UNUSED_EPW_FIELDS`/`neutralize_unused_epw_fields`, `_calculate_dew_point`, `_calculate_sky_temperature`, `_calculate_absolute_humidity`, `_calculate_variable_pressure_from_met`, `_calculate_rh`. **Efecto secundario real:** el propio proceso de escribir estos tests detectó y corrigió un error tipográfico preexistente en el docstring de `_calculate_dew_point` (`13.86` documentado vs. `13.85` real). Pendiente: `climate_processor.py` (Magnus/clear-sky) y `_compute_cdf`/estadístico FS de `tmy.py` aún sin tests.
+3. [x] **Nivel 2 — regresión de los refactors de la Fase 1**: `tests/test_regression_epw_pipeline.py` genera un EPW base 100% sintético en memoria (`ladybug.epw.EPW.from_missing_values()`, sin depender de archivos externos no versionados como los de `onedrive_backup/`) y ejecuta el pipeline completo de `HourlyEPWConverter.process()` y `convert_met_to_epw()` sobre datos horarios/`.met` sintéticos generados en el propio test, verificando rangos físicos plausibles y la correcta neutralización de campos EPW no usados. 2/2 tests en verde.
+4. [ ] **Nivel 3 — smoke test end-to-end de `TMYGenerator.generate_tmy()`**: pendiente.
+5. [ ] Tests de `session_manager` (round-trip guardar/cargar sesión): pendiente.
+6. [ ] Umbral mínimo de cobertura configurado en CI: pendiente (bloqueado además por un problema de compatibilidad `pytest-cov`/`numpy` observado en Python 3.14 en este entorno — a revisar al configurar la Fase 3).
+
+**Estado real tras esta pasada:** 37/37 tests en verde (`python -m pytest tests/`). Cobertura: módulo `epw_field_utils.py` (nuevo, Fase 1) y las funciones físicas puras de `met_epw_converter.py`/`hourly_epw_converter.py`. **Sin cubrir todavía:** `tmy.py` (el módulo más grande y crítico), `degree_hours.py`, `epw_trend_analyzer.py`, `climate_processor.py`, `epw_comparator.py`, `session_manager.py`.
 
 ### Fase 3 — Integración continua (esfuerzo: 2-3 días, depende de la Fase 2)
 
@@ -228,7 +230,7 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 | Prioridad | Fase | Estado | Motivo |
 |---|---|---|---|
 | 1 | Fase 0 | ✅ Completada (rama `chore/general-review-improvements`) | Coste mínimo, corrige riesgos inmediatos de documentación/paquetado antes de seguir tocando código. |
-| 2 | Fase 2 (tests) | ⬜ Pendiente | Sin red de pruebas, cualquier refactor posterior (incluida la Fase 1) es más arriesgado de lo necesario. Se recomienda adelantar al menos el "Nivel 1" de la Fase 2 antes o en paralelo con la Fase 1. Nota: la Fase 1 ya se ejecutó igualmente, verificada solo con pruebas manuales de regresión (ver §6 Fase 1, punto 3) a falta de la suite automatizada. |
+| 2 | Fase 2 (tests) | 🟡 En progreso (37 tests, Niveles 1-2 de 6 pasos) | Sin red de pruebas, cualquier refactor posterior (incluida la Fase 1) es más arriesgado de lo necesario. Se recomienda adelantar al menos el "Nivel 1" de la Fase 2 antes o en paralelo con la Fase 1. Nota: la Fase 1 ya se ejecutó igualmente, verificada solo con pruebas manuales de regresión (ver §6 Fase 1, punto 3) a falta de la suite automatizada. |
 | 3 | Fase 1 | ✅ Completada (misma rama), verificación manual | Elimina la duplicación de mayor severidad detectada (lógica EPW/MET), con alcance acotado y claramente delimitado. |
 | 4 | Fase 3 | ⬜ Pendiente | Consolida el beneficio de la Fase 2 impidiendo regresiones futuras. |
 | 5 | Fase 4 | ⬜ Pendiente | Mejora de diseño de valor medio, no urgente. |
