@@ -395,6 +395,12 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
 
     try:
         epw_data = EPW(base_epw_path)
+        # EPW() is lazily loaded: the constructor itself never raises for a
+        # missing/corrupt file, only a later attribute access does. Touch
+        # .location here so any such error surfaces inside this try/except
+        # instead of the unprotected code below (same pattern already fixed
+        # in epw_comparator.py and hourly_epw_converter.py).
+        _ = epw_data.location
     except Exception as e:
         print(f"Error loading template: {e}")
         return False
