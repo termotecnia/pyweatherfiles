@@ -11,6 +11,17 @@ These fixtures provide lightweight, dependency-free stand-ins for Ladybug
 real ``.epw`` file on disk.
 """
 
+import matplotlib
+
+# Force a non-interactive backend for the whole test session, *before* any
+# test module gets a chance to import matplotlib.pyplot. Tests never need to
+# actually display a figure (only save it via savefig()), and depending on
+# import order / platform, matplotlib may otherwise pick an interactive
+# backend (e.g. TkAgg on Windows) that can fail if Tk/Tcl is missing or
+# broken on the machine running the tests - this mirrors the MPLBACKEND=Agg
+# environment variable already set in .github/workflows/ci.yml (Fase 3).
+matplotlib.use("Agg")
+
 import pytest
 
 
