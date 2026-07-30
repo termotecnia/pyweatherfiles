@@ -40,7 +40,7 @@
 - **CI**: `.github/workflows/ci.yml` runs on push to `main` and on every pull request — `pytest` across Python 3.10-3.13 on Ubuntu plus one Windows job (3.12), then a package-build sanity job (`python -m build`). `requires-python` was bumped from the stale `>=3.7` (EOL, incompatible with current pandas/numpy) to `>=3.10`.
 
 ## Project-specific patterns (follow these)
-- Keep backward compatibility in `tmy.py`: new `sandia_step_*` methods coexist with deprecated aliases and compatibility properties.
+- Keep backward compatibility in `tmy/_compat.py`: new `sandia_step_*` methods (implemented across the other `tmy/` mixins) coexist with deprecated aliases and compatibility properties.
 - Many public methods print rich diagnostics to console and store intermediate DataFrames in `validation_step*` attributes; do not remove these side effects lightly.
 - Proximity step API is configurable: `sandia_step_3_proximity_ranking(normalization_method='std', normalization_weights=None)`.
 - For `normalization_method='weighted'`, use exactly 4 keys in `normalization_weights`: `t_mean`, `t_median`, `ghi_mean`, `ghi_median`; all weights must be >= 0 and sum to 1.0.

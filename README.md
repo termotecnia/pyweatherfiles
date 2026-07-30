@@ -397,7 +397,7 @@ gen.export_tmy('tmy_output.csv')   # also supports .tmy / .xlsx
 
 ### 3.11 Backward compatibility
 
-`tmy.py` keeps, alongside the current `sandia_step_*` methods, **deprecated aliases** that wrap the new ones and emit a `DeprecationWarning`: `step_1_load_and_prepare_data()`, `step_2_select_candidate_months()`, `step_3_apply_persistence()`, `step_4_create_and_smooth_tmy()`. Compatibility *properties* also exist for the old validation-attribute names (`validation_st2_df_fs_ranking_by_month`, `validation_st2_summary_fs_ranking`, `validation_st3_df_persistence_decision`, `validation_st3_persistence_sequential_details`, `validation_st3_persistence_score_details`, `validation_st4_df_tmy_composition`), which transparently redirect to the current `validation_step*` attributes.
+The `tmy` package (`tmy/_compat.py`) keeps, alongside the current `sandia_step_*` methods, **deprecated aliases** that wrap the new ones and emit a `DeprecationWarning`: `step_1_load_and_prepare_data()`, `step_2_select_candidate_months()`, `step_3_apply_persistence()`, `step_4_create_and_smooth_tmy()`. Compatibility *properties* also exist for the old validation-attribute names (`validation_st2_df_fs_ranking_by_month`, `validation_st2_summary_fs_ranking`, `validation_st3_df_persistence_decision`, `validation_st3_persistence_sequential_details`, `validation_st3_persistence_score_details`, `validation_st4_df_tmy_composition`), which transparently redirect to the current `validation_step*` attributes.
 
 ---
 
