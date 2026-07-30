@@ -572,7 +572,7 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         )
         print(
             "  - QA balance (GHI - (DHI + DNI*cos(theta_z))) -> "
-            f"media_abs={np.mean(np.abs(residual_arr)):.2f} W/m2, p95_abs={np.percentile(np.abs(residual_arr), 95):.2f} W/m2"
+            f"abs_mean={np.mean(np.abs(residual_arr)):.2f} W/m2, abs_p95={np.percentile(np.abs(residual_arr), 95):.2f} W/m2"
         )
 
     _set_epw_values(epw_data, 'global_horizontal_radiation', ghi_values)

@@ -156,7 +156,7 @@ class _AssemblySmoothingMixin:
                         junction_params['s_factor_auto'] = {}
                     junction_params['s_factor_auto'][col] = s_val_auto
 
-                # Aplicar el suavizado
+                # Apply the smoothing
                 smoothed_y = spl(x_apply)
 
                 tmy_final.loc[application_window_timestamps, col] = smoothed_y

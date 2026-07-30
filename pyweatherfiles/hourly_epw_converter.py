@@ -665,7 +665,7 @@ class HourlyEPWConverter:
                 
             output_path = os.path.join(output_dir, filename)
             
-            # Pasamos directamente el df_year asumiendo que ya no tiene nulos
+            # Pass df_year directly, assuming it no longer has nulls
             success = self.transform_to_epw(df_year, output_path, base_epw_path=base_epw_path)
             if success:
                 print(f"Success! Year {year} saved to: {output_path}")
@@ -724,7 +724,7 @@ class BatchHourlyEPWConverter:
         >>> batch.process_all(output_pattern="{identifier}_{year}.epw")  # doctest: +SKIP
     """
 
-    # Atributo de clase con las llaves requeridas
+    # Class attribute with the required keys
     MANDATORY_KEYS = ['file_path', 'base_epw_path']
     """list[str]: Class attribute listing the configuration keys every
     entry of :attr:`cities_config` must contain (see

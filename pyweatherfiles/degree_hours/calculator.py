@@ -473,8 +473,8 @@ class DegreeHoursCalculator:
         if series is not None:
             return series
         raise ValueError(
-            f"No se pudo parsear el schedule '{name}'. "
-            "Solo se soportan SCHEDULE:COMPACT y SCHEDULE:YEAR actualmente."
+            f"Could not parse schedule '{name}'. "
+            "Only SCHEDULE:COMPACT and SCHEDULE:YEAR are currently supported."
         )
 
     # =========================================================================
@@ -559,19 +559,19 @@ class DegreeHoursCalculator:
                         h_avail = h_avail * (s > 0).astype(float)
                         print(f"[INFO] '{zone}' -> heating availability: '{h_sch}'")
                     except Exception as e:
-                        print(f"[WARNING] No se pudo parsear heating availability '{h_sch}': {e}")
+                        print(f"[WARNING] Could not parse heating availability '{h_sch}': {e}")
                 if c_sch:
                     try:
                         s = self._schedule_to_series(idf, c_sch)
                         c_avail = c_avail * (s > 0).astype(float)
                         print(f"[INFO] '{zone}' -> cooling availability: '{c_sch}'")
                     except Exception as e:
-                        print(f"[WARNING] No se pudo parsear cooling availability '{c_sch}': {e}")
+                        print(f"[WARNING] Could not parse cooling availability '{c_sch}': {e}")
 
             result[zone] = {'heating': h_avail, 'cooling': c_avail}
 
         if not result:
-            print("[INFO] No se encontraron sistemas IdealLoads. Disponibilidad = 100%.")
+            print("[INFO] No IdealLoads systems found. Availability = 100%.")
 
         return result
 
@@ -609,7 +609,7 @@ class DegreeHoursCalculator:
         if not os.path.exists(idf_path):
             raise FileNotFoundError(f"IDF file not found: {idf_path}")
 
-        print(f"[INFO] Cargando IDF: {idf_path}")
+        print(f"[INFO] Loading IDF: {idf_path}")
         # idf = self._load_idf(idf_path)
         idf = get_building(idf_path)
         avail = self._get_available_names(idf)
@@ -617,7 +617,7 @@ class DegreeHoursCalculator:
 
         if zone_name is not None and zone_name not in all_names:
             raise ValueError(
-                f"Zone/Space '{zone_name}' no encontrado en el IDF.\n"
+                f"Zone/Space '{zone_name}' not found in the IDF.\n"
                 f"  Zones:  {avail['zones']}\n"
                 f"  Spaces: {avail['spaces']}"
             )
@@ -729,8 +729,8 @@ class DegreeHoursCalculator:
             for label, vals in (('heating', h_vals), ('cooling', c_vals)):
                 if len(vals) != n_days:
                     raise ValueError(
-                        f"'daily' → '{label}': se esperan {n_days} valores, "
-                        f"se proporcionaron {len(vals)}."
+                        f"'daily' → '{label}': expected {n_days} values, "
+                        f"got {len(vals)}."
                     )
             return (
                 pd.Series(np.repeat(h_vals, 24), index=idx),
@@ -965,7 +965,7 @@ class DegreeHoursCalculator:
                 c_sp = pd.concat(
                     [v['cooling'] for v in sp_dict.values()], axis=1
                 ).mean(axis=1)
-                print(f"[INFO] Consigna promediada sobre {len(sp_dict)} zona(s).")
+                print(f"[INFO] Setpoint averaged over {len(sp_dict)} zone(s).")
 
         elif isinstance(setpoint_source, dict):
             h_sp, c_sp = self._setpoints_from_dict(setpoint_source)
@@ -997,7 +997,7 @@ class DegreeHoursCalculator:
         # ------------------------------------------------------------------
         # Compute hourly degree-hours
         # ------------------------------------------------------------------
-        print(f"[INFO] Calculando grados-hora (mode='{mode}', horas={hours or 'todas'})…")
+        print(f"[INFO] Calculating degree-hours (mode='{mode}', hours={hours or 'all'})…")
         hdh, cdh = self._compute_dh(h_sp, c_sp, hours, mode)
 
         # Apply availability masks: zero out DH when system is inactive
@@ -1150,7 +1150,7 @@ class DegreeHoursCalculator:
                 c_sp     = sp_dict[zone_name]['cooling'].copy()
                 h_avail  = sp_dict[zone_name]['heating_avail']
                 c_avail  = sp_dict[zone_name]['cooling_avail']
-                title_suffix = f" — Zona: {zone_name}"
+                title_suffix = f" — Zone: {zone_name}"
             else:
                 h_sp = pd.concat(
                     [v['heating'] for v in sp_dict.values()], axis=1
@@ -1164,7 +1164,7 @@ class DegreeHoursCalculator:
                 c_avail = (pd.concat(
                     [v['cooling_avail'] for v in sp_dict.values()], axis=1
                 ).mean(axis=1) > 0).astype(float)
-                title_suffix = f" — Media de {len(sp_dict)} zona(s)"
+                title_suffix = f" — Mean of {len(sp_dict)} zone(s)"
 
             # Apply availability: where system is off → NaN (gap in plot)
             h_sp[h_avail < 1] = np.nan
@@ -1172,9 +1172,9 @@ class DegreeHoursCalculator:
 
         elif isinstance(setpoint_source, dict):
             h_sp, c_sp = self._setpoints_from_dict(setpoint_source)
-            title_suffix = " — Diccionario personalizado"
+            title_suffix = " — Custom dictionary"
         else:
-            raise TypeError("setpoint_source debe ser str o dict.")
+            raise TypeError("setpoint_source must be str or dict.")
 
 
         # --- Slice data by period -------------------------------------------
@@ -1266,9 +1266,9 @@ class DegreeHoursCalculator:
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
                 ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
 
-        ax.set_title(f"Temperaturas — {period_labels[period]}{title_suffix}")
-        ax.set_ylabel('Temperatura (°C)')
-        ax.set_xlabel('Fecha / Hora')
+        ax.set_title(f"Temperatures — {period_labels[period]}{title_suffix}")
+        ax.set_ylabel('Temperature (°C)')
+        ax.set_xlabel('Date / Time')
         ax.legend(loc='best')
         ax.grid(True, alpha=0.3)
         plt.xticks(rotation=30, ha='right')
@@ -1321,6 +1321,6 @@ class DegreeHoursCalculator:
         export_frames_to_excel(available, output_path)
 
         abs_path = os.path.abspath(output_path)
-        print(f"[INFO] Resultados exportados a: {abs_path}")
+        print(f"[INFO] Results exported to: {abs_path}")
         return abs_path
 

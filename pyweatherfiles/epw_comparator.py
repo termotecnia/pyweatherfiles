@@ -78,14 +78,14 @@ def explore_epw_structure(epw_path: str):
     Example:
         >>> from pyweatherfiles import epw_comparator
         >>> epw_comparator.explore_epw_structure("sevilla_tmy.epw")  # doctest: +SKIP
-        --- Explorando la Estructura del Archivo EPW: 'sevilla_tmy.epw' ---
+        --- Exploring EPW File Structure: 'sevilla_tmy.epw' ---
         ...
     """
-    print(f"\n--- Explorando la Estructura del Archivo EPW: '{epw_path}' ---")
+    print(f"\n--- Exploring EPW File Structure: '{epw_path}' ---")
     try:
         epw = EPW(epw_path)
     except Exception as e:
-        print(f"No se pudo cargar el archivo EPW: {e}")
+        print(f"Could not load the EPW file: {e}")
         return
 
     try:
@@ -158,6 +158,12 @@ def compare_epw_files(base_epw_path: str, generated_epw_path: str):
     try:
         epw_base = EPW(base_epw_path)
         epw_gen = EPW(generated_epw_path)
+        # EPW() lazily loads the file: the constructor itself never raises
+        # for a missing/corrupt file, only a later attribute access does.
+        # Touch .location here so any such error surfaces inside this
+        # try/except instead of the unprotected code below.
+        _ = epw_base.location
+        _ = epw_gen.location
     except FileNotFoundError as e:
         print(f"Critical Error: Could not find one of the files. {e}")
         return
@@ -261,11 +267,16 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
         # If 'header' is a string (older versions), we use it directly.
         def get_header_name(collection):
             """Return the human-readable variable name of a Ladybug data
-            collection dict, handling both the modern (``header`` is a dict
-            with a ``'name'`` key) and legacy (``header`` is already a
-            string) ``EPW.to_dict()`` formats."""
+            collection dict, handling both the current ``ladybug-core``
+            format (``header['data_type']['name']``, e.g. ``'Dry Bulb
+            Temperature'``), a legacy flatter format some older versions
+            used (``header['name']`` directly), and the case where
+            ``header`` is already a plain string."""
             header = collection.get('header')
             if isinstance(header, dict):
+                data_type = header.get('data_type')
+                if isinstance(data_type, dict) and data_type.get('name'):
+                    return data_type['name']
                 return header.get('name', 'Unknown')
             return str(header)
 
@@ -296,10 +307,18 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
     df_final = pd.DataFrame()
     
     try:
-        # We try to build the time index
-        # Note: if this fails, we return the DF without a time index or use a generic one
-        dates = pd.to_datetime(df_base[['year', 'month', 'day']])
-        hours_timedelta = pd.to_timedelta(df_base['hour'], unit='h')
+        # We try to build the time index (case-insensitive column lookup:
+        # ladybug-core's EPW.to_dict() capitalises variable names, e.g.
+        # 'Year'/'Month'/'Day'/'Hour' rather than 'year'/'month'/'day'/'hour')
+        col_lookup = {c.lower(): c for c in df_base.columns}
+        year_col = col_lookup['year']
+        month_col = col_lookup['month']
+        day_col = col_lookup['day']
+        hour_col = col_lookup['hour']
+        dates = pd.to_datetime(df_base[[year_col, month_col, day_col]].rename(
+            columns={year_col: 'year', month_col: 'month', day_col: 'day'}
+        ))
+        hours_timedelta = pd.to_timedelta(df_base[hour_col], unit='h')
         df_final.index = dates + hours_timedelta
         df_final.index.name = 'Timestamp'
     except Exception:
@@ -312,8 +331,13 @@ def create_comparison_dataframe(base_epw_path: str, generated_epw_path: str) -> 
         col_gen = next((col for col in df_gen.columns if col.lower() == original_name.lower()), None)
 
         if col_base and col_gen:
-            df_final[f'{short_name}_Base'] = df_base[col_base]
-            df_final[f'{short_name}_Generado'] = df_gen[col_gen]
+            # .values (not the raw Series) on purpose: df_base/df_gen still
+            # use their original positional RangeIndex, while df_final may
+            # already carry the constructed DatetimeIndex above — assigning
+            # the Series directly would silently align by index and produce
+            # an all-NaN column instead of the actual hourly values.
+            df_final[f'{short_name}_Base'] = df_base[col_base].values
+            df_final[f'{short_name}_Generado'] = df_gen[col_gen].values
 
     print("DataFrame created successfully.")
     return df_final
