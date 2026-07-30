@@ -65,3 +65,19 @@ def fake_epw() -> FakeEPW:
     """A fresh :class:`FakeEPW` instance with no fields defined."""
     return FakeEPW()
 
+
+@pytest.fixture(autouse=True)
+def _close_matplotlib_figures():
+    """Auto-close every matplotlib figure after each test.
+
+    Without this, the ``tmy/_plotting.py`` tests alone can leave dozens of
+    figures open across a session (each ``plot_*`` call creates at least one,
+    and ``plot_monthly_cdfs()`` creates one per variable), eventually
+    triggering matplotlib's "More than 20 figures have been opened"
+    ``RuntimeWarning`` and needlessly growing memory usage.
+    """
+    yield
+    import matplotlib.pyplot as plt
+    plt.close("all")
+
+
