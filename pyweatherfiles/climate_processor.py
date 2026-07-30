@@ -41,9 +41,17 @@ Example
 """
 import pandas as pd
 import numpy as np
-import pvlib
 import time
 import os
+
+try:
+    import pvlib
+except ImportError:
+    raise ImportError(
+        "The 'pvlib' library is not installed. It is required by ClimateProcessor "
+        "for the clear-sky-index solar radiation gap-filling strategy. "
+        "Install it with: pip install pvlib  (or: pip install pyweatherfiles[climate])"
+    )
 
 
 class ClimateProcessor:

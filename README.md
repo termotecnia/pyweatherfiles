@@ -106,7 +106,15 @@ pip install pyweatherfiles
 
 Mandatory dependencies (`pyproject.toml`): `pandas`, `numpy`, `scipy`, `matplotlib`, `seaborn`, `openpyxl`, `ladybug-core`, `pyyaml`.
 
-**Optional** dependencies, required only by specific modules (see [§11](#11-complete-dependencies-by-module) for the exact detail): `pvlib` (`climate_processor`), `tabulate` (`epw_comparator`), `besos` + `eppy` (`degree_hours`, IDF setpoint extraction), `accim` (`degree_hours`, optional).
+**Optional** dependencies, required only by specific modules (see [§11](#11-complete-dependencies-by-module) for the exact detail): `pvlib` (`climate_processor`), `tabulate` (`epw_comparator`), `besos` + `eppy` (`degree_hours`, IDF setpoint extraction), `accim` (`degree_hours`, optional). Each has a matching `pyproject.toml` extra, installable directly with pip:
+
+```bash
+pip install "pyweatherfiles[climate]"      # pvlib, for climate_processor
+pip install "pyweatherfiles[comparator]"   # tabulate, for epw_comparator
+pip install "pyweatherfiles[energyplus]"   # besos + eppy, for IDF setpoint extraction
+pip install "pyweatherfiles[accents]"      # accim (optional)
+pip install "pyweatherfiles[full]"         # all of the above at once
+```
 
 ---
 
@@ -834,11 +842,11 @@ This enables **auditing and exactly reproducing** every run (input parameters + 
 | `epw_trend_analyzer` | `scipy.stats`, `matplotlib` | Mandatory | — |
 | `epw_trend_analyzer` | `pyyaml` | Optional (only `from_yaml()`) | `ImportError` with an explanatory message |
 | `epw_comparator` | `ladybug-core` | Mandatory (guarded) | `ImportError` with an explanatory message |
-| `epw_comparator` | `tabulate` | Module-mandatory (**unguarded**) | Standard `ImportError` when importing the module |
-| `climate_processor` | `pvlib` | Module-mandatory (**unguarded**) | Standard `ImportError` when importing the module |
+| `epw_comparator` | `tabulate` | Optional (guarded), extra `comparator` | `ImportError` with an explanatory message |
+| `climate_processor` | `pvlib` | Optional (guarded), extra `climate` | `ImportError` with an explanatory message |
 | `session_manager` | `numpy`, `pandas` | Mandatory | — |
 
-> Note: `pvlib` (`climate_processor`) and `tabulate` (`epw_comparator`) are imported without a `try/except` block, unlike `ladybug-core` (which does have a custom error message in every module that uses it). This only matters if that submodule is explicitly imported (`climate_processor`/`epw_comparator` are not part of the minimal `__init__.py` API).
+> Every optional dependency above is guarded with `try/except ImportError` and raises a custom, explanatory error message pointing to the relevant `pip install` command (including the matching `pyproject.toml` extra, e.g. `pip install pyweatherfiles[climate]`). This only matters if that submodule is explicitly imported (`climate_processor`/`epw_comparator` are not part of the minimal `__init__.py` API).
 
 ---
 

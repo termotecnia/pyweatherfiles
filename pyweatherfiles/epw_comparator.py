@@ -41,8 +41,16 @@ Comparing a generated TMY against the official reference EPW used to build it::
 """
 
 import pandas as pd
-from tabulate import tabulate
 from .session_manager import save_function_session
+
+try:
+    from tabulate import tabulate
+except ImportError:
+    raise ImportError(
+        "The 'tabulate' library is not installed. It is required by epw_comparator "
+        "for console report formatting. Install it with: pip install tabulate "
+        "(or: pip install pyweatherfiles[comparator])"
+    )
 
 try:
     from ladybug.epw import EPW

@@ -33,6 +33,25 @@ docs = [
     "myst-nb>=1.0",
     "furo",
 ]
+# Optional runtime extras: each corresponds to imports already guarded with
+# try/except ImportError in the relevant module (see AGENTS.md / README.md
+# §11 "Complete dependencies by module").
+climate = [
+    "pvlib",           # pyweatherfiles.climate_processor (clear-sky gap-filling)
+]
+comparator = [
+    "tabulate",         # pyweatherfiles.epw_comparator (console report formatting)
+]
+energyplus = [
+    "besos",            # pyweatherfiles.degree_hours (IDF setpoint/schedule parsing)
+    "eppy",             # fallback IDF parser used by degree_hours if besos is unavailable
+]
+accents = [
+    "accim",            # pyweatherfiles.degree_hours (optional accent-sanitization of IDF paths)
+]
+full = [
+    "pyweatherfiles[climate,comparator,energyplus,accents]",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/termotecnia/pyweatherfiles"

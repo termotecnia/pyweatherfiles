@@ -26,7 +26,8 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
 - **Estado:** pendiente — condicionado a cerrar los puntos 1 y 3 (o al menos dejar claro qué queda fuera del primer release).
 - **Contexto:** ya existen los scripts `dist_build_package.bat`, `dist_upload_test.bat` y `dist_upload.bat`.
 - **Pasos previstos:**
-  - [ ] Revisar `pyproject.toml`: número de versión, lista de dependencias (incluir las que falten: `ladybug-core` es dependencia dura de varios módulos y no aparece listada; valorar `pvlib`, `tabulate`, `besos`, `eppy` como extras opcionales), clasificadores, URLs del proyecto, licencia.
+  - [x] Revisar la lista de dependencias de `pyproject.toml`: `ladybug-core` ya es dependencia obligatoria, y `pvlib`/`tabulate`/`besos`/`eppy`/`accim` ya están declaradas como extras opcionales (`climate`, `comparator`, `energyplus`, `accents`, más un `full` combinado), con sus imports protegidos con `try/except ImportError` en `climate_processor.py`/`epw_comparator.py` (ya lo estaban en `degree_hours.py`). Ver `INFORME_REVISION_GENERAL.md` §6 Fase 0.3.
+  - [ ] Pendiente aún en `pyproject.toml`: subir el número de versión (actualmente `0.0.0`), revisar clasificadores, y añadir un archivo `LICENSE` físico en la raíz del repo (actualmente solo declarado como metadato: `license = "MIT"`, no existe el archivo `LICENSE` — ver nota en `INFORME_REVISION_GENERAL.md`).
   - [ ] Ejecutar `dist_build_package.bat` (limpia `dist/`, `build/`, `*.egg-info` y corre `python -m build`).
   - [ ] Publicar en TestPyPI con `dist_upload_test.bat` y validar instalación en un entorno virtual limpio (`pip install -i https://test.pypi.org/simple/ pyweatherfiles`).
   - [ ] Probar los ejemplos de `examples/` contra el paquete instalado desde TestPyPI (no desde el repo local).
