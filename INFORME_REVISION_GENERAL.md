@@ -212,14 +212,14 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 
 **Verificación:** 21 tests nuevos (`tests/test_trend_stats.py`, `tests/test_epw_utils.py`, `tests/test_fase4_trend_overlap_reduction.py`), incluyendo un caso que recupera exactamente la pendiente común conocida de un dataset sintético de 2 grupos, y un caso que confirma que `EpwGroupTrendAnalyzer.fit_global_trend()` coincide bit a bit con llamar a `fit_fixed_effects_model()` directamente. Suite completa: 58/58 tests en verde.
 
-### Fase 5 — Modularización de archivos monolíticos (esfuerzo: 2-4 semanas, alto riesgo — **ejecutar solo después de la Fase 2**)
+### Fase 5 — Modularización de archivos monolíticos (esfuerzo: 2-4 semanas, alto riesgo — **ejecutar solo después de la Fase 2**) — 🟡 EN PROGRESO
 
-> Estos cambios solo deben abordarse una vez exista una red de tests de regresión (Fase 2), dado que son refactors de gran superficie sobre un paquete sin cobertura automática actualmente.
+> Estos cambios solo deben abordarse una vez exista una red de tests de regresión (Fase 2), dado que son refactors de gran superficie sobre un paquete sin cobertura automática actualmente. Orden elegido: se empezó por el módulo de **menor riesgo** (`degree_hours.py`, 3 clases ya independientes) antes que `tmy.py` (una única clase monolítica de 4.100 líneas, sin ningún test previo — se abordará en último lugar y con más cautela).
 
-1. **`tmy.py` → paquete `pyweatherfiles/tmy/`**: dividir manteniendo `TMYGenerator` como fachada pública sin cambios de API:
+1. [ ] **`tmy.py` → paquete `pyweatherfiles/tmy/`**: pendiente. Plan sin cambios respecto al original:
    - `_fs_selection.py` (Step 2), `_proximity.py` (Step 3), `_persistence.py` (Steps 4-5), `_assembly_smoothing.py` (Steps 6-7), `_plotting.py` (los ~8 métodos `plot_*`), `_validation.py` (métodos `validate_*`/`analyze_selection`/`generate_full_summary`), `_compat.py` (aliases `step_*` deprecados y propiedades `validation_st*`).
-2. **`degree_hours.py` → paquete `pyweatherfiles/degree_hours/`**: separar `calculator.py` (`DegreeHoursCalculator`), `batch_analyzer.py` (`EpwBatchAnalyzer`), `group_trend_analyzer.py` (`EpwGroupTrendAnalyzer`), con un `__init__.py` que re-exporte las 3 clases para no romper `from pyweatherfiles.degree_hours import X`.
-3. **`epw_trend_analyzer.py`**: separar configuración (`_config.py`, dataclasses), métricas (`_metrics.py`), modelos estadísticos (`_models.py`), figuras (`_plotting.py`) e informes (`_report.py`), manteniendo `EpwTrendAnalyzer` como orquestador.
+2. [x] **`degree_hours.py` → paquete `pyweatherfiles/degree_hours/`**: completado. `calculator.py` (`DegreeHoursCalculator`), `batch_analyzer.py` (`EpwBatchAnalyzer`), `group_trend_analyzer.py` (`EpwGroupTrendAnalyzer`), `_helpers.py` (parseo de *schedules* IDF, antes funciones sueltas a nivel de módulo). `__init__.py` re-exporta las 3 clases; `from pyweatherfiles.degree_hours import X` y `from pyweatherfiles import degree_hours` siguen funcionando sin cambios para quien los use. El archivo original `degree_hours.py` fue eliminado tras verificar la migración. `glob`/`re` (código muerto detectado por el linter, ya sin uso desde la Fase 4) se omitieron al copiar. Verificado con 6 tests nuevos de humo end-to-end (`tests/test_degree_hours_package.py`, incluyendo un `EpwGroupTrendAnalyzer.run()`/`EpwBatchAnalyzer.run()` completos sobre EPWs sintéticos) + los 58 tests previos, todos en verde.
+3. [ ] **`epw_trend_analyzer.py`**: pendiente. Plan sin cambios respecto al original: separar configuración (`_config.py`, dataclasses), métricas (`_metrics.py`), modelos estadísticos (`_models.py`), figuras (`_plotting.py`) e informes (`_report.py`), manteniendo `EpwTrendAnalyzer` como orquestador.
 
 ### Fase 6 — Limpieza continua de deuda técnica menor (sin plazo fijo)
 
@@ -238,7 +238,7 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 | 3 | Fase 1 | ✅ Completada (misma rama), verificación manual | Elimina la duplicación de mayor severidad detectada (lógica EPW/MET), con alcance acotado y claramente delimitado. |
 | 4 | Fase 3 | ✅ Completada (`.github/workflows/ci.yml`) | Consolida el beneficio de la Fase 2 impidiendo regresiones futuras. |
 | 5 | Fase 4 | ✅ Completada (`trend_stats.py`, `classify_epw_files` extendido, `fit_global_trend`) | Mejora de diseño de valor medio, no urgente. |
-| 6 | Fase 5 | ⬜ Pendiente | Mayor beneficio a largo plazo para mantenibilidad, pero mayor riesgo — condicionada a tener tests. |
+| 6 | Fase 5 | 🟡 En progreso (`degree_hours/` completado; `tmy.py`/`epw_trend_analyzer.py` pendientes) | Mayor beneficio a largo plazo para mantenibilidad, pero mayor riesgo — condicionada a tener tests. |
 | Continua | Fase 6 | ⬜ Pendiente | Mejora incremental sin bloquear el resto del roadmap (`TODO.md` ya cubre documentación/PyPI). |
 
 Este plan es complementario, no sustitutivo, del `TODO.md`/`TODO_ES.md` ya existente (centrado en documentación Sphinx y publicación en PyPI): se recomienda ejecutar como mínimo la **Fase 0** y el **Nivel 1 de la Fase 2** antes de completar la tarea 2 de `TODO.md` ("Publicar en PyPI"), para no publicar con dependencias mal declaradas ni con cero cobertura de tests.
