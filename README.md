@@ -533,7 +533,8 @@ e = e_s(T_db) · RH/100                      [actual vapor pressure]
 P_atm = e · (1 + 0.62198 / W)
 
 → if P_atm ∉ [50,000, 110,000] Pa (non-physical value), the standard
-  barometric formula by elevation (identical to §4.3) is used as a fallback.
+  barometric formula by elevation (`pyweatherfiles.epw_field_utils.calculate_atmos_pressure`,
+  the same shared implementation used by `HourlyEPWConverter`, §4.3) is used as a fallback.
 ```
 
 **Sky temperature → horizontal infrared radiation** (Stefan-Boltzmann law):
@@ -555,6 +556,12 @@ For each hour, with exact solar position evaluated at (hour − 0.5):
       DNI = RadDirectaHoriz / cos_zenith
       DNI = min(DNI, 1367 W/m²)      ← clipped to the solar constant (number of clips logged)
 ```
+> Note on the `hour − 0.5` midpoint: `.met`'s `Hour` column (1-24) marks the *end* of
+> each hourly interval (e.g. `Hour=10` → the `[9:00, 10:00)` interval), so its midpoint
+> is `Hour − 0.5`. `HourlyEPWConverter` (§4.3) instead evaluates at `hour + 0.5`, because
+> its source timestamps use `.hour` (0-23) marking the *start* of the interval. Both are
+> correct for their respective source convention — see the inline comments next to each
+> calculation in `pyweatherfiles/met_epw_converter.py` / `hourly_epw_converter.py`.
 
 After the calculation, the converter prints a **quality-control report**:
 - DNI statistics (minimum, 95th percentile, maximum; number of "low sun" hours and number of clips due to DNI > 1367 W/m²; number of negative direct-horizontal-radiation values detected in the input).
@@ -563,8 +570,8 @@ After the calculation, the converter prints a **quality-control report**:
 ### 5.3 Rest of the process (MET → EPW)
 
 - Forces a standard non-leap 8760-h `AnalysisPeriod`.
-- Applies the same *point-in-time* offset correction as in `HourlyEPWConverter` (§4.4, item 4).
-- If `replace_unused_with_missing=True`, neutralizes the same 15 unused EPW fields with their official missing-value codes (identical to §4.4, item 5).
+- Applies the shared *point-in-time* offset correction (`pyweatherfiles.epw_field_utils.set_epw_values`, the same function used by `HourlyEPWConverter`, §4.4 item 4).
+- If `replace_unused_with_missing=True`, neutralizes the same 15 unused EPW fields with their official missing-value codes via the shared `pyweatherfiles.epw_field_utils.neutralize_unused_epw_fields` (also used by `HourlyEPWConverter`, §4.4 item 5).
 - Saves a reproducible session via `save_function_session` (function-style API, not class-based) if `save_session=True` (default).
 
 ### 5.4 Reverse conversion: `convert_epw_to_met(epw_path, met_path)`

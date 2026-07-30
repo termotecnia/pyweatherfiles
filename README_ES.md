@@ -534,7 +534,8 @@ e = e_s(T_db) · RH/100                      [presión de vapor actual]
 P_atm = e · (1 + 0.62198 / W)
 
 → si P_atm ∉ [50 000, 110 000] Pa (valor no físico), se usa la fórmula
-  barométrica estándar por elevación (idéntica a la de §4.3) como respaldo.
+  barométrica estándar por elevación (`pyweatherfiles.epw_field_utils.calculate_atmos_pressure`,
+  la misma implementación compartida que usa `HourlyEPWConverter`, §4.3) como respaldo.
 ```
 
 **Temperatura de cielo → radiación infrarroja horizontal** (ley de Stefan-Boltzmann):
@@ -556,6 +557,13 @@ Para cada hora, con posición solar exacta evaluada en (hora − 0.5):
       DNI = RadDirectaHoriz / cos_zenith
       DNI = min(DNI, 1367 W/m²)      ← recorte a la constante solar (nº de recortes registrado)
 ```
+> Nota sobre el punto medio `hora − 0.5`: la columna `Hour` del `.met` (1-24) marca el
+> FIN de cada intervalo horario (p.ej. `Hour=10` → intervalo `[9:00, 10:00)`), por lo que
+> su punto medio es `Hour − 0.5`. `HourlyEPWConverter` (§4.3) evalúa en cambio en
+> `hora + 0.5`, porque sus timestamps de origen usan `.hour` (0-23) marcando el INICIO
+> del intervalo. Ambos son correctos para su convención de origen respectiva — ver los
+> comentarios junto a cada cálculo en `pyweatherfiles/met_epw_converter.py` /
+> `hourly_epw_converter.py`.
 
 Tras el cálculo, el conversor imprime un **informe de control de calidad**:
 - Estadísticos de DNI (mínimo, percentil 95, máximo; nº de horas de "sol bajo" y nº de recortes por DNI > 1367 W/m²; nº de valores de radiación directa horizontal negativa detectados en la entrada).
@@ -564,8 +572,8 @@ Tras el cálculo, el conversor imprime un **informe de control de calidad**:
 ### 5.3 Resto del proceso (MET → EPW)
 
 - Fuerza un `AnalysisPeriod` estándar no bisiesto de 8760 h.
-- Aplica la misma corrección de desfase *point-in-time* que en `HourlyEPWConverter` (§4.4, punto 4).
-- Si `replace_unused_with_missing=True`, neutraliza los mismos 15 campos EPW no usados con sus códigos oficiales de valor ausente (idéntico a §4.4, punto 5).
+- Aplica la corrección de desfase *point-in-time* compartida (`pyweatherfiles.epw_field_utils.set_epw_values`, la misma función que usa `HourlyEPWConverter`, §4.4 punto 4).
+- Si `replace_unused_with_missing=True`, neutraliza los mismos 15 campos EPW no usados con sus códigos oficiales de valor ausente mediante la función compartida `pyweatherfiles.epw_field_utils.neutralize_unused_epw_fields` (también usada por `HourlyEPWConverter`, §4.4 punto 5).
 - Guarda sesión reproducible vía `save_function_session` (API de función, no de clase) si `save_session=True` (por defecto).
 
 ### 5.4 Conversión inversa: `convert_epw_to_met(epw_path, met_path)`

@@ -57,6 +57,12 @@ import sys
 import contextlib
 import numpy as np
 from .session_manager import save_function_session
+from .epw_field_utils import (
+    calculate_atmos_pressure as _shared_calculate_atmos_pressure,
+    set_epw_values as _shared_set_epw_values,
+    get_epw_values as _shared_get_epw_values,
+    neutralize_unused_epw_fields,
+)
 
 
 try:
@@ -208,10 +214,10 @@ def _calculate_dew_point(temp_c, rh_percent):
 def _calculate_atmos_pressure(elevation_m):
     """Estimate the standard atmospheric pressure at a given elevation using
     the international barometric formula (ISA, constant lapse-rate model).
-
-    ``P(h) = P0 * (1 - L*h/T0) ** (g*M / (R*L))`` with the standard sea-level
-    constants ``P0=101325 Pa``, ``L=0.0065 K/m``, ``T0=288.15 K``,
-    ``g=9.80665 m/s2``, ``M=0.0289644 kg/mol``, ``R=8.31447 J/(mol*K)``.
+    Thin backward-compatible wrapper; the real (shared) implementation now
+    lives in :func:`~pyweatherfiles.epw_field_utils.calculate_atmos_pressure`,
+    also used by :mod:`~pyweatherfiles.hourly_epw_converter` (see
+    ``INFORME_REVISION_GENERAL.md`` §3.1/Fase 1).
 
     Args:
         elevation_m (float): Site elevation above sea level, in metres.
@@ -223,14 +229,7 @@ def _calculate_atmos_pressure(elevation_m):
         >>> round(_calculate_atmos_pressure(0), 0)
         101325.0
     """
-    p0 = 101325
-    L = 0.0065
-    T0 = 288.15
-    g = 9.80665
-    M = 0.0289644
-    R = 8.31447
-    pressure = p0 * (1 - (L * elevation_m) / T0) ** ((g * M) / (R * L))
-    return pressure
+    return _shared_calculate_atmos_pressure(elevation_m)
 
 
 def _calculate_sky_temperature(hir_radiation):
@@ -281,7 +280,11 @@ def _calculate_absolute_humidity(temp_c, rel_hum, pressure_pa):
 def _set_epw_values(epw_obj, field_name, new_vals):
     """
     Assign *new_vals* to a Ladybug ``EPW`` hourly field, compensating for
-    Ladybug's internal "point-in-time" index offset.
+    Ladybug's internal "point-in-time" index offset. Thin backward-compatible
+    wrapper; the real (shared) implementation now lives in
+    :func:`~pyweatherfiles.epw_field_utils.set_epw_values`, also used by
+    :mod:`~pyweatherfiles.hourly_epw_converter` (see
+    ``INFORME_REVISION_GENERAL.md`` §3.1/Fase 1).
 
     ``.met`` files index ``Hour=1`` as the first record (01:00), whereas
     Ladybug's *point-in-time* fields (e.g. dry-bulb temperature) expect index
@@ -301,12 +304,7 @@ def _set_epw_values(epw_obj, field_name, new_vals):
     Returns:
         None: The field is updated in place on *epw_obj*.
     """
-    field = getattr(epw_obj, field_name)
-    if field.header.data_type.point_in_time:
-        shifted = [new_vals[-1]] + list(new_vals[:-1])
-        field.values = tuple(shifted) if isinstance(field.values, tuple) else list(shifted)
-    else:
-        field.values = tuple(new_vals) if isinstance(field.values, tuple) else list(new_vals)
+    _shared_set_epw_values(epw_obj, field_name, new_vals)
 
 
 def _get_epw_values(epw_obj, field_name):
@@ -314,7 +312,9 @@ def _get_epw_values(epw_obj, field_name):
     Read hourly values from a Ladybug ``EPW`` field, compensating for the
     same "point-in-time" index offset described in :func:`_set_epw_values`,
     so that index 0 of the returned list corresponds to ``.met`` ``Hour=1``
-    (01:00) rather than Ladybug's internal Jan-1st-00:00 convention.
+    (01:00) rather than Ladybug's internal Jan-1st-00:00 convention. Thin
+    backward-compatible wrapper around
+    :func:`~pyweatherfiles.epw_field_utils.get_epw_values`.
 
     Args:
         epw_obj (ladybug.epw.EPW): The EPW object to read from.
@@ -325,12 +325,7 @@ def _get_epw_values(epw_obj, field_name):
         list: The hourly values (length 8760/8784), re-aligned so index 0
         corresponds to ``.met`` ``Hour=1``.
     """
-    field = getattr(epw_obj, field_name)
-    vals = list(field.values)
-    if field.header.data_type.point_in_time:
-        return vals[1:] + [vals[0]]
-    else:
-        return vals
+    return _shared_get_epw_values(epw_obj, field_name)
 
 
 # --- CONVERSIÓN MET -> EPW ---
@@ -539,6 +534,13 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
         ghi_values.append(ghi)
 
         # 2. Calcular theta_z preciso para el punto medio de la hora
+        # NOTA sobre el desfase -0.5 (ver también hourly_epw_converter.py, que
+        # usa +0.5): la columna `Hour` de los ficheros .met va de 1 a 24 y
+        # marca el FIN del intervalo horario (p.ej. Hour=10 -> intervalo
+        # [9:00, 10:00)), cuyo punto medio es Hour - 0.5. Los ficheros CSV/XLSX
+        # horarios usan en cambio `dt.hour` de 0 a 23 marcando el INICIO del
+        # intervalo, cuyo punto medio es hour + 0.5. Ambos son correctos para
+        # su convención de origen respectiva; no es una inconsistencia a corregir.
         calc_hour = float(h) - 0.5
         sun = sp.calculate_sun(month=int(m), day=int(d), hour=calc_hour)
         zenith_deg = 90.0 - sun.altitude
@@ -577,39 +579,9 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
 
     if replace_unused_with_missing:
         # Solo se incluyen las variables marcadas con 'N' (No usadas por EnergyPlus)
-        unused_fields_mapping = {
-            'extraterrestrial_horizontal_radiation': 9999,
-            'extraterrestrial_direct_normal_radiation': 9999,
-            'global_horizontal_illuminance': 999999,
-            'direct_normal_illuminance': 999999,
-            'diffuse_horizontal_illuminance': 999999,
-            'zenith_luminance': 9999,
-            'total_sky_cover': 99,
-            'opaque_sky_cover': 99,
-            'visibility': 9999,
-            'ceiling_height': 99999,
-            'precipitable_water': 999,
-            'aerosol_optical_depth': 0.999,
-            'days_since_last_snowfall': 99,
-            'albedo': 999,
-            'liquid_precipitation_quantity': 99
-        }
-        num_rows = len(df)
-        
-        for field_name, missing_val in unused_fields_mapping.items():
-            if hasattr(epw_data, field_name):
-                field_obj = getattr(epw_data, field_name)
-                replacement_list = [missing_val] * num_rows
-                
-                if hasattr(field_obj, 'header') and hasattr(field_obj, 'values'):
-                    # Si es una DataCollection de Ladybug
-                    _set_epw_values(epw_data, field_name, replacement_list)
-                else:
-                    # Si es una propiedad simple como list/tuple
-                    try:
-                        setattr(epw_data, field_name, tuple(replacement_list))
-                    except Exception:
-                        pass
+        # (mapa y lógica compartidos con hourly_epw_converter.py — ver
+        # pyweatherfiles.epw_field_utils.neutralize_unused_epw_fields)
+        neutralize_unused_epw_fields(epw_data, len(df))
 
     try:
         with suppress_stdout_stderr():

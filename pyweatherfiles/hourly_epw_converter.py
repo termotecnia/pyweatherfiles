@@ -65,6 +65,7 @@ import numpy as np
 import math
 import os
 from .session_manager import save_object_session
+from .epw_field_utils import calculate_atmos_pressure, set_epw_values, neutralize_unused_epw_fields
 
 try:
     from ladybug.epw import EPW
@@ -372,25 +373,26 @@ class HourlyEPWConverter:
         """Estimate the standard atmospheric pressure at :attr:`elev` using
         the international barometric formula (constant lapse-rate model),
         used as a fallback when :attr:`col_pres` is not present in the
-        source file.
+        source file. Thin backward-compatible wrapper; the real (shared)
+        implementation now lives in
+        :func:`~pyweatherfiles.epw_field_utils.calculate_atmos_pressure`,
+        also used by :mod:`~pyweatherfiles.met_epw_converter` (see
+        ``INFORME_REVISION_GENERAL.md`` §3.1/Fase 1).
 
         Returns:
             float: Estimated atmospheric pressure in Pascals.
         """
-        p0 = 101325
-        L = 0.0065
-        T0 = 288.15
-        g = 9.80665
-        M = 0.0289644
-        R = 8.31447
-        return p0 * (1 - (L * self.elev) / T0) ** ((g * M) / (R * L))
+        return calculate_atmos_pressure(self.elev)
 
     def _set_epw_values(self, epw_obj, field_name, new_vals):
         """
         Assign *new_vals* to a Ladybug ``EPW`` hourly field, compensating for
-        Ladybug's internal "point-in-time" index offset (see the identical
-        helper in :mod:`~pyweatherfiles.met_epw_converter` for a detailed
-        explanation of *why* this shift is necessary).
+        Ladybug's internal "point-in-time" index offset. Thin backward-compatible
+        wrapper kept for any external caller relying on this instance method;
+        the real (shared) implementation now lives in
+        :func:`~pyweatherfiles.epw_field_utils.set_epw_values`, also used by
+        :mod:`~pyweatherfiles.met_epw_converter` (see
+        ``INFORME_REVISION_GENERAL.md`` §3.1/Fase 1).
 
         Args:
             epw_obj (ladybug.epw.EPW): The EPW object being populated.
@@ -403,12 +405,7 @@ class HourlyEPWConverter:
         Returns:
             None: The field is updated in place on *epw_obj*.
         """
-        field = getattr(epw_obj, field_name)
-        if field.header.data_type.point_in_time:
-            shifted = [new_vals[-1]] + list(new_vals[:-1])
-            field.values = tuple(shifted) if isinstance(field.values, tuple) else list(shifted)
-        else:
-            field.values = tuple(new_vals) if isinstance(field.values, tuple) else list(new_vals)
+        set_epw_values(epw_obj, field_name, new_vals)
 
     def transform_to_epw(self, df_year, output_epw_path, base_epw_path=None):
         """
@@ -535,6 +532,14 @@ class HourlyEPWConverter:
                 dt = pd.to_datetime(dates[i])
                 m, d, h = dt.month, dt.day, dt.hour 
                 
+                # NOTE on the +0.5 offset (see also met_epw_converter.py, which
+                # uses -0.5): `dt.hour` here is 0-23 and marks the START of the
+                # hourly interval (e.g. h=10 -> the [10:00, 11:00) interval),
+                # so its midpoint is h + 0.5. `.met` files instead use an
+                # `Hour` column of 1-24 marking the END of the interval (e.g.
+                # Hour=10 -> the [9:00, 10:00) interval), whose midpoint is
+                # Hour - 0.5. Both are correct for their respective source
+                # convention; this is not an inconsistency to "fix".
                 calc_hour = float(h) + 0.5
                 if calc_hour >= 24.0:
                     calc_hour -= 24.0
@@ -572,41 +577,13 @@ class HourlyEPWConverter:
             self._set_epw_values(epw_data, 'horizontal_infrared_radiation_intensity', irh_vals)
 
         # Desactivación de variables obsoletas de EnergyPlus
-        unused_fields_mapping = {
-            'extraterrestrial_horizontal_radiation': 9999,
-            'extraterrestrial_direct_normal_radiation': 9999,
-            'global_horizontal_illuminance': 999999,
-            'direct_normal_illuminance': 999999,
-            'diffuse_horizontal_illuminance': 999999,
-            'zenith_luminance': 9999,
-            'total_sky_cover': 99,
-            'opaque_sky_cover': 99,
-            'visibility': 9999,
-            'ceiling_height': 99999,
-            'precipitable_water': 999,
-            'aerosol_optical_depth': 0.999,
-            'days_since_last_snowfall': 99,
-            'albedo': 999,
-            'liquid_precipitation_quantity': 99
-        }
-        
+        # (mapa y lógica compartidos con met_epw_converter.py — ver
+        # pyweatherfiles.epw_field_utils.neutralize_unused_epw_fields)
+        skip_fields = None
         if self.preserve_extra and self.col_cloud_cover in df_y.columns:
-            if 'total_sky_cover' in unused_fields_mapping:
-                del unused_fields_mapping['total_sky_cover']
+            skip_fields = {'total_sky_cover'}
 
-        num_rows = len(df_y)
-        for field_name, missing_val in unused_fields_mapping.items():
-            if hasattr(epw_data, field_name):
-                field_obj = getattr(epw_data, field_name)
-                replacement_list = [missing_val] * num_rows
-                
-                if hasattr(field_obj, 'header') and hasattr(field_obj, 'values'):
-                    self._set_epw_values(epw_data, field_name, replacement_list)
-                else:
-                    try:
-                        setattr(epw_data, field_name, tuple(replacement_list))
-                    except Exception:
-                        pass
+        neutralize_unused_epw_fields(epw_data, len(df_y), skip_fields=skip_fields)
 
         # Guardado del EPW en disco
         try:

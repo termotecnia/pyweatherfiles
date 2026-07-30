@@ -63,14 +63,16 @@ El propio `README.md` (§1.2, §2, §11) **sí** documenta correctamente todo es
 
 Esta sección responde directamente a la pregunta de si existen "ítems cuyas funciones se solapen". Se han encontrado **duplicaciones literales de lógica** (no solo solapamiento conceptual) entre `hourly_epw_converter.py` y `met_epw_converter.py`, ambos módulos "hoja" de conversión a EPW que evolucionaron en paralelo.
 
+> ✅ **Actualización (Fase 1 completada):** las 3 primeras duplicaciones de la tabla siguiente ya se han extraído a un módulo compartido, `pyweatherfiles/epw_field_utils.py` (`calculate_atmos_pressure`, `set_epw_values`/`get_epw_values`, `UNUSED_EPW_FIELDS`/`neutralize_unused_epw_fields`). Ambos convertidores lo usan ahora; se mantienen wrappers delgados de compatibilidad (`_calculate_atmos_pressure`, `_set_epw_values`, `_get_epw_values`) que delegan en él. Verificado con una prueba de regresión manual (generación real de un EPW desde `HourlyEPWConverter` y desde `convert_met_to_epw` sobre un `.met` sintético) — ver commit correspondiente en la rama `chore/general-review-improvements`. La 4ª fila (desfase `+0.5`/`-0.5`) se dejó documentada in-situ (no se unificó) porque, tras revisión, la diferencia es **correcta e intencional** (ver nota añadida en el código y en README §4.3/§5.2): responde a que los CSV/XLSX horarios indexan `hour` 0-23 como *inicio* del intervalo, mientras que `.met` indexa `Hour` 1-24 como *fin* del intervalo.
+
 ### 3.1 Duplicación literal de funciones físicas/EPW
 
 | Función/bloque | Ubicación A | Ubicación B | Naturaleza |
 |---|---|---|---|
-| **Presión atmosférica barométrica** | `hourly_epw_converter.py::HourlyEPWConverter._calculate_atmos_pressure` (L.371-386, método de instancia, usa `self.elev`) | `met_epw_converter.py::_calculate_atmos_pressure` (L.208-233, función libre, parámetro `elevation_m`) | **Fórmula idéntica** (constantes `p0=101325, L=0.0065, T0=288.15, g=9.80665, M=0.0289644, R=8.31447` repetidas literalmente en ambos sitios). |
-| **Corrección de offset *point-in-time* de Ladybug** | `hourly_epw_converter.py::HourlyEPWConverter._set_epw_values` (L.388-411) | `met_epw_converter.py::_set_epw_values` (L.281-309) | **Lógica idéntica** (`shifted = [new_vals[-1]] + list(new_vals[:-1])`). Además, `met_epw_converter.py` tiene también `_get_epw_values` (L.312-333, la operación inversa) que no existe en `hourly_epw_converter.py`, pese a que sería igual de útil ahí. |
-| **Mapa de 15 campos EPW "no usados por EnergyPlus"** | `hourly_epw_converter.py::transform_to_epw` (`unused_fields_mapping`, L.575-591) | `met_epw_converter.py::convert_met_to_epw` (`unused_fields_mapping`, L.580-596) | **Diccionario y bucle de aplicación prácticamente idénticos** (mismos 15 campos, mismos valores "missing": `9999`, `999999`, `99`, `0.999`, etc.). |
-| **Reconstrucción de radiación difusa/directa vía posición solar exacta** | `hourly_epw_converter.py` (cálculo de DHI desde GHI/DNI, `Sunpath`, evaluado en `hour + 0.5`, L.531-552) | `met_epw_converter.py` (cálculo de GHI/DNI desde componentes horizontales, `Sunpath`, evaluado en `hour - 0.5`, L.517-560) | **Mismo patrón** (zenith vía `Sunpath.calculate_sun`, `cos_zenith`, protección `cos_zenith <= 0.01`), aplicado en direcciones inversas. ⚠️ Nótese que el punto de evaluación horaria difiere (`+0.5` vs. `-0.5`) entre ambos módulos sin que quede documentado el motivo — **riesgo de inconsistencia silenciosa** si algún día deben unificarse. |
+| **Presión atmosférica barométrica** | `hourly_epw_converter.py::HourlyEPWConverter._calculate_atmos_pressure` (L.371-386, método de instancia, usa `self.elev`) | `met_epw_converter.py::_calculate_atmos_pressure` (L.208-233, función libre, parámetro `elevation_m`) | **Fórmula idéntica** (constantes `p0=101325, L=0.0065, T0=288.15, g=9.80665, M=0.0289644, R=8.31447` repetidas literalmente en ambos sitios). ✅ Resuelto: ambas delegan en `epw_field_utils.calculate_atmos_pressure`. |
+| **Corrección de offset *point-in-time* de Ladybug** | `hourly_epw_converter.py::HourlyEPWConverter._set_epw_values` (L.388-411) | `met_epw_converter.py::_set_epw_values` (L.281-309) | **Lógica idéntica** (`shifted = [new_vals[-1]] + list(new_vals[:-1])`). Además, `met_epw_converter.py` tiene también `_get_epw_values` (L.312-333, la operación inversa) que no existe en `hourly_epw_converter.py`, pese a que sería igual de útil ahí. ✅ Resuelto: ambas delegan en `epw_field_utils.set_epw_values`/`get_epw_values`. |
+| **Mapa de 15 campos EPW "no usados por EnergyPlus"** | `hourly_epw_converter.py::transform_to_epw` (`unused_fields_mapping`, L.575-591) | `met_epw_converter.py::convert_met_to_epw` (`unused_fields_mapping`, L.580-596) | **Diccionario y bucle de aplicación prácticamente idénticos** (mismos 15 campos, mismos valores "missing": `9999`, `999999`, `99`, `0.999`, etc.). ✅ Resuelto: ambas usan `epw_field_utils.UNUSED_EPW_FIELDS`/`neutralize_unused_epw_fields`. |
+| **Reconstrucción de radiación difusa/directa vía posición solar exacta** | `hourly_epw_converter.py` (cálculo de DHI desde GHI/DNI, `Sunpath`, evaluado en `hour + 0.5`, L.531-552) | `met_epw_converter.py` (cálculo de GHI/DNI desde componentes horizontales, `Sunpath`, evaluado en `hour - 0.5`, L.517-560) | **Mismo patrón** (zenith vía `Sunpath.calculate_sun`, `cos_zenith`, protección `cos_zenith <= 0.01`), aplicado en direcciones inversas. ✅ Aclarado (no unificado): el desfase `+0.5`/`-0.5` es correcto para la convención horaria de cada formato de origen (ver comentarios añadidos en ambos módulos). |
 
 ### 3.2 Familia de fórmulas psicrométricas dispersas (relacionadas, no idénticas)
 
@@ -171,18 +173,18 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 | 0.2 | Eliminar la ruta absoluta hardcodeada (`sys.path.extend([...])`) y el bloque de código comentado muerto en `generating epws seville.py`. | `generating epws seville.py` |
 | 0.3 | Añadir `pvlib`, `tabulate`, `besos`, `eppy`, `accim` como *extras* opcionales en `pyproject.toml` (p. ej. `climate`, `energyplus`) y proteger sus imports en `climate_processor.py`/`epw_comparator.py` con `try/except ImportError` (igual que ya se hace con `ladybug-core`). | `pyproject.toml`, `climate_processor.py`, `epw_comparator.py` |
 
-### Fase 1 — Eliminar la duplicación crítica EPW/MET (esfuerzo: 2-4 días)
+### Fase 1 — Eliminar la duplicación crítica EPW/MET (esfuerzo: 2-4 días) — ✅ COMPLETADA
 
-1. Crear un nuevo módulo interno, p. ej. `pyweatherfiles/_epw_shared.py` (o ampliar `epw_utils.py`), con:
-   - `calculate_atmos_pressure(elevation_m)` (fórmula barométrica única).
-   - `set_epw_values(epw_obj, field_name, new_vals)` / `get_epw_values(epw_obj, field_name)` (compensación de offset *point-in-time*).
-   - `UNUSED_EPW_FIELDS: dict` (los 15 campos con sus valores "missing" oficiales) + una función `neutralize_unused_epw_fields(epw_obj, n_rows, preserve=None)`.
-   - Opcionalmente, `reconstruct_dhi_from_ghi_dni(...)` / `reconstruct_dni_from_horizontal(...)` parametrizando el desfase horario (`+0.5`/`-0.5`) explícitamente en vez de hardcodearlo en cada sitio.
-2. Refactorizar `hourly_epw_converter.py` y `met_epw_converter.py` para importar y usar estas funciones, eliminando las copias locales.
-3. **Antes de fusionar**, capturar un *snapshot* de salida (un EPW generado con cada convertidor, sobre datos de prueba pequeños) para poder comparar byte a byte que el refactor no altera el resultado (ver Fase 2 para convertir esto en un test real).
-4. Documentar explícitamente en el docstring compartido *por qué* difiere el punto de evaluación horaria entre ambos flujos de conversión (o unificarlo si la diferencia no está justificada).
+1. [x] Crear un nuevo módulo interno, `pyweatherfiles/epw_field_utils.py`, con:
+   - [x] `calculate_atmos_pressure(elevation_m)` (fórmula barométrica única).
+   - [x] `set_epw_values(epw_obj, field_name, new_vals)` / `get_epw_values(epw_obj, field_name)` (compensación de offset *point-in-time*).
+   - [x] `UNUSED_EPW_FIELDS: dict` (los 15 campos con sus valores "missing" oficiales) + `neutralize_unused_epw_fields(epw_obj, num_rows, skip_fields=None)`.
+   - [ ] No se extrajo un helper genérico de reconstrucción DHI/DNI vía `Sunpath`: tras revisar el desfase `+0.5`/`-0.5`, se concluyó que responde a una diferencia real de convención horaria entre formatos de origen (ver punto 4), por lo que se dejó la lógica en cada módulo con un comentario explicativo cruzado, en vez de forzar una abstracción común que ocultaría esa diferencia.
+2. [x] Refactorizar `hourly_epw_converter.py` y `met_epw_converter.py` para usar `epw_field_utils`, manteniendo wrappers delgados de compatibilidad (`_calculate_atmos_pressure`, `_set_epw_values`, `_get_epw_values`) que delegan en el módulo compartido.
+3. [x] Verificado mediante prueba de regresión manual (no automatizada — pendiente de la Fase 2): generación real de un EPW con `HourlyEPWConverter` sobre el dataset de Sevilla del repo, y de otro con `convert_met_to_epw` sobre un `.met` sintético de 8760 h; se confirmaron valores de temperatura/presión/DHI/GHI razonables y la correcta neutralización de los 15 campos no usados (p. ej. `global_horizontal_illuminance == 999999`).
+4. [x] Documentado in-situ (comentarios en ambos módulos + README §4.3/§5.2) *por qué* difiere el punto de evaluación horaria: los CSV/XLSX horarios usan `hour` 0-23 como inicio de intervalo (`hour + 0.5`), mientras que `.met` usa `Hour` 1-24 como fin de intervalo (`Hour - 0.5`). No se unificó porque ambos son correctos para su convención respectiva.
 
-*(Opcional, mismo esfuerzo/impacto medio):* extraer un módulo `_psychrometrics.py` con las variantes de Magnus usadas en `hourly_epw_converter.py`, `met_epw_converter.py` y `climate_processor.py`, decidiendo un único juego de constantes salvo que exista una razón documentada para mantener variantes.
+*(Pendiente, no abordado en esta pasada — mismo esfuerzo/impacto medio):* extraer un módulo `_psychrometrics.py` con las variantes de Magnus usadas en `hourly_epw_converter.py`, `met_epw_converter.py` y `climate_processor.py` (§3.2), decidiendo un único juego de constantes salvo que exista una razón documentada para mantener variantes.
 
 ### Fase 2 — Tests automatizados (esfuerzo: 1-2 semanas, la de mayor prioridad estructural)
 
@@ -223,15 +225,15 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
 
 ## 7. Resumen de priorización
 
-| Prioridad | Fase | Motivo |
-|---|---|---|
-| 1 | Fase 0 | Coste mínimo, corrige riesgos inmediatos de documentación/paquetado antes de seguir tocando código. |
-| 2 | Fase 2 (tests) | Sin red de pruebas, cualquier refactor posterior (incluida la Fase 1) es más arriesgado de lo necesario. Se recomienda adelantar al menos el "Nivel 1" de la Fase 2 antes o en paralelo con la Fase 1. |
-| 3 | Fase 1 | Elimina la duplicación de mayor severidad detectada (lógica EPW/MET), con alcance acotado y claramente delimitado. |
-| 4 | Fase 3 | Consolida el beneficio de la Fase 2 impidiendo regresiones futuras. |
-| 5 | Fase 4 | Mejora de diseño de valor medio, no urgente. |
-| 6 | Fase 5 | Mayor beneficio a largo plazo para mantenibilidad, pero mayor riesgo — condicionada a tener tests. |
-| Continua | Fase 6 | Mejora incremental sin bloquear el resto del roadmap (`TODO.md` ya cubre documentación/PyPI). |
+| Prioridad | Fase | Estado | Motivo |
+|---|---|---|---|
+| 1 | Fase 0 | ✅ Completada (rama `chore/general-review-improvements`) | Coste mínimo, corrige riesgos inmediatos de documentación/paquetado antes de seguir tocando código. |
+| 2 | Fase 2 (tests) | ⬜ Pendiente | Sin red de pruebas, cualquier refactor posterior (incluida la Fase 1) es más arriesgado de lo necesario. Se recomienda adelantar al menos el "Nivel 1" de la Fase 2 antes o en paralelo con la Fase 1. Nota: la Fase 1 ya se ejecutó igualmente, verificada solo con pruebas manuales de regresión (ver §6 Fase 1, punto 3) a falta de la suite automatizada. |
+| 3 | Fase 1 | ✅ Completada (misma rama), verificación manual | Elimina la duplicación de mayor severidad detectada (lógica EPW/MET), con alcance acotado y claramente delimitado. |
+| 4 | Fase 3 | ⬜ Pendiente | Consolida el beneficio de la Fase 2 impidiendo regresiones futuras. |
+| 5 | Fase 4 | ⬜ Pendiente | Mejora de diseño de valor medio, no urgente. |
+| 6 | Fase 5 | ⬜ Pendiente | Mayor beneficio a largo plazo para mantenibilidad, pero mayor riesgo — condicionada a tener tests. |
+| Continua | Fase 6 | ⬜ Pendiente | Mejora incremental sin bloquear el resto del roadmap (`TODO.md` ya cubre documentación/PyPI). |
 
 Este plan es complementario, no sustitutivo, del `TODO.md`/`TODO_ES.md` ya existente (centrado en documentación Sphinx y publicación en PyPI): se recomienda ejecutar como mínimo la **Fase 0** y el **Nivel 1 de la Fase 2** antes de completar la tarea 2 de `TODO.md` ("Publicar en PyPI"), para no publicar con dependencias mal declaradas ni con cero cobertura de tests.
 
