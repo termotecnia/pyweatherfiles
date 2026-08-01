@@ -231,9 +231,35 @@ Plan organizado en fases incrementales, ordenadas por relación esfuerzo/impacto
       2. `degree_hours/_helpers.WEEKDAILY_FIELD` (el mapa `Python weekday() → índice de campo` usado para indexar los `fieldvalues` en bruto de `SCHEDULE:WEEK:DAILY`) asumía el mismo desfase de un campo (`{6: 1, 0: 2, ...}`, es decir "domingo → índice 1"), cuando el índice real de domingo (tras tipo de objeto + nombre) es 2. Esto hacía que, tras corregir (1), cada día de la semana resolviera el perfil del día *anterior* de `SCHEDULE:WEEK:DAILY` (p. ej. lunes resolvía por error el perfil de disponibilidad de domingo). Corregido a `{6: 2, 0: 3, 1: 4, 2: 5, 3: 6, 4: 7, 5: 8}` (y su valor de reserva por defecto, de 1 a 2). Ajustado en consecuencia el test ya existente que fijaba el rango de valores esperado de esta constante (`tests/test_degree_hours_helpers.py::TestModuleConstants::test_weekdaily_field_has_one_entry_per_python_weekday`).
     - **Estado real tras esta pasada: 410/410 tests en verde** (378 previos + 32 nuevos). Cobertura total del proyecto: 86% → 90%. `degree_hours/calculator.py` pasa de 59% a 93% (el resto son *imports* opcionales protegidos por `try/except`, un puñado de `except Exception` genéricos internos de bajo interés — p. ej. un atributo de ladybug que lanza excepción al leerse —, y el `ImportError` de `matplotlib` en `plot()`, de imposible/indeseable simular sin desinstalar la dependencia).
 
-**Estado real tras esta pasada:** 37/37 tests en verde (`python -m pytest tests/`). Cobertura: módulo `epw_field_utils.py` (nuevo, Fase 1) y las funciones físicas puras de `met_epw_converter.py`/`hourly_epw_converter.py`. **Sin cubrir todavía:** `tmy.py` (el módulo más grande y crítico), `degree_hours.py`, `epw_trend_analyzer.py`, `climate_processor.py`, `epw_comparator.py`, `session_manager.py`.
+### Trabajo pendiente para una futura sesión (Fase 2, sin urgencia)
 
-> Nota (tras Fase 5/6): la lista de "sin cubrir todavía" de arriba quedó muy desactualizada — ver los puntos 7-16 justo arriba para el estado real y más reciente. Cobertura por módulo restante con mayor hueco tras esta pasada (de mayor a menor): `tmy/_proximity.py` 70%, `tmy/_core.py` 74%, `tmy/_assembly_smoothing.py` 80%, `epw_trend_analyzer/_core.py` 80%, `epw_comparator.py` 82%, `tmy/_compat.py` 82% — candidatos naturales para continuar esta fase en el futuro, sin urgencia (todos tienen ya al menos cobertura indirecta vía los smoke tests end-to-end de sus respectivos paquetes). Cobertura total del proyecto: 90%.
+Estado tras el punto 16: **410/410 tests en verde, cobertura total del proyecto 90%** (4.648 *statements*, 447 sin cubrir — `python -m pytest tests/ --cov=pyweatherfiles --cov-report=term-missing`). Todos los módulos con cobertura crítica (<60%) de la revisión original ya están resueltos. Los siguientes son los que quedan con mayor margen de mejora, ordenados de menor a mayor cobertura — **ninguno es urgente**, todos tienen ya cobertura indirecta vía los smoke tests end-to-end de sus respectivos paquetes:
+
+| Módulo | Cobertura | *Statements* sin cubrir (líneas, snapshot de esta sesión) |
+|---|---|---|
+| `tmy/_proximity.py` | 70% (129 stmts, 39 sin cubrir) | 29, 33-34, 38, 43-72, 77, 91, 101-105, 129-137, 145-146, 167-173 |
+| `tmy/_core.py` | 74% (142 stmts, 37 sin cubrir) | 249, 255, 264, 267, 274, 283, 312, 442-443, 452-453, 462-483, 493, 501-509 |
+| `tmy/_assembly_smoothing.py` | 80% (146 stmts, 29 sin cubrir) | 47, 50-51, 58, 73-76, 106, 112, 142, 147-149, 154-157, 173-174, 202-203, 256, 304-313 |
+| `epw_trend_analyzer/_core.py` | 80% (123 stmts, 24 sin cubrir) | 172-187, 204-206, 227-236, 422 |
+| `epw_comparator.py` | 82% (160 stmts, 29 sin cubrir) | 48-49, 57-58, 87-89, 100-101, 104-105, 168-169, 210-211, 257-259, 280-281, 324-325, 414-416, 419, 428, 452-453 |
+| `tmy/_compat.py` | 82% (56 stmts, 10 sin cubrir) | 41, 54, 60, 64, 70, 74, 80, 84, 94, 126 |
+| `tmy/_persistence.py` | 85% (222 stmts, 34 sin cubrir) | 70-71, 220-222, 292-299, 314-316, 379-393, 407-409, 485-494 |
+| `epw_trend_analyzer/_config.py` | 87% (53 stmts, 7 sin cubrir) | 79, 81, 83, 85, 87, 188, 190 |
+| `epw_trend_analyzer/_report.py` | 88% (40 stmts, 5 sin cubrir) | 139-144 |
+| `epw_field_utils.py` | 89% (36 stmts, 4 sin cubrir) | 182-185 |
+| `tmy/_plotting.py` | 89% (624 stmts, 66 sin cubrir) | ver punto 13; huecos residuales menores |
+| `tmy/_fs_selection.py` | 90% (126 stmts, 12 sin cubrir) | 28-31, 185, 189-191, 206-210 |
+
+Notas orientativas para retomar (huecos ya localizados con `--cov-report=term-missing`, tests aún **no** diseñados):
+
+- **`tmy/_proximity.py`** (Step 3 Sandia — ranking de proximidad): el bloque `43-72` es previsiblemente el grueso de `sandia_step_3_proximity_ranking()` para algún `normalization_method` no cubierto por los smoke tests existentes (que usan sobre todo `'std'`); candidatos claros: `'long_term_mean'`, `'range'` y `'weighted'` (con sus 4 pesos `t_mean`/`t_median`/`ghi_mean`/`ghi_median` y la validación de que sumen 1.0 — ver `AGENTS.md`), más el alias deprecado `'sawaqed'` → `'weighted'`.
+- **`tmy/_core.py`**: `442-483`/`493`/`501-509` es candidato a `export_tmy()` (relectura del EPW exportado) y a ramas de `__init__`/`generate_tmy()` con combinaciones de parámetros no cubiertas (p. ej. `data_frequency='daily'` de extremo a extremo, ya señalado en puntos anteriores como "no perseguido").
+- **`tmy/_assembly_smoothing.py`** (Steps 6-7): huecos dispersos en `sandia_step_6_assemble_tmy`/`sandia_step_7_smooth_junctions`; probablemente ramas sin `df_hourly`/`hourly_file_path` (suavizado horario omitido — comportamiento documentado en `AGENTS.md`) y algún caso de un único *junction*.
+- **`epw_trend_analyzer/_core.py`**: `172-187`/`204-206`/`227-236` son candidatos a `from_dict`/`from_json`/`from_yaml` (constructores alternativos, no ejercitados por el smoke test de Fase 5, que solo usa el constructor normal) y a ramas de error de `run()`/`get_results()`/`to_json()`.
+- **`epw_comparator.py`**: huecos ya identificados en la Fase 2 punto 7 como ramas de manejo de errores (archivo inexistente en alguna de las 4 funciones públicas, columnas ausentes) — deliberadamente no perseguidos tras arreglar los 3 bugs de producción de esa pasada; siguen siendo exactamente los mismos.
+- **`tmy/_compat.py`**: alias `step_1_*`…`step_4_*`/propiedades `validation_st2_*`/`validation_st4_*` deprecados que **no** se ejercitan todavía en `tests/test_tmy_package.py`/`tests/test_tmy_plotting.py` (que ya cubren varios, no todos) — probablemente el candidato más simple y rápido de esta lista, buen punto de entrada para retomar.
+
+Este trabajo es continuación directa de la Fase 2 (§6), no bloquea ninguna otra fase, y puede abordarse módulo a módulo con el mismo patrón usado en los puntos 7-16 (*fixtures* sintéticas deterministas, EPW/IDF generados en el propio archivo de test, verificación con `pytest --cov=pyweatherfiles --cov-report=term-missing`, y commit por módulo).
 
 ### Fase 3 — Integración continua (esfuerzo: 2-3 días, depende de la Fase 2) — ✅ COMPLETADA
 
