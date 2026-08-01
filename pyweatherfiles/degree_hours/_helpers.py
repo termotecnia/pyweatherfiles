@@ -36,9 +36,15 @@ EP_DAYTYPE_WEEKDAYS: Dict[str, List[int]] = {
     'alldays':   [0, 1, 2, 3, 4, 5, 6],
 }
 
-# SCHEDULE:WEEK:DAILY field index for each Python weekday()
-# Fields after Name: [Sun, Mon, Tue, Wed, Thu, Fri, Sat, Holiday, SDD, WDD]
-WEEKDAILY_FIELD: Dict[int, int] = {6: 1, 0: 2, 1: 3, 2: 4, 3: 5, 4: 6, 5: 7}
+# SCHEDULE:WEEK:DAILY field index for each Python weekday(), as an index into
+# eppy's raw fieldvalues list — which always starts with the object type
+# (fieldvalues[0] == 'Schedule:Week:Daily'), then Name (1), then
+# [Sun(2), Mon(3), Tue(4), Wed(5), Thu(6), Fri(7), Sat(8), Holiday, SDD, WDD].
+# (Bug fixed here: this used to be {6: 1, 0: 2, ...}, i.e. off by one — it
+# assumed fieldvalues[0] was already the Name, not the object type. Never
+# previously exercised by any real IDF in this repo, which only uses
+# SCHEDULE:COMPACT, never SCHEDULE:WEEK:DAILY.)
+WEEKDAILY_FIELD: Dict[int, int] = {6: 2, 0: 3, 1: 4, 2: 5, 3: 6, 4: 7, 5: 8}
 
 
 # ---------------------------------------------------------------------------

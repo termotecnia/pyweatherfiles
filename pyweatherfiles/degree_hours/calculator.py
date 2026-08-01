@@ -414,9 +414,16 @@ class DegreeHoursCalculator:
         if target is None:
             return None
 
-        # Fields after Name (0) and TypeLimits (1) are groups of 5:
-        # [WeekScheduleName, StartMonth, StartDay, EndMonth, EndDay, ...]
-        fv = [str(f).strip() for f in target.fieldvalues[2:] if str(f).strip()]
+        # eppy's fieldvalues[0] is always the object type (e.g. 'Schedule:Year'),
+        # fieldvalues[1] is the Name, fieldvalues[2] is the Schedule Type
+        # Limits Name — so the actual data fields (in groups of 5:
+        # [WeekScheduleName, StartMonth, StartDay, EndMonth, EndDay, ...])
+        # only start at index 3. (Bug fixed here: this used to slice at [2:],
+        # which left the Schedule Type Limits Name as a bogus first "week
+        # name" and made every date-range group fail its int() conversion,
+        # silently producing an all-NaN series. Never previously exercised
+        # by any real IDF in this repo, which only uses SCHEDULE:COMPACT.)
+        fv = [str(f).strip() for f in target.fieldvalues[3:] if str(f).strip()]
         idx    = self.temperatures.index
         values = np.full(len(idx), np.nan)
 
@@ -442,15 +449,16 @@ class DegreeHoursCalculator:
                 i += 5
                 continue
 
-            # SCHEDULE:WEEK:DAILY field order (after Name):
-            # [Sun, Mon, Tue, Wed, Thu, Fri, Sat, Holiday, SummerDD, WinterDD]
+            # SCHEDULE:WEEK:DAILY field order in eppy's raw fieldvalues
+            # (index 0 is the object type, index 1 is the Name):
+            # [type, Name, Sun, Mon, Tue, Wed, Thu, Fri, Sat, Holiday, SummerDD, WinterDD]
             week_fv = [str(f).strip() for f in week_obj.fieldvalues]
 
             for pos, ts in enumerate(idx):
                 if not (start_d <= ts.date() <= end_d):
                     continue
                 # Map Python weekday() to the corresponding day-schedule field index
-                fi = _WEEKDAILY_FIELD.get(ts.weekday(), 1)  # default to Sunday (1) if unknown
+                fi = _WEEKDAILY_FIELD.get(ts.weekday(), 2)  # default to Sunday (2) if unknown
                 if fi < len(week_fv):
                     profile = self._parse_day_schedule(idf, week_fv[fi])
                     if profile is not None:

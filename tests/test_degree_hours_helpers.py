@@ -120,6 +120,7 @@ class TestModuleConstants:
 
     def test_weekdaily_field_has_one_entry_per_python_weekday(self):
         assert set(WEEKDAILY_FIELD.keys()) == set(range(7))
-        # Field indices 1-7 correspond to Sun..Sat in SCHEDULE:WEEK:DAILY.
-        assert set(WEEKDAILY_FIELD.values()) == set(range(1, 8))
+        # Field indices 2-8 correspond to Sun..Sat as raw eppy fieldvalues
+        # positions in SCHEDULE:WEEK:DAILY (index 0 = object type, 1 = Name).
+        assert set(WEEKDAILY_FIELD.values()) == set(range(2, 9))
 
