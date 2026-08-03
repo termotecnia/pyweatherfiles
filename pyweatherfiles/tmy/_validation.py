@@ -281,7 +281,7 @@ class _ValidationMixin:
                     'GHI_sum'
                 ])
 
-        print(f"\\nExpected Variables: {expected_internal}")
+        print(f"\nExpected Variables: {expected_internal}")
 
         # Simple heuristic check
         missing_exact = [col for col in expected_internal if col not in columns]
@@ -300,10 +300,10 @@ class _ValidationMixin:
              print("WARNING: 'time' column missing. Please map a column to 'time' (e.g. 'Fecha', 'Date').")
 
         if not missing_exact and time_ok:
-            print("\\nResult: All expected columns found exactly and time format is valid!")
+            print("\nResult: All expected columns found exactly and time format is valid!")
         else:
             if missing_exact:
-                print(f"\\nResult: Missing exact matches for: {missing_exact}")
+                print(f"\nResult: Missing exact matches for: {missing_exact}")
                 print("You likely need to provide or update a `column_mapping` dictionary.")
                 print("Example structure:")
                 print("column_mapping = {")
