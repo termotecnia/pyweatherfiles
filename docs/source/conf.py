@@ -43,6 +43,15 @@ directory at build time (see :func:`_copy_tutorial_notebook` below) and
 rendered in place with ``myst-nb``, using the outputs already stored in the
 notebook (``nb_execution_mode = "off"``) so the docs build never needs to
 re-run the full TMY/degree-hours/trend pipeline.
+
+A second, more extensive case-study notebook,
+``jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb`` (Seville and
+Madrid, real data), lives directly under this ``source/`` directory instead
+-- together with its own input data (``jupyter_notebooks/data/``) -- since
+that notebook and its data are meant to be cloned and run standalone from
+GitHub, not just rendered here (see ``docs/source/tutorial_case_study.md``
+and the top-level ``.gitignore`` for the version-control rationale). No
+build-time copy step is needed for it.
 """
 
 from __future__ import annotations

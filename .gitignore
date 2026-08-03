@@ -42,6 +42,16 @@ onedrive_backup/
 # Tutorial notebook generated outputs
 examples/tutorial_output/
 
+# Case-study tutorial notebook (docs/source/jupyter_notebooks/): notebook +
+# input data are deliberately version-controlled (so it can be cloned from
+# GitHub and executed standalone, and rendered on Read the Docs), unlike the
+# rest of the repository's *.xlsx datasets. Generated outputs (EPW/CSV/XLSX
+# exports, .pkl/.json sessions) are not tracked.
+!docs/source/jupyter_notebooks/data/*.xlsx
+docs/source/jupyter_notebooks/case_study_output/
+docs/source/jupyter_notebooks/data/*.pkl
+docs/source/jupyter_notebooks/data/*.json
+
 # Sphinx documentation build output (final HTML, easily regenerated, not tracked)
 docs/build/
 docs/source/.jupyter_cache/

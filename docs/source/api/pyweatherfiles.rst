@@ -1,6 +1,16 @@
 pyweatherfiles package
 ======================
 
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   pyweatherfiles.degree_hours
+   pyweatherfiles.epw_trend_analyzer
+   pyweatherfiles.tmy
+
 Submodules
 ----------
 
@@ -8,14 +18,6 @@ pyweatherfiles.climate\_processor module
 ----------------------------------------
 
 .. automodule:: pyweatherfiles.climate_processor
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-pyweatherfiles.degree\_hours module
------------------------------------
-
-.. automodule:: pyweatherfiles.degree_hours
    :members:
    :show-inheritance:
    :undoc-members:
@@ -28,10 +30,10 @@ pyweatherfiles.epw\_comparator module
    :show-inheritance:
    :undoc-members:
 
-pyweatherfiles.epw\_trend\_analyzer module
-------------------------------------------
+pyweatherfiles.epw\_field\_utils module
+---------------------------------------
 
-.. automodule:: pyweatherfiles.epw_trend_analyzer
+.. automodule:: pyweatherfiles.epw_field_utils
    :members:
    :show-inheritance:
    :undoc-members:
@@ -68,10 +70,10 @@ pyweatherfiles.session\_manager module
    :show-inheritance:
    :undoc-members:
 
-pyweatherfiles.tmy module
--------------------------
+pyweatherfiles.trend\_stats module
+----------------------------------
 
-.. automodule:: pyweatherfiles.tmy
+.. automodule:: pyweatherfiles.trend_stats
    :members:
    :show-inheritance:
    :undoc-members:
