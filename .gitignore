@@ -30,6 +30,10 @@ ENV/
 .idea/
 .vscode/
 
+# Obsidian vault: local UI, plugins, cache and device-specific settings.
+# Project notes remain versionable; see sync_branch.bat for clean protection.
+.obsidian/
+
 # Project specific
 *.xlsx
 *.csv
