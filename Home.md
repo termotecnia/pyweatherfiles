@@ -18,6 +18,7 @@ Este es el punto de entrada del vault de Obsidian para el proyecto. Las notas pr
 - [[docs/source/installation|Instalación y construcción de documentación]]
 - [[docs/source/tutorial_case_study|Caso de estudio: Sevilla y Madrid]]
 - [[notes/README|Cómo usar este vault]]
+- [[notes/Tutorial_Obsidian|Tutorial de Obsidian para este proyecto]]
 
 ## Trabajo activo
 

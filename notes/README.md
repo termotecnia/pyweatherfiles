@@ -9,6 +9,8 @@ tags:
 
 # Cómo usar el vault de `pyweatherfiles`
 
+Para instrucciones paso a paso sobre Obsidian, consulta [[Tutorial_Obsidian|el tutorial completo]].
+
 ## Propósito
 
 Este vault organiza el conocimiento de trabajo alrededor del código sin sustituir la documentación oficial:
