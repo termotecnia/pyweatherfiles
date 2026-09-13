@@ -1,47 +1,47 @@
 ---
 aliases:
-  - Guía del vault
-  - Uso de Obsidian
+  - Vault guide
+  - Using Obsidian
 tags:
   - pyweatherfiles
-  - documentacion
+  - documentation
 ---
 
-# Cómo usar el vault de `pyweatherfiles`
+# How to use the `pyweatherfiles` vault
 
-Para instrucciones paso a paso sobre Obsidian, consulta [[Tutorial_Obsidian|el tutorial completo]].
+For step-by-step Obsidian instructions, see [[obsidian-tutorial|the complete tutorial]].
 
-## Propósito
+## Purpose
 
-Este vault organiza el conocimiento de trabajo alrededor del código sin sustituir la documentación oficial:
+This vault organizes working knowledge around the code without replacing the official documentation:
 
-- `README.md` y `README_ES.md` son la referencia técnica autoritativa.
-- `TODO.md` y `TODO_ES.md` contienen el seguimiento oficial de tareas.
-- `docs/source/` alimenta la documentación Sphinx/MyST publicada.
-- `notes/` reúne contexto, decisiones y seguimiento que complementan esas fuentes.
+- `README.md` and `README_ES.md` are the authoritative technical reference.
+- `TODO.md` and `TODO_ES.md` contain the official task tracking.
+- `docs/source/` supplies the published Sphinx/MyST documentation.
+- `notes/` gathers context, decisions, and tracking that complement those sources.
 
-## Flujo recomendado
+## Recommended workflow
 
-1. Abre [[Home|Inicio]] al comenzar una sesión.
-2. Registra el avance y los comandos o resultados relevantes en [[bitacora|Bitácora]].
-3. Cuando una elección afecte al diseño, consérvala en [[decisiones|Registro de decisiones]].
-4. Mantén las incertidumbres investigables en [[preguntas|Preguntas abiertas]].
-5. Añade fuentes, datasets y lecturas a [[referencias|Referencias y recursos]].
-6. Al cerrar una tarea, actualiza el `TODO` canónico correspondiente si procede.
+1. Open [[Home]] when starting a session.
+2. Record progress and relevant commands or results in [[work-log|the work log]].
+3. When a choice affects the design, record it in [[decisions|the decision log]].
+4. Keep researchable uncertainties in [[questions|open questions]].
+5. Add sources, datasets, and reading material to [[references|references and resources]].
+6. When closing a task, update the corresponding canonical `TODO` when appropriate.
 
-## Convenciones de las notas
+## Note conventions
 
-- Enlaza archivos internos con enlaces wiki; usa una etiqueta descriptiva cuando ayude a la lectura: `[[README_ES|referencia técnica]]`.
-- Usa las etiquetas existentes de forma breve: `#tmy`, `#epw`, `#tendencias`, `#documentacion` y `#decision`.
-- No copies secciones extensas de los README o de Sphinx: enlaza a su fuente canónica.
-- Las plantillas de `plantillas/` proporcionan la estructura mínima para notas de sesión y decisiones.
+- Link internal files using wiki links; use a descriptive display text when it improves readability: `[[../README|technical reference]]`.
+- Use existing tags sparingly: `#tmy`, `#epw`, `#trends`, `#documentation`, and `#decision`.
+- Do not copy long sections from the READMEs or Sphinx; link to their canonical source.
+- Templates in `templates/` provide the minimum structure for session notes and decisions.
 
-## Git y seguridad
+## Git and safety
 
-- El contenido de `notes/` **puede versionarse**: añade a Git únicamente las notas que deban compartirse.
-- `.obsidian/` contiene configuración de interfaz, complementos y estado de esta instalación; está ignorado deliberadamente.
-- `sync_branch.bat` protege `Home.md` y `notes/` de su limpieza `git clean -fd`, incluso si aún no los has añadido a Git.
-- Los adjuntos creados desde Obsidian se guardan en `notes/adjuntos/`. Revisa su tamaño y licencia antes de versionarlos.
+- Content in `notes/` **can be versioned**: add only notes that should be shared to Git.
+- `.obsidian/` contains the interface configuration, plugins, and state for this installation; it is deliberately ignored.
+- `sync_branch.bat` protects `Home.md` and `notes/` from its `git clean -fd`, even when you have not yet added them to Git.
+- Attachments created from Obsidian are saved in `notes/attachments/`. Review their size and license before versioning them.
 
 > [!note]
-> Para usar este repositorio como vault, selecciona **Open folder as vault** en Obsidian y abre la raíz `D:\Python\pyweatherfiles`.
+> To use this repository as a vault, select **Open folder as vault** in Obsidian and open the root folder at `D:\Python\pyweatherfiles`.

@@ -1,16 +1,16 @@
-# Instrucciones de contexto para Copilot
+# Copilot context instructions
 
-## Uso automático del vault de Obsidian
+## Automatic use of the Obsidian vault
 
-El vault de Obsidian es la raíz del repositorio. Para solicitudes no triviales de desarrollo, análisis, depuración, documentación o planificación recibidas por chat, recupera el contexto sin pedir al usuario que lo repita:
+The Obsidian vault is the repository root. For non-trivial development, analysis, debugging, documentation, or planning requests received through chat, retrieve context without asking the user to repeat it:
 
-1. Lee `AGENTS.md` y la entrada más reciente relevante de `notes/bitacora.md` antes de investigar o modificar archivos.
-2. Lee `notes/decisiones.md`, `notes/preguntas.md` y las notas enlazadas desde la bitácora solo cuando sean pertinentes para la tarea. No recorras todo el vault por defecto.
-3. Trata `README.md` y `README_ES.md` como referencia técnica canónica, `TODO.md` y `TODO_ES.md` como seguimiento oficial, y `docs/source/` como fuentes de documentación Sphinx/MyST. No dupliques su contenido en las notas.
-4. Tras un cambio significativo en el repositorio, añade o actualiza una entrada breve en `notes/bitacora.md`: objetivo, archivos afectados, hallazgo o decisión, validación y siguiente paso. Si corresponde, registra decisiones duraderas en `notes/decisiones.md` y preguntas sin resolver en `notes/preguntas.md`.
+1. Read `AGENTS.md` and the latest relevant entry in `notes/work-log.md` before investigating or modifying files.
+2. Read `notes/decisions.md`, `notes/questions.md`, and notes linked from the work log only when they are relevant to the task. Do not scan the entire vault by default.
+3. Treat `README.md` and `README_ES.md` as the canonical technical reference, `TODO.md` and `TODO_ES.md` as official task tracking, and `docs/source/` as Sphinx/MyST documentation sources. Do not duplicate their content in notes.
+4. After a significant repository change, add or update a concise entry in `notes/work-log.md`: objective, affected files, finding or decision, validation, and next step. When applicable, record durable decisions in `notes/decisions.md` and unresolved questions in `notes/questions.md`.
 
-Para preguntas simples, explicaciones generales o peticiones que no requieran contexto del proyecto, responde directamente sin cargar notas innecesarias. Las instrucciones explícitas del usuario siempre prevalecen: si pide no leer o no actualizar una nota, respétalo.
+For simple questions, general explanations, or requests that do not require project context, respond directly without loading unnecessary notes. Explicit user instructions always take precedence: if the user asks not to read or update a note, respect that instruction.
 
-## Alcance técnico
+## Technical scope
 
-Copilot trabaja con los archivos Markdown del vault; no necesita controlar la interfaz gráfica de Obsidian. Usa enlaces wiki existentes para navegar y conserva las notas concisas. La configuración local `.obsidian/` está ignorada por Git y no debe modificarse salvo que el usuario lo solicite.
+Copilot works with the vault's Markdown files; it does not need to control the Obsidian graphical interface. Use existing wiki links for navigation and keep notes concise. Local `.obsidian/` configuration is ignored by Git and must not be modified unless the user requests it.

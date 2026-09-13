@@ -4,7 +4,7 @@
 > [`INFORME_REVISION_GENERAL.md`](INFORME_REVISION_GENERAL.md) (Spanish) — check it before starting
 > any non-trivial refactor, it likely already documents the tradeoffs involved.
 
-> Working context is persisted in the Obsidian vault under `notes/`. Before non-trivial work, consult the latest relevant entry in `notes/bitacora.md` and only the linked decisions or questions needed for the task. The complete Copilot-specific protocol is in `.github/copilot-instructions.md`.
+> Working context is persisted in the Obsidian vault under `notes/`. Before non-trivial work, consult the latest relevant entry in `notes/work-log.md` and only the linked decisions or questions needed for the task. The complete Copilot-specific protocol is in `.github/copilot-instructions.md`.
 
 ## Big picture (what this repo is)
 - `pyweatherfiles` is a weather-data toolkit centered on **TMY generation** (`pyweatherfiles/tmy/` package) plus EPW/MET conversion, degree-hours analysis, multi-year climate-trend analysis, EPW comparison and hourly-series gap-filling.
