@@ -385,6 +385,54 @@ class TestCalculateValidation:
             calc.calculate(SETPOINTS, frequency=["yearly"], start_date="not-a-date", save_session=False)
 
 
+class TestMonthsFilterAndInvertCooling:
+    """``months`` (calendar-month filter) and ``invert_cooling`` (cooling
+    'potential'/deficit instead of classic 'excess') -- added to support a
+    corrected night-cooling-potential (NCDH) indicator restricted to summer
+    months (e.g. July-September, 00:00-08:00)."""
+
+    def test_months_filter_drops_other_months(self, tmp_path):
+        calc = _calc(tmp_path, temp=10.0, year=2021)  # T=10 -> always below both setpoints
+        results = calc.calculate(
+            SETPOINTS, frequency=["monthly"], mode="heating",
+            months=[7, 8, 9], save_session=False,
+        )
+        monthly = results["monthly"]["heating_dh"]
+        # Only the requested months are present (rows outside the filter are
+        # dropped, exactly like the pre-existing 'hours' filter behavior).
+        assert list(monthly.index.month) == [7, 8, 9]
+        assert monthly.iloc[0] == pytest.approx((20.0 - 10.0) * 24 * 31)  # July
+        assert monthly.iloc[1] == pytest.approx((20.0 - 10.0) * 24 * 31)  # August
+        assert monthly.iloc[2] == pytest.approx((20.0 - 10.0) * 24 * 30)  # September
+
+    def test_invert_cooling_computes_deficit_below_setpoint(self, tmp_path):
+        # T=10 degC, cooling setpoint=25 -> classic CDH (excess) is 0 every
+        # hour, but the inverted "cooling potential" (deficit) is 15/h.
+        calc = _calc(tmp_path, temp=10.0, year=2021)
+        classic = calc.calculate(
+            SETPOINTS, frequency=["yearly"], mode="cooling", save_session=False,
+        )["yearly"]["cooling_dh"].iloc[0]
+        assert classic == pytest.approx(0.0)
+
+        potential = calc.calculate(
+            SETPOINTS, frequency=["yearly"], mode="cooling",
+            invert_cooling=True, save_session=False,
+        )["yearly"]["cooling_dh"].iloc[0]
+        assert potential == pytest.approx((25.0 - 10.0) * 8760)
+
+    def test_months_and_invert_cooling_combined_matches_manual_formula(self, tmp_path):
+        # Night-cooling-potential style indicator: hours 0-8 inclusive (9 h),
+        # restricted to Jul-Sep, T=10 degC -> deficit = 15 degC every
+        # qualifying hour; 92 days (31+31+30) x 9 h x 15 degC.
+        calc = _calc(tmp_path, temp=10.0, year=2021)
+        res = calc.calculate(
+            SETPOINTS, frequency=["yearly"], mode="cooling",
+            hours=list(range(0, 9)), months=[7, 8, 9],
+            invert_cooling=True, save_session=False,
+        )["yearly"]["cooling_dh"].iloc[0]
+        assert res == pytest.approx(9 * (31 + 31 + 30) * 15.0)
+
+
 class TestSetpointsFromDictExtra:
     def test_weekly_type_with_specific_day_name_key(self, tmp_path):
         calc = _calc(tmp_path, temp=10.0)

@@ -625,12 +625,14 @@ Computes **heating (HDH) and cooling (CDH) degree-hours** from an EPW and a set 
 ### 6.3 Calculation (`calculate`)
 
 ```
-HDH_h = max(0, SP_heating_h − T_h)     (only hours in `hours`, otherwise 0)
-CDH_h = max(0, T_h − SP_cooling_h)     (only hours in `hours`, otherwise 0)
+HDH_h = max(0, SP_heating_h − T_h)     (only hours in `hours` and months in `months`, otherwise 0)
+CDH_h = max(0, T_h − SP_cooling_h)     (only hours in `hours` and months in `months`, otherwise 0)
 ```
 
+If `invert_cooling=True`, the cooling formula flips to a **deficit** below the setpoint instead of an excess above it: `CDH_h = max(0, SP_cooling_h − T_h)` — i.e. how far below the comfort/cooling threshold the outdoor air already is, used for "cooling potential" / night-ventilation-style indicators (e.g. NCDH, night cooling degree-hours) instead of a classic overheating indicator.
+
 - Setpoints are **masked by HVAC availability** (when sourced from an IDF): if the system is off, HDH/CDH = 0 for that hour.
-- Optional period filter (`start_date`/`end_date`, `'DD/MM'` format, supports ranges that cross New Year's Eve, e.g. December→February) and hours-of-day filter (`hours=[0..23]`).
+- Optional period filter (`start_date`/`end_date`, `'DD/MM'` format, supports ranges that cross New Year's Eve, e.g. December→February), hours-of-day filter (`hours=[0..23]`), and calendar-month filter (`months=[1..12]`, combined AND with `hours`).
 - Configurable aggregation (`frequency`): `'hourly'`, `'daily'` (`.resample('D').sum()`), `'monthly'` (`.resample('ME').sum()`), `'yearly'` (`.resample('YE').sum()`).
 - `mode`: `'heating'`, `'cooling'` or `'both'`.
 - `zone_name`: if `None`, averages setpoints and availability across **all** zones with a thermostat in the IDF.
@@ -673,7 +675,10 @@ analyzer = EpwGroupTrendAnalyzer(
     setpoint_source={'type': 'constant', 'heating': 20.0, 'cooling': 25.0},
     hours_scenarios={
         'allday': {'hours': None, 'mode': 'both'},
-        'night_0_8h': {'hours': list(range(8)), 'mode': 'cooling'},
+        'night_potential_jul_sep': {
+            'hours': list(range(9)), 'mode': 'cooling',
+            'invert_cooling': True, 'months': [7, 8, 9],
+        },
     },
     extra_epw_variables={'global_horizontal_radiation': ['sum']},
     scale_factors={'global_horizontal_radiation_sum': 0.001},   # Wh/m2 -> kWh/m2
@@ -694,7 +699,7 @@ Unlike `EpwBatchAnalyzer` (§6.5) — designed to compare a *handful* of individ
 | `epw_dir` / `epw_paths` | — | Folder to scan for `*.epw`, or an explicit path list (one of the two is required) |
 | `filename_pattern` | `'<group>_<year>.epw'` regex | Named-group regex used for classification |
 | `setpoint_source` | `{'type':'constant','heating':20.0,'cooling':25.0}` | Forwarded to every `DegreeHoursCalculator.calculate()` call (IDF path or dict, §6.2) |
-| `hours_scenarios` | `{'allday': {'hours': None, 'mode': 'both'}}` | `{label: {'hours': [...]\|None, 'mode': 'heating'\|'cooling'\|'both'}}` — one degree-hour calculation per scenario, producing `heating_dh_<label>`/`cooling_dh_<label>` columns |
+| `hours_scenarios` | `{'allday': {'hours': None, 'mode': 'both'}}` | `{label: {'hours': [...]\|None, 'mode': 'heating'\|'cooling'\|'both', 'months': [...]\|None, 'invert_cooling': bool}}` — one degree-hour calculation per scenario (forwarded to `DegreeHoursCalculator.calculate`), producing `heating_dh_<label>`/`cooling_dh_<label>` columns. `months` restricts to specific calendar months (combined AND with `hours`); `invert_cooling=True` flips the cooling formula to a deficit below the setpoint (`max(0, SP_cooling - T)`), for "cooling potential" indicators like NCDH |
 | `extra_epw_variables` | `{}` | `{epw_variable: [aggfunc,...]}` — additional annual climate variables (e.g. GHI) alongside degree-hours; aggfuncs: `sum`/`mean`/`max`/`min`/`std` |
 | `scale_factors` | `{}` | `{result_column: factor}` multiplicative unit conversion applied after computation (e.g. Wh/m² → kWh/m²) |
 | `group_order`, `group_labels`, `group_colors`, `group_zone` | `None` / `{}` | Optional display customisation used only by the plotting methods (e.g. coldest→warmest ordering, accented city names, CTE climate-zone tags) |

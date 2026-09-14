@@ -626,12 +626,14 @@ Calcula **grados-hora de calefacción (HDH) y refrigeración (CDH)** a partir de
 ### 6.3 Cálculo (`calculate`)
 
 ```
-HDH_h = max(0, SP_calefacción_h − T_h)     (solo horas en `hours`, si no 0)
-CDH_h = max(0, T_h − SP_refrigeración_h)   (solo horas en `hours`, si no 0)
+HDH_h = max(0, SP_calefacción_h − T_h)     (solo horas en `hours` y meses en `months`, si no 0)
+CDH_h = max(0, T_h − SP_refrigeración_h)   (solo horas en `hours` y meses en `months`, si no 0)
 ```
 
+Si `invert_cooling=True`, la fórmula de refrigeración se invierte a un **déficit** bajo la consigna en vez de un exceso por encima: `CDH_h = max(0, SP_refrigeración_h − T_h)` — es decir, cuántos grados le faltan al aire exterior para alcanzar el umbral de confort/refrigeración, usado para indicadores de "potencial de enfriamiento" / ventilación nocturna (p. ej. NCDH) en vez de un indicador clásico de sobrecalentamiento.
+
 - Las **consignas se enmascaran con la disponibilidad HVAC** (cuando procede de IDF): si el sistema está apagado, HDH/CDH = 0 en esa hora.
-- Filtro opcional de periodo (`start_date`/`end_date`, formato `'DD/MM'`, soporta rangos que cruzan el año nuevo, p. ej. diciembre→febrero) y de horas del día (`hours=[0..23]`).
+- Filtro opcional de periodo (`start_date`/`end_date`, formato `'DD/MM'`, soporta rangos que cruzan el año nuevo, p. ej. diciembre→febrero), de horas del día (`hours=[0..23]`), y de meses del calendario (`months=[1..12]`, combinado con AND junto a `hours`).
 - Agregación configurable (`frequency`): `'hourly'`, `'daily'` (`.resample('D').sum()`), `'monthly'` (`.resample('ME').sum()`), `'yearly'` (`.resample('YE').sum()`).
 - `mode`: `'heating'`, `'cooling'` o `'both'`.
 - `zone_name`: si `None`, promedia consignas y disponibilidad entre **todas** las zonas con termostato del IDF.
@@ -674,7 +676,10 @@ analyzer = EpwGroupTrendAnalyzer(
     setpoint_source={'type': 'constant', 'heating': 20.0, 'cooling': 25.0},
     hours_scenarios={
         'allday': {'hours': None, 'mode': 'both'},
-        'night_0_8h': {'hours': list(range(8)), 'mode': 'cooling'},
+        'night_potential_jul_sep': {
+            'hours': list(range(9)), 'mode': 'cooling',
+            'invert_cooling': True, 'months': [7, 8, 9],
+        },
     },
     extra_epw_variables={'global_horizontal_radiation': ['sum']},
     scale_factors={'global_horizontal_radiation_sum': 0.001},   # Wh/m2 -> kWh/m2
@@ -695,7 +700,7 @@ A diferencia de `EpwBatchAnalyzer` (§6.5) — diseñado para comparar un *puña
 | `epw_dir` / `epw_paths` | — | Carpeta a escanear en busca de `*.epw`, o una lista explícita de rutas (se requiere uno de los dos) |
 | `filename_pattern` | regex `'<group>_<year>.epw'` | Expresión regular con grupos nombrados usada para la clasificación |
 | `setpoint_source` | `{'type':'constant','heating':20.0,'cooling':25.0}` | Reenviado a cada llamada de `DegreeHoursCalculator.calculate()` (ruta IDF o dict, §6.2) |
-| `hours_scenarios` | `{'allday': {'hours': None, 'mode': 'both'}}` | `{etiqueta: {'hours': [...]\|None, 'mode': 'heating'\|'cooling'\|'both'}}` — un cálculo de grados-hora por escenario, generando columnas `heating_dh_<etiqueta>`/`cooling_dh_<etiqueta>` |
+| `hours_scenarios` | `{'allday': {'hours': None, 'mode': 'both'}}` | `{etiqueta: {'hours': [...]\|None, 'mode': 'heating'\|'cooling'\|'both', 'months': [...]\|None, 'invert_cooling': bool}}` — un cálculo de grados-hora por escenario (reenviado a `DegreeHoursCalculator.calculate`), generando columnas `heating_dh_<etiqueta>`/`cooling_dh_<etiqueta>`. `months` restringe a meses concretos del calendario (combinado con AND junto a `hours`); `invert_cooling=True` invierte la fórmula de refrigeración a un déficit bajo la consigna (`max(0, SP_refrigeración - T)`), para indicadores de "potencial de enfriamiento" como NCDH |
 | `extra_epw_variables` | `{}` | `{variable_epw: [aggfunc,...]}` — variables climáticas anuales adicionales (p. ej. GHI) junto a los grados-hora; aggfuncs: `sum`/`mean`/`max`/`min`/`std` |
 | `scale_factors` | `{}` | `{columna_resultado: factor}` conversión de unidades multiplicativa aplicada tras el cálculo (p. ej. Wh/m² → kWh/m²) |
 | `group_order`, `group_labels`, `group_colors`, `group_zone` | `None` / `{}` | Personalización de visualización opcional, usada solo por los métodos de trazado (p. ej. orden de frío a cálido, nombres de ciudad con tildes, etiquetas de zona climática CTE) |

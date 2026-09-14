@@ -131,6 +131,26 @@ class TestRun:
         expected = 1000.0 * 8760 * 0.001
         assert df.loc[0, 'global_horizontal_radiation_sum'] == pytest.approx(expected)
 
+    def test_hours_scenario_forwards_months_and_invert_cooling(self, tmp_path):
+        # T=10 degC constant -> classic CDH excess is always 0, but the
+        # inverted "night cooling potential" (deficit below 25 degC),
+        # restricted to hours 0-8 and months Jul-Sep, must be non-zero and
+        # match the manual formula: 9h x 92 days x 15 degC.
+        _write_synthetic_epw(tmp_path / "alpha_2020.epw", "alpha", temp=10.0)
+        analyzer = EpwGroupTrendAnalyzer(
+            epw_dir=str(tmp_path), setpoint_source=SETPOINTS,
+            hours_scenarios={
+                'allday': {'hours': None, 'mode': 'both'},
+                'night_potential_jul_sep': {
+                    'hours': list(range(0, 9)), 'mode': 'cooling',
+                    'invert_cooling': True, 'months': [7, 8, 9],
+                },
+            },
+        )
+        df = analyzer.run(save_session=False)
+        assert 'cooling_dh_night_potential_jul_sep' in df.columns
+        assert df.loc[0, 'cooling_dh_night_potential_jul_sep'] == pytest.approx(9 * (31 + 31 + 30) * 15.0)
+
     def test_run_skips_unprocessable_file_and_warns(self, tmp_path, capsys):
         real_path = _write_synthetic_epw(tmp_path / "alpha_2020.epw", "alpha", temp=15.0)
         missing_path = str(tmp_path / "beta_2020.epw")  # matches the pattern, but does not exist

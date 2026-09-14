@@ -63,7 +63,8 @@ class EpwGroupTrendAnalyzer:
        :meth:`~pyweatherfiles.epw_trend_analyzer.EpwTrendAnalyzer.fit_global_model`).
     4. Call :meth:`plot_variable_grid` (one variable, small multiples — one
        subplot per group) or :meth:`plot_overview_grid` (several variables
-       stacked as rows, groups as columns) to visualise.
+       combined with every group in a single grid, either "rows=variables,
+       columns=groups" or transposed) to visualise.
 
     Attributes
     ----------
@@ -108,8 +109,9 @@ class EpwGroupTrendAnalyzer:
     >>> analyzer.plot_overview_grid(
     ...     variables=[
     ...         ("heating_dh_allday", "HDH (°C·h)", "Heating DH"),
-    ...         ("cooling_dh_night_0_8h", "Night CDH (°C·h)", "Night cooling potential"),
-    ...     ]
+    ...         ("cooling_dh_night_0_8h", "Night CDH (°C·h)", "NCDH (night cooling degree hours)"),
+    ...     ],
+    ...     horizontal=True, transpose=True,
     ... )  # doctest: +SKIP
     """
 
@@ -302,10 +304,13 @@ class EpwGroupTrendAnalyzer:
                         row: Dict = {'group': group, 'year': year}
                         for label, cfg in hours_scenarios.items():
                             hrs = cfg.get('hours')
+                            mos = cfg.get('months')
                             mode = cfg.get('mode', 'both')
+                            invert_cool = cfg.get('invert_cooling', False)
                             res = calc.calculate(
                                 setpoint_source, frequency=['yearly'], mode=mode,
-                                hours=hrs, save_session=False,
+                                hours=hrs, months=mos, invert_cooling=invert_cool,
+                                save_session=False,
                             )['yearly']
                             if mode in ('heating', 'both'):
                                 row[f'heating_dh_{label}'] = float(res['heating_dh'].sum())
@@ -494,9 +499,25 @@ class EpwGroupTrendAnalyzer:
     # -------------------------------------------------------------------------
 
     def _draw_group_subplot(
-        self, ax, group, idx, value_col, ylabel, show_ylabel=True, show_xlabel=True
+        self, ax, group, idx, value_col, ylabel, show_ylabel=True, show_xlabel=True,
+        horizontal=False, show_group_title=True, tick_labelsize: float = 9.0,
     ):
-        """Draw one group's year-by-year bars + its own OLS trend line."""
+        """Draw one group's year-by-year bars + its own OLS trend line.
+
+        Parameters
+        ----------
+        horizontal : bool, optional
+            If ``True``, draw horizontal bars (years on the vertical axis,
+            *value_col* on the horizontal axis) and the matching trend
+            line, instead of the default vertical layout.
+        show_group_title : bool, optional
+            If ``True`` (default), prefix the subplot title with the
+            group's label/zone (e.g. ``"Madrid (D3)"``). Set to ``False``
+            when the group is already identified elsewhere (e.g. a row
+            annotation in :meth:`plot_overview_grid` with
+            ``transpose=True``), so the subplot title only shows the
+            trend statistics.
+        """
         import matplotlib.ticker as mticker
 
         sub = self.results[self.results['group'] == group].sort_values('year')
@@ -504,7 +525,10 @@ class EpwGroupTrendAnalyzer:
         values = sub[value_col].values
         color = self._group_color(group, idx)
 
-        ax.bar(years, values, width=0.7, color=color, alpha=0.75, zorder=2)
+        if horizontal:
+            ax.barh(years, values, height=0.7, color=color, alpha=0.75, zorder=2)
+        else:
+            ax.bar(years, values, width=0.7, color=color, alpha=0.75, zorder=2)
 
         if len(sub) >= 3:
             trends = self.trend_stats_.get(value_col)
@@ -513,10 +537,11 @@ class EpwGroupTrendAnalyzer:
             r = trends.loc[group]
             if pd.notna(r['slope']):
                 x_line = np.array([years.min(), years.max()], dtype=float)
-                ax.plot(
-                    x_line, r['intercept'] + r['slope'] * x_line,
-                    color='black', linestyle='--', linewidth=1.6, zorder=3,
-                )
+                y_line = r['intercept'] + r['slope'] * x_line
+                if horizontal:
+                    ax.plot(y_line, x_line, color='black', linestyle='--', linewidth=1.6, zorder=3)
+                else:
+                    ax.plot(x_line, y_line, color='black', linestyle='--', linewidth=1.6, zorder=3)
                 sig_star = ' *' if r['significant'] else ''
                 stats_txt = (
                     f"slope={r['slope']:+.1f}/yr, R²={r['r2']:.2f}, "
@@ -527,26 +552,55 @@ class EpwGroupTrendAnalyzer:
         else:
             stats_txt = "insufficient data for trend"
 
-        zone = self._group_zone(group)
-        title = f"{self._group_label(group)} ({zone})" if zone else self._group_label(group)
-        ax.set_title(f"{title}\n{stats_txt}", fontsize=9.5)
-        if show_ylabel:
-            ax.set_ylabel(ylabel, fontsize=9)
-        if show_xlabel:
-            ax.set_xlabel('Year', fontsize=9)
-        ax.grid(True, axis='y', alpha=0.3)
-        ax.tick_params(axis='both', labelsize=8)
-        ax.set_xlim(years.min() - 1, years.max() + 1)
-        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _pos: f"{int(round(x))}"))
+        if show_group_title:
+            zone = self._group_zone(group)
+            title = f"{self._group_label(group)} ({zone})" if zone else self._group_label(group)
+            ax.set_title(f"{title}\n{stats_txt}", fontsize=10.0)
+        else:
+            ax.set_title(stats_txt, fontsize=10.0)
+
+        if horizontal:
+            if show_ylabel:
+                ax.set_ylabel('Year', fontsize=10)
+            if show_xlabel:
+                ax.set_xlabel(ylabel, fontsize=10)
+            ax.grid(True, axis='x', alpha=0.3)
+            ax.tick_params(axis='both', labelsize=tick_labelsize)
+            ax.set_ylim(years.min() - 1, years.max() + 1)
+            ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+            ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _pos: f"{int(round(y))}"))
+        else:
+            if show_ylabel:
+                ax.set_ylabel(ylabel, fontsize=10)
+            if show_xlabel:
+                ax.set_xlabel('Year', fontsize=10)
+            ax.grid(True, axis='y', alpha=0.3)
+            ax.tick_params(axis='both', labelsize=tick_labelsize)
+            ax.set_xlim(years.min() - 1, years.max() + 1)
+            ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+            ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _pos: f"{int(round(x))}"))
 
     @staticmethod
-    def _harmonize_ylim(axes_list):
-        """Apply the widest (min, max) y-limits across every axis to all of them."""
-        y_mins, y_maxs = zip(*(a.get_ylim() for a in axes_list))
-        y_min, y_max = min(y_mins), max(y_maxs)
+    def _harmonize_lim(axes_list, axis='y'):
+        """Apply the widest (min, max) limits across every axis to all of them.
+
+        Parameters
+        ----------
+        axis : {'y', 'x'}, optional
+            Which axis to harmonise: ``'y'`` (default) for vertical bar
+            layouts, ``'x'`` for horizontal bar layouts (where the value
+            is plotted on the x-axis).
+        """
+        if axis == 'x':
+            los, his = zip(*(a.get_xlim() for a in axes_list))
+        else:
+            los, his = zip(*(a.get_ylim() for a in axes_list))
+        lo, hi = min(los), max(his)
         for a in axes_list:
-            a.set_ylim(y_min, y_max)
+            if axis == 'x':
+                a.set_xlim(lo, hi)
+            else:
+                a.set_ylim(lo, hi)
 
     def plot_variable_grid(
         self,
@@ -554,6 +608,7 @@ class EpwGroupTrendAnalyzer:
         ylabel: Optional[str] = None,
         suptitle: Optional[str] = None,
         ncols: int = 3,
+        tick_labelsize: float = 9.0,
         harmonize_ylim: bool = True,
         out_path: Optional[str] = None,
         show: bool = False,
@@ -572,6 +627,8 @@ class EpwGroupTrendAnalyzer:
             Figure super-title.
         ncols : int, optional
             Number of columns in the subplot grid (default 3).
+        tick_labelsize : float, optional
+            Font size for axis tick labels (numeric labels). Default ``9.0``.
         harmonize_ylim : bool, optional
             If ``True`` (default), force the same y-axis range on every
             subplot (the union of each group's autoscaled range) so trend
@@ -601,24 +658,34 @@ class EpwGroupTrendAnalyzer:
         groups = self.inputs['group_order']
         n = len(groups)
         nrows = int(np.ceil(n / ncols))
-        fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.6 * nrows), squeeze=False)
+        super_cols = max(1, ncols * 2)
+        fig = plt.figure(figsize=(4.2 * ncols, 3.6 * nrows))
+        gs = fig.add_gridspec(nrows, super_cols)
 
         axes_used = []
+        full_rows = n // ncols
+        remainder = n % ncols
         for i, group in enumerate(groups):
             r, c = divmod(i, ncols)
-            ax = axes[r][c]
+            if r < full_rows or remainder == 0:
+                # Regular rows: each logical column spans 2 GridSpec columns.
+                c0 = c * 2
+            else:
+                # Last partial row: center the used slots.
+                idx_in_partial_row = c
+                partial_width = remainder * 2
+                left_pad = (super_cols - partial_width) // 2
+                c0 = left_pad + idx_in_partial_row * 2
+            ax = fig.add_subplot(gs[r, c0:c0 + 2])
             self._draw_group_subplot(
                 ax, group, i, value_col, ylabel or value_col,
                 show_ylabel=(c == 0), show_xlabel=True,
+                tick_labelsize=tick_labelsize,
             )
             axes_used.append(ax)
 
         if harmonize_ylim:
-            self._harmonize_ylim(axes_used)
-
-        for j in range(n, nrows * ncols):
-            r, c = divmod(j, ncols)
-            axes[r][c].axis('off')
+            self._harmonize_lim(axes_used, axis='y')
 
         if suptitle:
             fig.suptitle(suptitle, fontsize=12, y=1.02)
@@ -634,7 +701,7 @@ class EpwGroupTrendAnalyzer:
         return fig
 
     # -------------------------------------------------------------------------
-    # Plotting: multi-variable overview grid (rows=variables, cols=groups)
+    # Plotting: multi-variable overview grid
     # -------------------------------------------------------------------------
 
     def plot_overview_grid(
@@ -643,28 +710,42 @@ class EpwGroupTrendAnalyzer:
         harmonize_ylim: bool = True,
         out_path: Optional[str] = None,
         show: bool = False,
+        horizontal: bool = False,
+        transpose: bool = False,
     ):
         """
-        Overview figure with one row per variable and one column per group
-        (e.g. the manuscript's ``fig3_overview_grid_by_city.png``): every
-        cell is a group's own bars + OLS trend line for that variable, so
-        the whole indicator battery and every climate can be read at a
-        glance without ever averaging distinct climates together.
+        Overview figure combining several variables and every group in a
+        single small-multiples grid (e.g. the manuscript's
+        ``fig3_overview_grid_by_city.png``): every cell is a group's own
+        bars + OLS trend line for that variable, so the whole indicator
+        battery and every climate can be read at a glance without ever
+        averaging distinct climates together.
 
         Parameters
         ----------
-        variables : list of (value_col, ylabel, row_title), optional
-            One tuple per row. Defaults to every numeric column in
-            :attr:`results` other than ``'group'``/``'year'``, each row
-            labelled with its own column name.
+        variables : list of (value_col, ylabel, title), optional
+            One tuple per variable. Defaults to every numeric column in
+            :attr:`results` other than ``'group'``/``'year'``, each
+            row/column labelled with its own column name.
         harmonize_ylim : bool, optional
-            If ``True`` (default), harmonise the y-axis range across all
-            groups *within each row* (a trend line dipping below zero in
-            one group must not distort the visual scale of the others).
+            If ``True`` (default), harmonise the value-axis range across
+            all groups for each variable (a trend line dipping below zero
+            in one group must not distort the visual scale of the
+            others). Applies to the y-axis in the default vertical-bar
+            layout, or the x-axis when *horizontal* is ``True``.
         out_path : str, optional
             If given, the figure is saved to this path (``dpi=300``).
         show : bool, optional
             If ``True``, call ``plt.show()``. Default ``False``.
+        horizontal : bool, optional
+            If ``True``, draw horizontal bars (years on the vertical axis,
+            value on the horizontal axis) in every cell instead of the
+            default vertical bars.
+        transpose : bool, optional
+            If ``True``, lay the grid out as *one row per group* and *one
+            column per variable* (better suited to a portrait-oriented
+            page when there are more groups than variables) instead of
+            the default *one row per variable, one column per group*.
 
         Returns
         -------
@@ -674,10 +755,11 @@ class EpwGroupTrendAnalyzer:
         -------
         >>> analyzer.plot_overview_grid(
         ...     variables=[
-        ...         ("heating_dh_allday", "HDH$_{20}$ (°C·h)", "Heating DH"),
-        ...         ("cooling_dh_allday", "CDH$_{25}$ (°C·h)", "Cooling DH"),
-        ...         ("cooling_dh_night_0_8h", "Night CDH$_{25}$ (°C·h)", "Night cooling potential"),
+        ...         ("heating_dh_allday", "HDH$_{20}$ (°C·h)", "HDH$_{base=20°C}$"),
+        ...         ("cooling_dh_allday", "CDH$_{25}$ (°C·h)", "CDH$_{base=25°C}$"),
+        ...         ("cooling_dh_night_0_8h", "NCDH$_{25}$ (°C·h)", "NCDH (00-08h)"),
         ...     ],
+        ...     horizontal=True, transpose=True,
         ...     out_path="fig3_overview_grid_by_city.png",
         ... )  # doctest: +SKIP
         """
@@ -695,32 +777,67 @@ class EpwGroupTrendAnalyzer:
         groups = self.inputs['group_order']
         n_groups = len(groups)
         n_vars = len(variables)
-        fig, axes = plt.subplots(
-            n_vars, n_groups, figsize=(3.6 * n_groups, 3.2 * n_vars), squeeze=False,
-        )
 
-        for row, (col, ylabel, row_title) in enumerate(variables):
-            row_axes = []
-            for c, group in enumerate(groups):
-                ax = axes[row][c]
+        if transpose:
+            nrows, ncols = n_groups, n_vars
+            figsize = (3.5 * ncols, 2.6 * nrows)
+        else:
+            nrows, ncols = n_vars, n_groups
+            figsize = (3.6 * ncols, 3.2 * nrows)
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+
+        axes_by_var: List[List] = [[] for _ in range(n_vars)]
+        axis_to_harmonize = 'x' if horizontal else 'y'
+
+        for v_idx, (col, ylabel, title) in enumerate(variables):
+            for g_idx, group in enumerate(groups):
+                r, c = (g_idx, v_idx) if transpose else (v_idx, g_idx)
+                ax = axes[r][c]
+
                 self._draw_group_subplot(
-                    ax, group, c, col, ylabel,
-                    show_ylabel=(c == 0), show_xlabel=(row == n_vars - 1),
+                    ax, group, g_idx, col, ylabel,
+                    show_ylabel=(c == 0), show_xlabel=(r == nrows - 1),
+                    horizontal=horizontal, show_group_title=not transpose,
                 )
-                row_axes.append(ax)
-                if row == 0:
+                axes_by_var[v_idx].append(ax)
+
+                if not transpose and r == 0:
                     zone = self._group_zone(group)
-                    title = (
+                    group_title = (
                         f"{self._group_label(group)} ({zone})"
                         if zone else self._group_label(group)
                     )
-                    ax.set_title(title, fontsize=10, fontweight='bold')
+                    ax.set_title(group_title, fontsize=10, fontweight='bold')
+
+            if transpose:
+                # Column header (variable name) on top of the first row of
+                # each column, above that cell's own trend-stats title.
+                top_ax = axes[0][v_idx]
+                top_ax.set_title(f"{title}\n{top_ax.get_title()}", fontsize=10.0)
+            else:
+                # Row label (variable name), rotated, left of the first column.
+                axes[v_idx][0].annotate(
+                    title, xy=(-0.35, 0.5), xycoords='axes fraction',
+                    fontsize=11, fontweight='bold', ha='right', va='center', rotation=90,
+                )
+
             if harmonize_ylim:
-                self._harmonize_ylim(row_axes)
-            axes[row][0].annotate(
-                row_title, xy=(-0.35, 0.5), xycoords='axes fraction',
-                fontsize=10, fontweight='bold', ha='right', va='center', rotation=90,
-            )
+                self._harmonize_lim(axes_by_var[v_idx], axis=axis_to_harmonize)
+
+        if transpose:
+            # Row label (group name/zone), rotated, left of the first
+            # column of each row.
+            for g_idx, group in enumerate(groups):
+                zone = self._group_zone(group)
+                group_title = (
+                    f"{self._group_label(group)} ({zone})"
+                    if zone else self._group_label(group)
+                )
+                axes[g_idx][0].annotate(
+                    group_title, xy=(-0.22, 0.5), xycoords='axes fraction',
+                    fontsize=11, fontweight='bold', ha='right', va='center', rotation=90,
+                )
 
         fig.tight_layout()
         if out_path:

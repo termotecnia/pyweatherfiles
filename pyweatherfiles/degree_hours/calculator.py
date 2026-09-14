@@ -810,6 +810,8 @@ class DegreeHoursCalculator:
         c_sp: pd.Series,
         hours: Optional[List[int]],
         mode: str,
+        months: Optional[List[int]] = None,
+        invert_cooling: bool = False,
     ) -> Tuple[Optional[pd.Series], Optional[pd.Series]]:
         """
         Compute hourly heating and/or cooling degree-hours.
@@ -822,16 +824,33 @@ class DegreeHoursCalculator:
             Hours of day to include (0-23). None = all 24 h.
         mode : str
             'heating', 'cooling', or 'both'.
+        months : list of int, optional
+            Calendar months to include (1-12). ``None`` (default) = all 12
+            months. Combines (AND) with *hours* to build the hourly mask --
+            e.g. ``hours=list(range(9)), months=[7, 8, 9]`` restricts the
+            calculation to 00:00-08:00 during July-September only.
+        invert_cooling : bool, optional
+            If ``False`` (default), the cooling component is the classic
+            *excess* above the cooling setpoint:
+            ``CDH = max(0, T - SP_cooling)``. If ``True``, it becomes the
+            *deficit* below the cooling setpoint instead:
+            ``CDH = max(0, SP_cooling - T)`` -- i.e. how many degrees the
+            outdoor air is still *below* the comfort/cooling threshold, used
+            for "cooling potential" / night-ventilation-style indicators
+            (e.g. NCDH, night cooling degree-hours) rather than an
+            overheating indicator.
 
         Returns
         -------
-        (heating_dh, cooling_dh) — None for the component not requested.
+        (heating_dh, cooling_dh) -- None for the component not requested.
         """
         temps = self.temperatures
         if hours is None:
             hours = list(range(24))
 
         hour_mask = temps.index.hour.isin(hours)
+        if months is not None:
+            hour_mask = hour_mask & temps.index.month.isin(months)
 
         h_sp = h_sp.reindex(temps.index, method='ffill')
         c_sp = c_sp.reindex(temps.index, method='ffill')
@@ -844,7 +863,10 @@ class DegreeHoursCalculator:
 
         if mode in ('cooling', 'both'):
             cdh = pd.Series(0.0, index=temps.index)
-            cdh[hour_mask] = np.maximum(0.0, temps[hour_mask] - c_sp[hour_mask])
+            if invert_cooling:
+                cdh[hour_mask] = np.maximum(0.0, c_sp[hour_mask] - temps[hour_mask])
+            else:
+                cdh[hour_mask] = np.maximum(0.0, temps[hour_mask] - c_sp[hour_mask])
 
         return hdh, cdh
 
@@ -882,7 +904,9 @@ class DegreeHoursCalculator:
         setpoint_source: Union[str, Dict],
         frequency: Union[str, List[str]] = None,
         hours: Optional[List[int]] = None,
+        months: Optional[List[int]] = None,
         mode: str = 'both',
+        invert_cooling: bool = False,
         zone_name: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
@@ -903,8 +927,22 @@ class DegreeHoursCalculator:
             Default: all three.
         hours : list of int, optional
             Hours of the day to include [0-23]. Default: all 24.
+        months : list of int, optional
+            Calendar months to include [1-12]. Default: all 12. Combines
+            (AND) with *hours* -- e.g. ``hours=list(range(9)),
+            months=[7, 8, 9]`` restricts the calculation to 00:00-08:00
+            during July-September only (a typical "summer night cooling
+            potential" window).
         mode : str
             ``'heating'``, ``'cooling'``, or ``'both'`` (default).
+        invert_cooling : bool, optional
+            If ``False`` (default), the cooling component is the classic
+            *excess* above the cooling setpoint (``max(0, T - SP_cooling)``).
+            If ``True``, it becomes the *deficit* below the cooling setpoint
+            instead (``max(0, SP_cooling - T)``) -- i.e. how far below the
+            comfort/cooling threshold the outdoor air already is, used for
+            "cooling potential" / night-ventilation indicators (e.g. NCDH)
+            rather than a classic overheating indicator.
         zone_name : str, optional
             Zone/Space name from IDF. If None (default), all zones are
             processed and the **mean setpoint** across zones is used.
@@ -1005,8 +1043,11 @@ class DegreeHoursCalculator:
         # ------------------------------------------------------------------
         # Compute hourly degree-hours
         # ------------------------------------------------------------------
-        print(f"[INFO] Calculating degree-hours (mode='{mode}', hours={hours or 'all'})…")
-        hdh, cdh = self._compute_dh(h_sp, c_sp, hours, mode)
+        print(
+            f"[INFO] Calculating degree-hours (mode='{mode}', hours={hours or 'all'}, "
+            f"months={months or 'all'}, invert_cooling={invert_cooling})…"
+        )
+        hdh, cdh = self._compute_dh(h_sp, c_sp, hours, mode, months=months, invert_cooling=invert_cooling)
 
         # Apply availability masks: zero out DH when system is inactive
         if hdh is not None and h_avail is not None:
@@ -1036,7 +1077,9 @@ class DegreeHoursCalculator:
 
         if hours is not None:
             mask = mask & idx.hour.isin(hours)
-                
+        if months is not None:
+            mask = mask & idx.month.isin(months)
+
         if hdh is not None:
             hdh = hdh.loc[mask]
         if cdh is not None:
