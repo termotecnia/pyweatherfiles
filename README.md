@@ -316,9 +316,19 @@ For each of the 12 months, the full month (at hourly resolution if `df_hourly` i
 
 - **Requires hourly data** (`df_hourly` or `hourly_file_path`); if not available, smoothing is skipped (final TMY = raw TMY) with a warning.
 - For each of the **11 junctions** between consecutive months:
-  1. A **smoothing spline** is fit (`scipy.interpolate.UnivariateSpline`, `s_factor` parameter, default `0.0` → exact interpolation) using the **two full months** of hourly data from their respective source years.
+  1. A **smoothing spline** is fit (`scipy.interpolate.UnivariateSpline`) using the **two full months** of hourly data from their respective source years.
   2. The spline is evaluated over a **configurable window** around the junction (`hours` before/after, default 6 h; independently configurable per junction and per side via the `smoothing_config` dict).
   3. Raw values in that window are replaced by the smoothed ones, **for all variables except `GHI` and `DNI`** (radiation is left untouched so as not to distort solar geometry).
+- **`s_factor` — how much smoothing** (the spline's `s`):
+
+  | Value | Meaning |
+  |---|---|
+  | `'auto'` (**default**) | `s = auto_s_strength * n * var(y)`, computed **per variable**. Being proportional to the variance, it is *unit-invariant*: temperature, dew point and wind speed all get a comparable **relative** amount of smoothing. `auto_s_strength` defaults to `0.02` (2% of the variance as allowed residual); raise it to smooth more. |
+  | numeric | Passed verbatim to SciPy. **`0.0` = exact interpolation**, i.e. the spline goes through every point and `tmy_final` ends up numerically identical to `tmy_raw` (no effective smoothing — use it to keep the TMY strictly made of measured hours; this was the previous default). |
+  | `None` | SciPy's own criterion (`s = n`). Unit-dependent and strong enough to flatten low-variance variables such as wind speed — kept for completeness, not recommended. |
+
+  Reference effect of the default on 15 years of real Seville data: 126 of 8 760 hours modified (the 11 × 12 h windows), mean junction discontinuity in `T_air` **2.20 °C → 0.89 °C** (max 5.00 → 2.09), annual mean `T_air` unchanged to within 0.001 °C, `GHI`/`DNI` bit-identical.
+- The numeric `s` actually used for every variable/junction is stored in `smoothing_config[month]['s_factor_auto']` and shown in `plot_smoothing_comparison()`'s title.
 - **Final safety clip:** residual negative (undershoot) values in `GHI`, `DNI` or `Wind_speed` are clipped to 0.
 - Automatically generates the `validation_step6_tmy_composition` validation table and calls `generate_full_summary()`.
 - **Automatically saves a reproducible session** (`.pkl` + `.json`) if `save_session=True` (default) — see [§10](#10-session_manager--session-persistence-cross-cutting).
@@ -337,6 +347,10 @@ gen.generate_tmy(
     save_validation_dfs=True,
     proximity_normalization_method='std',        # 'std'|'long_term_mean'|'range'|'weighted'|'no_normalization'
     proximity_normalization_weights=None,        # only for 'weighted'
+    smoothing_hours=6,                           # step 7 window (hours before/after each junction)
+    smoothing_s_factor='auto',                   # 'auto' (default) | numeric (0.0 = no smoothing) | None
+    smoothing_auto_s_strength=None,              # fraction of variance for 'auto' (default 0.02)
+    smoothing_config=None,                       # optional per-junction overrides
 )
 ```
 

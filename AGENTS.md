@@ -32,6 +32,8 @@
 - Daily vs hourly is a first-class switch: `data_frequency` and `cdf_method` must be consistent (`daily` data cannot use hourly CDF).
 - Input column names are frequently non-standard; pass explicit mapping (`datetime_col`, `col_temp`, etc.) and preserve exact names/spaces from source files.
 - Hourly smoothing in Step 7 only runs when hourly data is available (`df_hourly` or `hourly_file_path`); otherwise it is skipped.
+- Step 7 smoothing strength: `s_factor='auto'` is the **default** — the spline's `s` is computed per variable as `auto_s_strength * n * var(y)` (`auto_s_strength=0.02`), so it is unit-invariant across `T_air`/`T_dew`/`Wind_speed`. A numeric `s_factor` is passed verbatim to SciPy (`0.0` = exact interpolation = deliberate no-op, the previous default, keeps the TMY strictly made of measured hours); `None` = SciPy's own unit-dependent criterion (`s = n`), not recommended. `GHI`/`DNI` are never smoothed. `generate_tmy()` forwards `smoothing_hours`/`smoothing_s_factor`/`smoothing_auto_s_strength`/`smoothing_config`, and `correct_selection_by_temperature(regenerate=True)` re-smooths with the same settings (`self._last_smoothing_kwargs`).
+
 
 ## Developer workflows (discoverable, current repo)
 - Build package: `dist_build_package.bat` (cleans `dist/`, `build/`, `*.egg-info`, then runs `python -m build`).

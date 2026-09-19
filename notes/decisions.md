@@ -13,6 +13,17 @@ Record decisions that change the project's design, reproducibility, data sources
 
 ---
 
+## D-004 — Step 7 smooths by default, with a variance-normalized `s_factor='auto'`
+
+- **Date:** 2026-09-19
+- **Status:** accepted
+- **Context:** `sandia_step_7_smooth_junctions()` defaulted to `s_factor=0.0`, which `scipy.interpolate.UnivariateSpline` interprets as *exact interpolation*: the spline passed through every fitted point, so the "smoothed" values were identical to the raw ones (max\|diff\| ~1e-14, 0 hours changed) and `tmy_final == tmy_raw`. Step 7 was therefore a silent no-op in every default run (including `generate_tmy()`), which contradicted its documented purpose and made `plot_smoothing_comparison()` draw two perfectly overlapping curves. The obvious alternative, SciPy's own automatic criterion (`s=None` → `s=n`), is unit-dependent: on real Seville data it flattened wind speed (12 h window swing 3.61 → 0.85 m/s) while barely touching temperature.
+- **Decision:** `s_factor` now accepts `'auto'` (**new default**), a number, or `None`. `'auto'` computes, per variable and per junction, `s = auto_s_strength * n * var(y)` with `auto_s_strength = 0.02` (`TMYGenerator.AUTO_S_STRENGTH`), i.e. it allows a residual equal to 2% of the fitted series' variance. Being proportional to the variance it is unit-invariant, so temperature, dew point and wind speed all receive a comparable *relative* amount of smoothing. Numeric values keep their previous meaning (`0.0` remains available as an explicit, documented no-op for anyone who needs a TMY made strictly of measured hours), and `None` keeps SciPy's criterion. `k = 0.02` was chosen from a sweep (`k ∈ [0.002, 0.1]`) over real Seville junctions as the best trade-off between removing the discontinuity and preserving the diurnal swing. `sandia_step_7_smooth_junctions()` also exposes `smoothing_config` publicly for the first time, `generate_tmy()` forwards `smoothing_hours`/`smoothing_s_factor`/`smoothing_auto_s_strength`/`smoothing_config`, and `correct_selection_by_temperature(regenerate=True)` re-smooths with the settings originally used (`_last_smoothing_kwargs`) instead of reverting to defaults.
+- **Consequences:** TMYs generated with default settings now differ from previous ones in 126 of 8 760 hours (the 11 × 12 h junction windows). Measured effect on 15 years of real Seville data: mean junction discontinuity in `T_air` 2.20 → 0.89 degC (max 5.00 → 2.09), RMS deviation inside the windows 0.78 degC, annual mean unchanged within 0.001 degC, `GHI`/`DNI` bit-identical (radiation is never smoothed). Any artefact generated before this change (EPWs, figures, notebooks with stored outputs) is therefore slightly stale and must be regenerated to stay consistent; the case-study notebook was re-executed for this reason.
+- **Links:** [[notes/work-log|Work log]] (2026-09-19 entry), [[questions|Open questions]], `pyweatherfiles/tmy/_assembly_smoothing.py`, `tests/test_tmy_smoothing.py`, [[../README#3-7-step-7-monthly-junction-smoothing-sandia_step_7_smooth_junctions|README §3.7]]
+
+---
+
 ## D-003 — NCDH is a cooling-potential (deficit) indicator, not a classic CDH restricted to night hours
 
 - **Date:** 2026-09-14

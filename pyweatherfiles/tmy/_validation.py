@@ -789,7 +789,9 @@ class _ValidationMixin:
         if corrections and regenerate:
             print("Regenerating TMY with corrected selection...")
             self._create_raw_tmy()
-            self._apply_smoothing()
+            # Re-smooth with the exact settings used the first time (Step 7),
+            # instead of silently reverting to the method defaults.
+            self._apply_smoothing(**(getattr(self, '_last_smoothing_kwargs', None) or {}))
             # Refresh composition table
             if self.save_validation_dfs:
                 self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()

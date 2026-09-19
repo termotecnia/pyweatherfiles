@@ -15,6 +15,7 @@ for the package-level overview.
 """
 
 import os
+import warnings
 
 import pandas as pd
 import numpy as np
@@ -26,7 +27,52 @@ from ..session_manager import save_object_session
 class _AssemblySmoothingMixin:
     """Steps 6 & 7: raw TMY assembly and month-junction smoothing."""
 
+    #: Default *relative* smoothing strength used when ``s_factor='auto'``:
+    #: the spline's ``s`` is set to ``AUTO_S_STRENGTH * n * var(y)``, i.e. the
+    #: sum of squared residuals is allowed to reach 2% of the series' total
+    #: variance. Being proportional to the variance makes it invariant to each
+    #: variable's units and magnitude (unlike a fixed ``s``, or SciPy's own
+    #: ``s=None`` criterion, which is ``s=n`` regardless of the units).
+    AUTO_S_STRENGTH = 0.02
+
     # --- PRIVATE METHODS (INTERNAL LOGIC) ---
+
+    @staticmethod
+    def _resolve_s_factor(s_spec, y_fit, auto_s_strength):
+        """
+        Translates an ``s_factor`` specification into the numeric ``s`` passed
+        to ``scipy.interpolate.UnivariateSpline``.
+
+        Args:
+            s_spec (str or float or None): ``'auto'`` (variance-normalized,
+                unit-invariant), an explicit numeric ``s`` (``0.0`` = exact
+                interpolation), or ``None`` (SciPy's own criterion, ``s = n``).
+            y_fit (numpy.ndarray): The series the spline is fitted to.
+            auto_s_strength (float): Fraction of the series' variance allowed
+                as residual when ``s_spec == 'auto'``.
+
+        Returns:
+            tuple: ``(s_value, is_auto)`` — the value to hand to
+            ``UnivariateSpline`` (possibly ``None``) and whether it was
+            derived automatically (rather than given explicitly).
+
+        Raises:
+            ValueError: If ``s_spec`` is an unknown string or
+                *auto_s_strength* is negative.
+        """
+        if isinstance(s_spec, str):
+            if s_spec.strip().lower() != 'auto':
+                raise ValueError(
+                    f"Unknown s_factor '{s_spec}'. Use 'auto' (variance-normalized, the default), "
+                    "a numeric value (0.0 = exact interpolation, i.e. no smoothing), "
+                    "or None for SciPy's own automatic criterion."
+                )
+            if auto_s_strength < 0:
+                raise ValueError(f"auto_s_strength must be >= 0, got {auto_s_strength}.")
+            return float(auto_s_strength) * len(y_fit) * float(np.var(y_fit)), True
+        if s_spec is None:
+            return None, True
+        return float(s_spec), False
 
     def _create_raw_tmy(self):
         """
@@ -57,15 +103,29 @@ class _AssemblySmoothingMixin:
         if not self.tmy_raw.index.is_unique:
             self.tmy_raw = self.tmy_raw[~self.tmy_raw.index.duplicated()]
 
-    def _apply_smoothing(self, smoothing_config=None, hours=6, s_factor=0.0):
+    def _apply_smoothing(self, smoothing_config=None, hours=6, s_factor='auto', auto_s_strength=None):
         """
         Applies a sophisticated smoothing spline at the month junctions, with
         configurable and potentially asymmetric parameters for each junction.
 
         Args:
-            smoothing_config (dict): Per-junction configuration.
+            smoothing_config (dict): Per-junction configuration, keyed by the
+                *first* month of each junction (1-11). Recognized keys:
+                ``hours``, ``hours_before``, ``hours_after``, ``s_factor``,
+                ``auto_s_strength``.
             hours (int): Global default hours before/after (used if not in config).
-            s_factor (float): Global default smoothing factor (used if not in config).
+            s_factor (str or float or None): Global default smoothing factor.
+                ``'auto'`` (default) sets the spline's ``s`` to
+                ``auto_s_strength * n * var(y)`` per variable — unit-invariant,
+                so temperature, dew point and wind speed are all smoothed by a
+                comparable *relative* amount. A numeric value is passed
+                verbatim to ``UnivariateSpline`` (``0.0`` = exact
+                interpolation, i.e. no effective smoothing). ``None`` uses
+                SciPy's own criterion (``s = n``), which is unit-dependent and
+                can flatten low-variance variables.
+            auto_s_strength (float): Fraction of the variance allowed as
+                residual when ``s_factor='auto'``. Defaults to
+                :attr:`AUTO_S_STRENGTH` (0.02).
         """
 
         # Check if hourly data is available for smoothing
@@ -75,11 +135,37 @@ class _AssemblySmoothingMixin:
             self.tmy_final = self.tmy_raw.copy()
             return
 
+        if auto_s_strength is None:
+            auto_s_strength = self.AUTO_S_STRENGTH
+
+        # Fail fast on an invalid s_factor / auto_s_strength (global or
+        # per-junction), before any state is modified.
+        _probe = np.zeros(1)
+        self._resolve_s_factor(s_factor, _probe, auto_s_strength)
+        for _cfg in (smoothing_config or {}).values():
+            self._resolve_s_factor(_cfg.get('s_factor', s_factor), _probe,
+                                   _cfg.get('auto_s_strength', auto_s_strength))
+
+        # Remember the arguments so that a later regeneration (e.g.
+        # correct_selection_by_temperature(regenerate=True)) re-smooths with
+        # the very same settings instead of silently falling back to defaults.
+        self._last_smoothing_kwargs = {
+            'smoothing_config': smoothing_config,
+            'hours': hours,
+            's_factor': s_factor,
+            'auto_s_strength': auto_s_strength,
+        }
+
         print("Applying sophisticated smoothing at month junctions...")
+        if s_factor == 0.0 and not smoothing_config:
+            print("  Note: s_factor=0.0 means exact spline interpolation, so the smoothed values will be")
+            print("        identical to the raw ones. Use s_factor='auto' (default) or s_factor > 0 to")
+            print("        actually smooth the month junctions.")
 
         self.smoothing_config = smoothing_config or {}
 
-        default_params = {'hours_before': hours, 'hours_after': hours, 's_factor': s_factor}
+        default_params = {'hours_before': hours, 'hours_after': hours,
+                          's_factor': s_factor, 'auto_s_strength': auto_s_strength}
 
         tmy_final = self.tmy_raw.copy()
 
@@ -89,12 +175,19 @@ class _AssemblySmoothingMixin:
 
             junction_params = self.smoothing_config.get(month1, {}).copy()
 
-            hours = junction_params.get('hours', None)
-            hours_before = junction_params.get('hours_before', hours or default_params['hours_before'])
-            hours_after = junction_params.get('hours_after', hours or default_params['hours_after'])
-            s_factor = junction_params.get('s_factor', default_params['s_factor'])
+            junction_hours = junction_params.get('hours', None)
+            hours_before = junction_params.get('hours_before', junction_hours or default_params['hours_before'])
+            hours_after = junction_params.get('hours_after', junction_hours or default_params['hours_after'])
+            junction_s_factor = junction_params.get('s_factor', default_params['s_factor'])
+            junction_auto_strength = junction_params.get('auto_s_strength', default_params['auto_s_strength'])
 
-            print(f"  - Junction {month1}->{month2}: hours_before={hours_before}, hours_after={hours_after}, s_factor={s_factor}")
+            if isinstance(junction_s_factor, str):
+                s_desc = f"'{junction_s_factor}' (strength={junction_auto_strength})"
+            elif junction_s_factor is None:
+                s_desc = "None (SciPy automatic, s=n)"
+            else:
+                s_desc = f"{junction_s_factor}"
+            print(f"  - Junction {month1}->{month2}: hours_before={hours_before}, hours_after={hours_after}, s_factor={s_desc}")
 
             year1 = self.selected_months[month1]
             year2 = self.selected_months[month2]
@@ -141,27 +234,46 @@ class _AssemblySmoothingMixin:
                 if np.var(y_fit) == 0:
                     continue
 
+                s_value, s_is_auto = self._resolve_s_factor(junction_s_factor, y_fit, junction_auto_strength)
+
                 try:
-                    # Fit the spline
-                    spl = UnivariateSpline(x_fit, y_fit, s=s_factor)
+                    # Fit the spline. FITPACK emits a rather cryptic UserWarning
+                    # ("maxit ... reached: s too small") for noisy series whose
+                    # target residual is hard to hit exactly; the approximation
+                    # it returns is still usable, so we translate the warning
+                    # into a readable diagnostic instead of letting it through.
+                    with warnings.catch_warnings(record=True) as caught:
+                        warnings.simplefilter("always")
+                        spl = UnivariateSpline(x_fit, y_fit, s=s_value)
+                    if any("maxit" in str(w.message) for w in (caught or [])):
+                        print(f"  - Note: the spline fit for '{col}' did not fully converge to the requested "
+                              f"s={s_value:.4g} within SciPy's iteration limit; using the returned "
+                              f"approximation (harmless, the series is simply noisy).")
                 except Exception as e:
                     print(f"  - Warning: Could not fit spline for {col} at month {month1}-{month2} junction. Skipping. Error: {e}")
                     continue
 
-                # --- FIX v4.08: Get the 's' value and apply smoothing ---
-                # If s is automatic, capture the computed value
-                if s_factor is None:
-                    s_val_auto = spl.get_residual()
+                # If s was derived automatically, record the value actually used
+                # (per variable) so it can be audited/plotted afterwards.
+                if s_is_auto:
+                    # SciPy's own criterion (s=None) is documented as s = len(w)
+                    effective_s = s_value if s_value is not None else float(len(y_fit))
                     if 's_factor_auto' not in junction_params:
                         junction_params['s_factor_auto'] = {}
-                    junction_params['s_factor_auto'][col] = s_val_auto
+                    junction_params['s_factor_auto'][col] = effective_s
 
                 # Apply the smoothing
                 smoothed_y = spl(x_apply)
 
                 tmy_final.loc[application_window_timestamps, col] = smoothed_y
 
-            # Update the saved configuration with the automatic 's' values
+            # Store the parameters actually used at this junction (so that
+            # plot_smoothing_comparison and any audit reflect the real values,
+            # not just whatever the caller happened to pass explicitly).
+            junction_params['hours_before'] = hours_before
+            junction_params['hours_after'] = hours_after
+            junction_params['s_factor'] = junction_s_factor
+            junction_params['auto_s_strength'] = junction_auto_strength
             self.smoothing_config[month1] = junction_params
 
         # --- FIX: Final Safety Clip after smoothing ---
@@ -257,7 +369,8 @@ class _AssemblySmoothingMixin:
         self._create_raw_tmy()
         return self
 
-    def sandia_step_7_smooth_junctions(self, hours=6, s_factor=0.0):
+    def sandia_step_7_smooth_junctions(self, hours=6, s_factor='auto', auto_s_strength=None,
+                                       smoothing_config=None):
         """
         **Step 7** (final step) of the Sandia TMY workflow: fits a
         smoothing spline (``scipy.interpolate.UnivariateSpline``) across
@@ -278,9 +391,30 @@ class _AssemblySmoothingMixin:
             hours (int): Default number of hours before/after each junction
                 over which the spline is evaluated and applied. Defaults to
                 6.
-            s_factor (float): Default smoothing factor passed to
-                ``UnivariateSpline`` (``0.0`` = exact interpolation).
-                Defaults to 0.0.
+            s_factor (str or float or None): Amount of smoothing, i.e. the
+                ``s`` parameter of ``UnivariateSpline``.
+
+                * ``'auto'`` (**default**): ``s`` is computed *per variable*
+                  as ``auto_s_strength * n * var(y)``. Because it is
+                  proportional to the variance of the fitted series, the same
+                  setting smooths temperature, dew point and wind speed by a
+                  comparable *relative* amount regardless of their units.
+                * A numeric value: handed verbatim to SciPy. ``0.0`` means
+                  **exact interpolation** — the spline passes through every
+                  point, so ``tmy_final`` ends up numerically identical to
+                  ``tmy_raw`` (no effective smoothing; use it to keep the TMY
+                  strictly made of measured hours).
+                * ``None``: SciPy's own criterion (``s = n``). Unit-dependent,
+                  and strong enough to flatten low-variance variables such as
+                  wind speed — kept for completeness, not recommended.
+            auto_s_strength (float): Fraction of the series' variance allowed
+                as residual when ``s_factor='auto'``. Defaults to
+                :attr:`AUTO_S_STRENGTH` (``0.02``). Larger values smooth more.
+            smoothing_config (dict or None): Optional per-junction overrides,
+                keyed by the first month of the junction (1-11); each value is
+                a dict accepting ``hours``, ``hours_before``, ``hours_after``,
+                ``s_factor`` and ``auto_s_strength``. Example:
+                ``{1: {'hours_before': 12, 'hours_after': 3}, 7: {'s_factor': 0.0}}``.
 
         Returns:
             TMYGenerator: ``self``, to allow method chaining.
@@ -288,13 +422,16 @@ class _AssemblySmoothingMixin:
         Raises:
             RuntimeError: If :meth:`sandia_step_6_assemble_tmy` has not
                 been run yet.
+            ValueError: If *s_factor* is an unknown string or
+                *auto_s_strength* is negative.
 
         Example:
             >>> gen.sandia_step_6_assemble_tmy()  # doctest: +SKIP
-            >>> gen.sandia_step_7_smooth_junctions(hours=6, s_factor=0.0)  # doctest: +SKIP
+            >>> gen.sandia_step_7_smooth_junctions(hours=6, s_factor='auto')  # doctest: +SKIP
         """
         if self.tmy_raw is None: raise RuntimeError("Run sandia_step_6_assemble_tmy() first.")
-        self._apply_smoothing(hours=hours, s_factor=s_factor)
+        self._apply_smoothing(smoothing_config=smoothing_config, hours=hours,
+                              s_factor=s_factor, auto_s_strength=auto_s_strength)
         if self.save_validation_dfs:
             self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()
             self.generate_full_summary()

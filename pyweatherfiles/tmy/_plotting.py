@@ -359,7 +359,8 @@ class _PlottingMixin:
             fig, axes = plt.subplots(n_rows, n_cols, figsize=(10 * n_cols, 7 * n_rows), squeeze=False)
         axes = axes.flatten()
 
-        default_params = {'hours_before': 6, 'hours_after': 6, 's_factor': None}
+        default_params = {'hours_before': 6, 'hours_after': 6, 's_factor': 'auto'}
+
 
         for i, (var_input, month1) in enumerate(junctions_to_plot):
             ax = axes[i]
@@ -384,9 +385,11 @@ class _PlottingMixin:
             # Check if an automatic value was used and is available
             s_auto_val = junction_params.get('s_factor_auto', {}).get(var)
 
-            if s_factor_val is None:
+            if s_factor_val is None or isinstance(s_factor_val, str):
+                # 'auto' (variance-normalized) or None (SciPy's own criterion):
+                # show the value actually computed for this variable, if known.
                 if s_auto_val is not None:
-                    s_factor_str = f"{s_auto_val:.2g} (auto)"
+                    s_factor_str = f"{s_auto_val:.3g} (auto)"
                 else:
                     s_factor_str = "auto"
             else:

@@ -146,8 +146,9 @@ class TMYGenerator(
             This is what :meth:`export_tmy` writes to disk.
         smoothing_config (dict or None): Per-junction smoothing parameters
             actually used in Step 7 (``hours_before``/``hours_after``/
-            ``s_factor``, plus the auto-computed spline residual when
-            applicable).
+            ``s_factor``/``auto_s_strength``, plus ``s_factor_auto``: the
+            numeric ``s`` computed per variable whenever ``s_factor`` was not
+            an explicit number).
         save_validation_dfs (bool): Whether the ``validation_step*``
             diagnostic DataFrames are populated as the workflow runs.
         save_session (bool): Whether a reproducible ``.pkl``/``.json``
@@ -355,7 +356,7 @@ class TMYGenerator(
 
     # --- PUBLIC WORKFLOWS ---
 
-    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='sequential', zero_run_method='eliminate_worst_ranked', completeness_threshold=0.9, save_validation_dfs=True, proximity_normalization_method='std', proximity_normalization_weights=None):
+    def generate_tmy(self, use_persistence=True, persistence_thresholds=(0.33, 0.67), min_run_length=1, persistence_weights=None, persistence_method='sequential', zero_run_method='eliminate_worst_ranked', completeness_threshold=0.9, save_validation_dfs=True, proximity_normalization_method='std', proximity_normalization_weights=None, smoothing_hours=6, smoothing_s_factor='auto', smoothing_auto_s_strength=None, smoothing_config=None):
         """
         Runs the complete TMY generation workflow from start to finish.
 
@@ -370,6 +371,18 @@ class TMYGenerator(
             proximity_normalization_weights (dict, optional): Used when
                 proximity_normalization_method='weighted'. Expected keys are
                 't_mean', 't_median', 'ghi_mean', 'ghi_median' and values must sum to 1.
+            smoothing_hours (int): Step 7 window, in hours before/after each
+                month junction. Defaults to 6.
+            smoothing_s_factor (str or float or None): Step 7 smoothing amount.
+                ``'auto'`` (default) scales the spline's ``s`` with each
+                variable's variance; a numeric value is passed verbatim to
+                SciPy (``0.0`` = exact interpolation, i.e. no smoothing);
+                ``None`` uses SciPy's own (unit-dependent) criterion. See
+                :meth:`sandia_step_7_smooth_junctions`.
+            smoothing_auto_s_strength (float, optional): Fraction of the
+                variance allowed as residual when
+                ``smoothing_s_factor='auto'`` (default 0.02).
+            smoothing_config (dict, optional): Per-junction Step 7 overrides.
             ... (other args passed to respective steps)
 
         Returns:
@@ -400,7 +413,12 @@ class TMYGenerator(
         else:
             self._select_months_by_fs_rank()
         self.sandia_step_6_assemble_tmy()
-        self.sandia_step_7_smooth_junctions()
+        self.sandia_step_7_smooth_junctions(
+            hours=smoothing_hours,
+            s_factor=smoothing_s_factor,
+            auto_s_strength=smoothing_auto_s_strength,
+            smoothing_config=smoothing_config,
+        )
         print("\n--- Full TMY generation finished ---")
         return self
 

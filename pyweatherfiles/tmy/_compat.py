@@ -112,14 +112,14 @@ class _CompatMixin:
         warnings.warn("step_3_apply_persistence() is deprecated. Use sandia_step_4_and_5_apply_persistence() instead.", DeprecationWarning, stacklevel=2)
         return self.sandia_step_4_and_5_apply_persistence(thresholds, min_run_length, persistence_weights, persistence_method, zero_run_method)
 
-    def step_4_create_and_smooth_tmy(self, hours=6, s_factor=0.0):
+    def step_4_create_and_smooth_tmy(self, hours=6, s_factor='auto'):
         """[DEPRECATED] Use sandia_step_6 and sandia_step_7 instead."""
         warnings.warn("step_4_create_and_smooth_tmy() is deprecated. Use sandia_step_6_assemble_tmy() and sandia_step_7_smooth_junctions() instead.", DeprecationWarning, stacklevel=2)
         self.sandia_step_6_assemble_tmy()
         self.sandia_step_7_smooth_junctions(hours=hours, s_factor=s_factor)
         return self
 
-    def _smooth_tmy_curve_fitting(self, hours=6, s_factor=0.0):
+    def _smooth_tmy_curve_fitting(self, hours=6, s_factor='auto'):
         """
         Part of Step 6: Smooths the TMY discontinuities using curve fitting (spline).
         """
