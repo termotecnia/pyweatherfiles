@@ -8,6 +8,18 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+## 2026-09-20 — Final case-study notebook consolidated for repository release
+
+- Objective: keep one standalone, GitHub-runnable case-study notebook before PyPI release preparation, retain only its six required inputs, and leave no generated files after its normal execution.
+- Files:
+  - `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb` — renamed from `_v03`; now discovers its own data directory from either the repository root or notebook directory, validates the exact six inputs, disables every session-capable call with `save_session=False`, and ends with a guarded cleanup cell that deletes only its sibling `case_study_output/` directory.
+  - `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study_v00.ipynb`, `_v01.ipynb`, `_v02.ipynb`, and the tracked notebook checkpoint — removed; the obsolete data checkpoint and pre-existing generated `case_study_output/` were also removed.
+  - `AGENTS.md` and `docs/source/tutorial_case_study.md` — updated for the final filename and ephemeral-output behaviour.
+- Finding: the six version-controlled inputs are exactly `ESP_Madrid.082210_IWEC.epw`, `ESP_Sevilla.083910_SWEC.epw`, `madrid.met`, `Madrid_hourly_data.xlsx`, `seville.met`, and `Seville_hourly_data.xlsx`; no additional notebook-local file is required.
+- Validation: structural checks compiled every code cell, verified both supported launch directories, exact input inventory, all eleven explicit `save_session=False` runtime calls, and the cleanup path guard. Full `jupyter nbconvert --execute --inplace` run completed successfully: 115 cells / 72 code cells, 0 stored errors, and the stored final-cell output confirms removal of `case_study_output/`; the directory is absent afterward.
+- Next step: stage the notebook rename/deletions and the six existing tracked inputs, then continue the PyPI-release readiness review.
+
+---
 ## 2026-09-20 — Diagnostics return DataFrames; case-study notebook v03 cleaned up and re-run
 
 - Objective: make the case-study notebook readable — stop printing wide DataFrames as fixed-width text, clarify what `validate_step_1_data_loading()` is for, drop references to code outside the package, bring the NCDH narrative up to date with [[decisions#D-003 — NCDH is a cooling-potential (deficit) indicator, not a classic CDH restricted to night hours|D-003]], and get rid of the matplotlib "Font 'rm' does not have a glyph for '\ufdff'" warnings in the degree-hours figure.

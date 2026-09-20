@@ -53,11 +53,11 @@ jupyter notebook docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_stud
 ```
 
 ```{note}
-Every code cell writes its outputs to `case_study_output/`, created next to
-the notebook (inside `jupyter_notebooks/`) the first time it is run. That
-folder is git-ignored, since its contents (EPW files, TMY exports,
-degree-hour tables, figures, `.pkl`/`.json` sessions) are fully regenerable
-from `data/`.
+During execution, generated exports and EPW files are written only to
+`case_study_output/`, next to the notebook. Session snapshots are disabled so
+the six tracked files under `data/` are never modified. The final notebook
+cell removes `case_study_output/` after a successful run, leaving the
+repository with only the notebook and its required input data.
 ```
 
 ```{tip}
