@@ -12,6 +12,15 @@ tmy/_validation.py
 ``correct_selection_by_temperature``) of
 :class:`~pyweatherfiles.tmy.TMYGenerator`.
 
+.. note::
+   Except for ``validate_persistence_selection`` (whose per-month tables are
+   narrow and meant to be read as a sequential report), these methods
+   **return** their result as a ``DataFrame`` — and store it in the matching
+   ``validation_*`` attribute — instead of dumping a wide table to the
+   console with ``print(df.to_string())``; what they print is only a short,
+   human-readable summary, silenceable with ``verbose=False`` where the
+   argument exists.
+
 Extracted from the former monolithic ``tmy.py`` in Fase 5 of
 ``INFORME_REVISION_GENERAL.md`` (§6). See ``pyweatherfiles/tmy/__init__.py``
 for the package-level overview.
@@ -25,30 +34,133 @@ class _ValidationMixin:
     """Diagnostic/validation methods and the v4.09 analysis & correction
     methods."""
 
-    def validate_step_1_data_loading(self):
-        """Prints descriptive statistics and a sample plot for the loaded data.
+    def validate_step_1_data_loading(self, verbose=True):
+        """Audits the dataset produced by Step 1 and returns a coverage table.
+
+        Step 1 is only responsible for turning the raw source file into a
+        *continuous*, *long enough* and *physically plausible* dataset, so
+        this method answers exactly those three questions, one row per
+        loaded frame (``df_hourly`` / ``df_daily``):
+
+        * **Is the time grid complete?** ``Records`` vs. ``Expected_Records``
+          between the first and the last timestamp (``Missing_Records`` is
+          what the resampling could not fill), plus the remaining
+          ``NaN_Values``.
+        * **Is there enough data?** ``Years`` available and
+          ``Missing_Years`` (calendar years absent *inside* the covered
+          range). The Sandia method requires at least 5 years.
+          ``Interpolated_Years`` lists the calendar years that are **not in
+          the source file** but do appear in the prepared frame: Step 1
+          resamples onto a strict grid and interpolates every hole, so a
+          whole missing year is silently reconstructed — this column is the
+          only place where that shows up.
+        * **Are the values usable?** ``Negative_GHI_DNI_Wind``, which Step 1
+          clips to zero and must therefore be 0 here.
+
+        The full descriptive statistics are *not* printed any more (they are
+        far too wide to be readable on a console): they are computed,
+        transposed to one row per variable and stored as DataFrames in
+        :attr:`validation_step1_hourly_stats` and
+        :attr:`validation_step1_daily_stats`, so that they can be rendered
+        as proper tables (e.g. in a notebook) instead of dumped as text.
+
+        Args:
+            verbose (bool): If True (default), prints a short human-readable
+                summary of the table returned.
+
+        Returns:
+            pandas.DataFrame: The coverage table described above, indexed by
+            dataset name. Also stored in :attr:`validation_step1_coverage`.
+
+        Raises:
+            RuntimeError: If Step 1 has not been run yet.
 
         Example:
             >>> gen.sandia_step_1_load_and_prepare()  # doctest: +SKIP
-            >>> gen.validate_step_1_data_loading()  # doctest: +SKIP
+            >>> gen.validate_step_1_data_loading()          # coverage table  # doctest: +SKIP
+            >>> gen.validation_step1_daily_stats            # describe() table  # doctest: +SKIP
         """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
             raise RuntimeError("Run 'step_1_load_and_prepare_data()' first.")
 
-        print("\n--- Validation for Step 1: Data Loading and Preparation ---")
+        source_years = getattr(self, 'source_years', None)
 
-        if self.df_hourly is not None:
-            print("\nDescriptive Statistics for Hourly Data (`df_hourly`):"), print(self.df_hourly.describe().to_string())
-        if self.df_daily is not None:
-            print("\nDescriptive Statistics for Daily Data (`df_daily`):"), print(self.df_daily.describe().to_string())
+        rows = []
+        for name, df, freq in (('df_hourly', self.df_hourly, 'h'),
+                               ('df_daily', self.df_daily, 'D')):
+            if df is None or df.empty:
+                continue
 
-        # plt.figure(figsize=(15, 5))
-        # sample_month, sample_year = self.df_hourly.index[0].month, self.df_hourly.index[0].year
-        # sample_data = self.df_hourly[(self.df_hourly.index.year == sample_year) & (self.df_hourly.index.month == sample_month)]
-        # plt.plot(sample_data.index, sample_data['T_air'])
-        # plt.title(f"Time Series Sample for T_air ({pd.to_datetime(f'2000-{sample_month}-01').strftime('%B')} {sample_year})")
-        # plt.ylabel("T_air (°C)"), plt.grid(True, linestyle=':'), plt.show()
+            idx = df.index
+            if isinstance(idx, pd.DatetimeIndex):
+                start, end = idx.min(), idx.max()
+                expected = len(pd.date_range(start, end, freq=freq))
+                years = sorted(int(y) for y in idx.year.unique())
+                missing_years = [y for y in range(years[0], years[-1] + 1) if y not in years]
+            else:  # pragma: no cover - defensive, the index is always datetime
+                start = end = pd.NaT
+                expected = len(df)
+                years, missing_years = [], []
+
+            interpolated_years = (
+                [y for y in years if y not in source_years] if source_years else [])
+
+            negatives = sum(
+                int((df[col] < 0).sum())
+                for col in ('GHI', 'DNI', 'Wind_speed') if col in df.columns
+            )
+
+            rows.append({
+                'Dataset':               name,
+                'Variables':             int(df.shape[1]),
+                'Records':               int(len(df)),
+                'Start':                 start,
+                'End':                   end,
+                'Expected_Records':      int(expected),
+                'Missing_Records':       int(expected - len(df)),
+                'NaN_Values':            int(df.isna().sum().sum()),
+                'Years':                 len(years),
+                'Missing_Years':         ', '.join(str(y) for y in missing_years) or '-',
+                'Interpolated_Years':    ', '.join(str(y) for y in interpolated_years) or '-',
+                'Negative_GHI_DNI_Wind': negatives,
+            })
+
+        coverage = pd.DataFrame(rows).set_index('Dataset')
+
+        self.validation_step1_coverage = coverage
+        self.validation_step1_hourly_stats = (
+            self.df_hourly.describe().T if self.df_hourly is not None else None)
+        self.validation_step1_daily_stats = (
+            self.df_daily.describe().T if self.df_daily is not None else None)
+
+        if verbose:
+            print("--- Step 1 validation: data loading and preparation ---")
+            print("Checks that the prepared dataset is continuous, long enough and free of")
+            print("impossible values before any Finkelstein-Schafer statistic is computed.")
+            for name, row in coverage.iterrows():
+                print(f"\n{name}: {row['Records']:,} records x {row['Variables']} variables"
+                      f"  ({row['Start']:%Y-%m-%d %H:%M} -> {row['End']:%Y-%m-%d %H:%M})")
+                print(f"    time grid   : {row['Missing_Records']:,} missing records"
+                      f" out of {row['Expected_Records']:,} expected"
+                      f" | {row['NaN_Values']:,} NaN values")
+                print(f"    calendar    : {row['Years']} years"
+                      f" | missing inside the covered range: {row['Missing_Years']}")
+                print(f"    value check : {row['Negative_GHI_DNI_Wind']:,} negative"
+                      f" GHI/DNI/wind-speed values (Step 1 clips them to 0)")
+                if row['Years'] < 5:
+                    print(f"    WARNING: only {row['Years']} years available;"
+                          " the Sandia method requires at least 5.")
+                if row['Interpolated_Years'] != '-':
+                    print(f"    WARNING: year(s) {row['Interpolated_Years']} are absent from the"
+                          " source file and were rebuilt by Step 1's interpolation;"
+                          " treat them as synthetic data.")
+            print("\nReturned: the coverage table above, as a DataFrame"
+                  " (also in 'validation_step1_coverage').")
+            print("Descriptive statistics (one row per variable) are stored in"
+                  " 'validation_step1_hourly_stats' / 'validation_step1_daily_stats'.")
+
+        return coverage
 
     def validate_fs_calculation(self, variable, month, year):
         """
@@ -97,23 +209,30 @@ class _ValidationMixin:
             'Interpolation_Point': common_x, 'CDF_Long_Term': interp_lt,
             'CDF_Candidate_Year': interp_yr, 'Absolute_Difference': np.abs(interp_lt - interp_yr)
         })
-        print("Calculation Breakdown Table (first 5 rows):"), print(df_calc.head().to_string())
-        print(f"\nSum of 'Absolute_Difference' (Final FS Value): {df_calc['Absolute_Difference'].sum():.4f}")
+        print(f"Interpolation points compared: {len(df_calc)}")
+        print(f"Sum of 'Absolute_Difference' (final FS value): {df_calc['Absolute_Difference'].sum():.4f}")
+        print("Returned: the full point-by-point breakdown as a DataFrame "
+              "('Interpolation_Point', 'CDF_Long_Term', 'CDF_Candidate_Year', "
+              "'Absolute_Difference').")
 
         return df_calc
 
     def validate_full_ranking_for_month(self, month):
         """
-        Calculates and displays the full FS ranking for all years for a given month.
+        Computes the full FS ranking of **all** available years for a given
+        month and returns it (only a short summary is printed).
 
         Args:
             month (int): The month to validate (1-12).
 
         Returns:
-            pd.DataFrame: The full ranking table for the specified month.
+            pd.DataFrame: The full ranking table for the specified month, one
+            row per available year, with the per-variable FS statistic, its
+            weight and the resulting weighted contribution. Also stored in
+            ``validation_step2_fs_ranking_by_month[month]``.
 
         Example:
-            >>> gen.validate_full_ranking_for_month(month=1)  # doctest: +SKIP
+            >>> df = gen.validate_full_ranking_for_month(month=1)  # doctest: +SKIP
         """
         # Check if either hourly or daily data exists
         if self.df_hourly is None and self.df_daily is None:
@@ -129,9 +248,14 @@ class _ValidationMixin:
         # Update attribute as well, ensuring consistency
         self.validation_step2_fs_ranking_by_month[month] = df_ranking
 
-        print("\nWeights used for calculation:"), print(self.weights)
-        print("\nFull Ranking Table (showing top 10 years):"), print(df_ranking.head(10).to_string(float_format="%.4f"))
-        print(f"(The full table with {len(df_ranking)} years has been saved to `tmy_generator.validation_st2_df_fs_ranking_by_month[{month}]`)")
+        print(f"Years ranked: {len(df_ranking)} | weighted variables: {len(self.weights)}"
+              " (the weights themselves are available in 'weights')")
+        if not df_ranking.empty:
+            best = df_ranking.iloc[0]
+            print(f"Best-ranked year: {int(best['Year'])}"
+                  f" (Total_W_FS = {best['Total_W_FS']:.4f})")
+        print("Returned: the full ranking table as a DataFrame (also stored in"
+              f" 'validation_step2_fs_ranking_by_month[{month}]').")
 
         return df_ranking
 
@@ -175,15 +299,33 @@ class _ValidationMixin:
         else:
             raise RuntimeError("Run 'step_3_apply_persistence()' first.")
 
-    def validate_step_4_final_tmy(self):
-        """Prints the composition table and descriptive statistics of the final TMY.
+    def validate_step_4_final_tmy(self, verbose=True):
+        """Returns the composition table of the final TMY.
+
+        The (very wide) ``describe()`` of :attr:`tmy_final` is no longer
+        dumped to the console: it is stored, transposed to one row per
+        variable, in :attr:`validation_step6_tmy_final_stats` so that it can
+        be rendered as a table.
+
+        .. note::
+           For a single, consolidated audit of the whole pipeline prefer
+           :meth:`generate_full_summary` /
+           :attr:`validation_full_summary`, which collects one row per month
+           with the FS score, proximity rank, persistence decision and the
+           selected year's deviation from the long-term mean.
+
+        Args:
+            verbose (bool): If True (default), prints a short summary.
+
+        Returns:
+            pandas.DataFrame: The TMY composition table (also stored in
+            :attr:`validation_step6_tmy_composition`).
 
         Example:
             >>> gen.generate_tmy()  # doctest: +SKIP
             >>> gen.validate_step_4_final_tmy()  # doctest: +SKIP
         """
         if self.tmy_final is None: raise RuntimeError("Run 'step_4_create_and_smooth_tmy()' first.")
-        print("\n--- Validation for Step 4: Final TMY ---")
 
         if self.validation_step6_tmy_composition is None:
              self.validation_step6_tmy_composition = self._generate_tmy_composition_dataframe()
@@ -192,26 +334,53 @@ class _ValidationMixin:
         if self.validation_step6_tmy_composition is None:
              composition_data = {'Month': [pd.to_datetime(f'2000-{m}-01').strftime('%B') for m in range(1, 13)], 'Source_Year': [self.selected_months[m] for m in range(1, 13)]}
              self.validation_step6_tmy_composition = pd.DataFrame(composition_data)
-        print("\nTMY Composition Table:"), print(self.validation_step6_tmy_composition.set_index('Month').to_string())
 
-        print("\nDescriptive Statistics of the Final TMY:"), print(self.tmy_final.describe().to_string())
+        self.validation_step6_tmy_final_stats = self.tmy_final.describe().T
 
-    def summarize_fs_results(self):
-        """Creates and prints a summary table of FS results for all candidate months.
+        if verbose:
+            print("--- Step 4 validation: final TMY ---")
+            print(f"Final TMY: {len(self.tmy_final):,} hours x "
+                  f"{self.tmy_final.shape[1]} variables, assembled from "
+                  f"{len(set((self.selected_months or {}).values()))} different source years.")
+            print("Returned: the TMY composition table as a DataFrame (also stored in"
+                  " 'validation_step6_tmy_composition'); descriptive statistics of the"
+                  " final TMY are in 'validation_step6_tmy_final_stats'.")
+
+        return self.validation_step6_tmy_composition
+
+    def summarize_fs_results(self, verbose=True):
+        """Returns the Top-5 candidate ranking breakdown for every month.
+
+        Args:
+            verbose (bool): If True (default), prints a one-line summary of
+                the table returned.
+
+        Returns:
+            pandas.DataFrame: The proximity-ordered Top-5 breakdown, indexed
+            by ``(Month, Year)`` (also stored in
+            :attr:`validation_step3_proximity_ranking`).
 
         Example:
             >>> gen.sandia_step_3_proximity_ranking()  # doctest: +SKIP
             >>> gen.summarize_fs_results()  # doctest: +SKIP
         """
         if self.candidate_months is None: raise RuntimeError("Run 'step_2_select_candidate_months()' first.")
-        print("\n--- Overall Summary of FS Results ---")
 
         # Ensure the summary dataframe exists
         if self.validation_step3_proximity_ranking is None:
             self._generate_summary_fs_ranking()
 
-        print("\nRanking Breakdown for the Top 5 Candidates of Each Month:")
-        print(self.validation_step3_proximity_ranking.to_string(float_format="%.4f"))
+        df_summary = self.validation_step3_proximity_ranking
+        if df_summary is None:
+            # Step 3 has not been run: fall back to the plain Step 2 summary.
+            df_summary = self.validation_step2_summary_fs_ranking
+
+        if verbose and df_summary is not None:
+            print(f"Ranking breakdown for the Top-5 candidates of each month:"
+                  f" {len(df_summary)} rows. Returned as a DataFrame"
+                  " (also stored in 'validation_step3_proximity_ranking').")
+
+        return df_summary
 
     @staticmethod
     def check_input_expectations(file_path, weighting_method='sandia', data_frequency='hourly', column_mapping=None):

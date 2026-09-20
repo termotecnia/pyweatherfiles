@@ -38,6 +38,12 @@ class _DataLoadingMixin:
         assert isinstance(df.index, pd.DatetimeIndex), "ERROR: The 'time' column could not be converted to a DatetimeIndex."
 
         available_years = sorted(df.index.year.unique())
+        # Remember which calendar years actually exist in the *source* file:
+        # the hourly resampling below rebuilds a strict, gap-free grid and
+        # interpolates across any hole (including whole missing years), so
+        # this is the only place where that information survives. It is
+        # reported by validate_step_1_data_loading().
+        self.source_years = [int(y) for y in available_years]
         if self.years_to_include is not None:
             print(f"Filtering data to include only the years: {list(self.years_to_include)}")
             missing_years = set(self.years_to_include) - set(available_years)

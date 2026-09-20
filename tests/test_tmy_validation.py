@@ -123,9 +123,52 @@ def fresh_tmy(tmp_path):
 
 
 class TestValidateStep1DataLoading:
-    def test_prints_statistics_without_raising(self, daily_cdf_tmy, capsys):
-        daily_cdf_tmy.validate_step_1_data_loading()
-        assert "Descriptive Statistics" in capsys.readouterr().out
+    def test_returns_coverage_table_and_stores_describe_tables(self, daily_cdf_tmy, capsys):
+        coverage = daily_cdf_tmy.validate_step_1_data_loading()
+        out = capsys.readouterr().out
+
+        # The console output is now a short human-readable summary, not a
+        # dump of the (very wide) describe() tables.
+        assert "Step 1 validation" in out
+        assert "Descriptive Statistics for Hourly Data" not in out
+
+        assert list(coverage.index) == ["df_hourly", "df_daily"]
+        for col in ("Records", "Expected_Records", "Missing_Records", "Years",
+                    "NaN_Values", "Interpolated_Years", "Negative_GHI_DNI_Wind"):
+            assert col in coverage.columns
+        # Step 1 resamples onto a strict grid and clips negatives to zero.
+        assert coverage.loc["df_hourly", "Missing_Records"] == 0
+        assert coverage.loc["df_hourly", "Negative_GHI_DNI_Wind"] == 0
+        assert coverage.loc["df_daily", "Years"] == len(YEARS)
+        # The synthetic source file has no missing year, so nothing was rebuilt.
+        assert coverage.loc["df_daily", "Interpolated_Years"] == "-"
+
+        assert coverage is daily_cdf_tmy.validation_step1_coverage
+        # describe() is transposed: one row per variable.
+        assert list(daily_cdf_tmy.validation_step1_daily_stats.index) == list(daily_cdf_tmy.df_daily.columns)
+        assert list(daily_cdf_tmy.validation_step1_hourly_stats.index) == list(daily_cdf_tmy.df_hourly.columns)
+
+    def test_verbose_false_prints_nothing(self, daily_cdf_tmy, capsys):
+        daily_cdf_tmy.validate_step_1_data_loading(verbose=False)
+        assert capsys.readouterr().out == ""
+
+    def test_year_missing_from_source_is_reported_as_interpolated(self, tmp_path, capsys):
+        # Step 1 resamples onto a strict grid and interpolates every hole, so
+        # a whole absent calendar year is silently rebuilt. The coverage table
+        # is the only place where that shows up.
+        years = [2015, 2016, 2017, 2019, 2020, 2021]  # 2018 missing on purpose
+        csv_path = _make_synthetic_hourly_csv(tmp_path / "gap.csv", years=years, seed=2018)
+        gen = TMYGenerator(file_path=csv_path, cdf_method="daily",
+                           data_frequency="hourly", save_session=False)
+        gen.sandia_step_1_load_and_prepare()
+
+        coverage = gen.validate_step_1_data_loading()
+
+        assert gen.source_years == years
+        assert coverage.loc["df_daily", "Years"] == 7           # 2018 was rebuilt
+        assert coverage.loc["df_daily", "Missing_Years"] == "-"  # the grid is continuous
+        assert coverage.loc["df_daily", "Interpolated_Years"] == "2018"
+        assert "2018" in capsys.readouterr().out
 
     def test_raises_before_data_loaded(self, fresh_tmy):
         with pytest.raises(RuntimeError, match="step_1_load_and_prepare_data"):
@@ -180,9 +223,17 @@ class TestValidatePersistenceSelection:
 
 
 class TestValidateStep4FinalTmy:
-    def test_prints_composition_and_statistics(self, daily_cdf_tmy, capsys):
-        daily_cdf_tmy.validate_step_4_final_tmy()
-        assert "TMY Composition Table" in capsys.readouterr().out
+    def test_returns_composition_and_stores_statistics(self, daily_cdf_tmy, capsys):
+        composition = daily_cdf_tmy.validate_step_4_final_tmy()
+        out = capsys.readouterr().out
+
+        assert "Step 4 validation" in out
+        assert "TMY Composition Table" not in out  # no more console dump
+
+        assert composition is daily_cdf_tmy.validation_step6_tmy_composition
+        assert "Source_Year" in composition.columns
+        # describe() is transposed: one row per variable.
+        assert list(daily_cdf_tmy.validation_step6_tmy_final_stats.index) == list(daily_cdf_tmy.tmy_final.columns)
 
     def test_raises_before_tmy_generated(self, fresh_tmy):
         with pytest.raises(RuntimeError, match="step_4_create_and_smooth_tmy"):
@@ -190,9 +241,17 @@ class TestValidateStep4FinalTmy:
 
 
 class TestSummarizeFsResults:
-    def test_prints_ranking_breakdown(self, daily_cdf_tmy, capsys):
-        daily_cdf_tmy.summarize_fs_results()
-        assert "Ranking Breakdown" in capsys.readouterr().out
+    def test_returns_ranking_breakdown(self, daily_cdf_tmy, capsys):
+        df_summary = daily_cdf_tmy.summarize_fs_results()
+        out = capsys.readouterr().out
+
+        assert "Ranking breakdown" in out
+        assert df_summary is daily_cdf_tmy.validation_step3_proximity_ranking
+        assert not df_summary.empty
+
+    def test_verbose_false_prints_nothing(self, daily_cdf_tmy, capsys):
+        daily_cdf_tmy.summarize_fs_results(verbose=False)
+        assert capsys.readouterr().out == ""
 
     def test_regenerates_summary_when_attribute_cleared(self, daily_cdf_tmy):
         # NOTE: _generate_summary_fs_ranking() (called internally when

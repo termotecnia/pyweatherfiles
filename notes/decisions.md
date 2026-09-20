@@ -13,6 +13,17 @@ Record decisions that change the project's design, reproducibility, data sources
 
 ---
 
+## D-005 — `validate_*`/`summarize_*` return DataFrames instead of printing them
+
+- **Date:** 2026-09-20
+- **Status:** accepted
+- **Context:** Most diagnostic methods of `TMYGenerator` dumped their result with `print(df.to_string())`. On real data those tables are unreadable: `validate_step_1_data_loading()` printed two `describe()` blocks 16 columns wide, `validate_full_ranking_for_month()` 31 columns × 10 rows, `summarize_fs_results()` 17 columns × 60 rows and `validate_step_4_final_tmy()` both an 18-column composition table and a 16-column `describe()`. In a notebook (the case study is the main showcase of the API) that produces walls of fixed-width text, while the very same object rendered as a returned `DataFrame` is a proper, scrollable HTML table. It was also unclear *what* `validate_step_1_data_loading()` was validating, since printing `describe()` answers no specific question.
+- **Decision:** Every diagnostic method returns its table and stores it in a `validation_*` attribute; what they print is only a short, human-readable summary (and can be silenced with `verbose=False` where it exists). `validate_step_1_data_loading()` was redefined around the three guarantees Step 1 actually provides (continuous grid / enough years / usable values) and now returns a **coverage table** — `validation_step1_coverage` — with the `describe()` tables transposed (one row per variable) in `validation_step1_hourly_stats`/`validation_step1_daily_stats`. `summarize_fs_results()` returns `validation_step3_proximity_ranking`; `validate_step_4_final_tmy()` returns `validation_step6_tmy_composition` and stores `validation_step6_tmy_final_stats`, and its docstring now points to `generate_full_summary()`/`validation_full_summary` as the preferred single consolidated audit. **Exception:** `validate_persistence_selection()` keeps printing — its per-month tables are narrow and are meant to be read as a sequential exclusion report.
+- **Consequences:** No signature is broken (the methods previously returned `None` or the same object), but any code asserting on the old console text must be updated — `tests/test_tmy_validation.py` was. New public attributes: `source_years`, `validation_step1_coverage`, `validation_step1_hourly_stats`, `validation_step1_daily_stats`, `validation_step6_tmy_final_stats`. The case-study notebook no longer calls `validate_step_4_final_tmy()` at all (`validation_full_summary` covers it) and displays the returned tables instead.
+- **Links:** [[notes/work-log|Work log]] (2026-09-20 entry), [[questions|Open questions]] (Q about the interpolated year), `pyweatherfiles/tmy/_validation.py`, [[../README#3-10-validation-diagnostics-and-visualization|README §3.10]], `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study_v03.ipynb`
+
+---
+
 ## D-004 — Step 7 smooths by default, with a variance-normalized `s_factor='auto'`
 
 - **Date:** 2026-09-19

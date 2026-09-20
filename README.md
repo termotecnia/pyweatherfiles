@@ -161,7 +161,10 @@ gen.export_tmy('tmy_output.csv')
 - If `data_frequency='hourly'`: resamples to hourly frequency (`resample('h').mean().interpolate('linear')`), clips negative `GHI`, `DNI` and `Wind_speed` values to 0, and creates a `GHI=0` column with a warning if it doesn't exist.
 - Computes the daily aggregates required for `weighting_method` in `{'sandia','tmy3'}`: `T_air_mean/max/min`, `T_dew_mean/max/min`, `Wind_speed_mean/max`, `GHI_sum` (and `DNI_sum` only for TMY3).
 - If `hourly_file_path` was provided, it is loaded and processed the same way, then **filtered to the months present in the daily file**.
+- Records the calendar years actually present in the source file in `source_years`, **before** the resampling above rebuilds the grid.
 - Requires a minimum of 5 years of data.
+
+> **Caveat — the resampling fills *every* gap:** `resample('h').mean().interpolate('linear')` produces a strict, gap-free hourly grid between the first and the last timestamp of the file, so any hole — up to and including a whole absent calendar year — is silently reconstructed by linear interpolation and then counted as a candidate year in Step 2. Run [`validate_step_1_data_loading()`](#310-validation-diagnostics-and-visualization) right after this step: its `Interpolated_Years` column compares `source_years` with the prepared frame and is the only place where such a reconstructed year is reported.
 
 **Default weight table** (each scheme sums to 1.0):
 
@@ -370,18 +373,20 @@ gen.export_tmy('tmy_output.csv')   # also supports .tmy / .xlsx
 
 ### 3.10 Validation, diagnostics and visualization
 
-`TMYGenerator` keeps, after every step, a rich set of **validation attributes** (`validation_step2_fs_ranking_by_month`, `validation_step2_summary_fs_ranking`, `validation_step3_proximity_ranking`, `validation_step4_df_persistence_decision`, `validation_step4_persistence_sequential_details`, `validation_step4_persistence_score_details`, `validation_step5_selected_months_summary`, `validation_step6_tmy_composition`, `validation_full_summary`, `validation_selection_analysis`) which are automatically included in the persisted session ([§10](#10-session_manager--session-persistence-cross-cutting)).
+`TMYGenerator` keeps, after every step, a rich set of **validation attributes** (`validation_step1_coverage`, `validation_step1_hourly_stats`, `validation_step1_daily_stats`, `validation_step2_fs_ranking_by_month`, `validation_step2_summary_fs_ranking`, `validation_step3_proximity_ranking`, `validation_step4_df_persistence_decision`, `validation_step4_persistence_sequential_details`, `validation_step4_persistence_score_details`, `validation_step5_selected_months_summary`, `validation_step6_tmy_composition`, `validation_step6_tmy_final_stats`, `validation_full_summary`, `validation_selection_analysis`) which are automatically included in the persisted session ([§10](#10-session_manager--session-persistence-cross-cutting)).
 
-**Console printing/validation methods:**
+**Validation methods:**
+
+> These methods **return** their result as a DataFrame (and store it in the matching `validation_*` attribute) instead of dumping wide tables to the console; what they print is only a short, human-readable summary. This keeps them readable in a notebook, where the returned DataFrame is rendered as a real table. `validate_persistence_selection()` is the deliberate exception: its per-month tables are narrow and are meant to be read as a sequential report.
 
 | Method | Description |
 |---|---|
-| `validate_step_1_data_loading()` | Descriptive statistics of `df_hourly`/`df_daily` |
+| `validate_step_1_data_loading(verbose=True)` | Coverage/completeness audit of `df_hourly`/`df_daily`: records vs. records expected on the time grid, missing records and `NaN`s, calendar years available (`Missing_Years`), **`Interpolated_Years`** (years absent from the source file that Step 1's resampling silently rebuilt by interpolation — a whole missing year shows up only here) and remaining negative GHI/DNI/wind values. Returns the coverage table (`validation_step1_coverage`); the `describe()` tables, transposed to one row per variable, are stored in `validation_step1_hourly_stats`/`validation_step1_daily_stats` |
 | `validate_fs_calculation(variable, month, year)` | Step-by-step breakdown of the FS calculation for a specific case; returns a DataFrame with the interpolation |
-| `validate_full_ranking_for_month(month)` | Full FS ranking (all years) for a month |
+| `validate_full_ranking_for_month(month)` | Full FS ranking (all years) for a month; returns it and stores it in `validation_step2_fs_ranking_by_month[month]` |
 | `validate_persistence_selection()` | Prints the persistence decision tables (sequential or score) month by month |
-| `validate_step_4_final_tmy()` | TMY composition table + descriptive statistics of the final TMY |
-| `summarize_fs_results()` | Summary table of the FS ranking of the 5 candidates for each month |
+| `validate_step_4_final_tmy(verbose=True)` | Returns the TMY composition table (`validation_step6_tmy_composition`); descriptive statistics of the final TMY are stored in `validation_step6_tmy_final_stats`. For a single consolidated audit prefer `generate_full_summary()` / `validation_full_summary` |
+| `summarize_fs_results(verbose=True)` | Returns the summary table of the FS ranking of the 5 candidates for each month (`validation_step3_proximity_ranking`) |
 | `check_input_expectations(file_path, weighting_method, data_frequency, column_mapping)` *(static)* | Analyzes an input file and suggests the required `column_mapping`, also validating the time-column format |
 
 **Visualization methods (matplotlib):**

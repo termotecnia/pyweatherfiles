@@ -161,7 +161,10 @@ gen.export_tmy('tmy_output.csv')
 - Si `data_frequency='hourly'`: resamplea a frecuencia horaria (`resample('h').mean().interpolate('linear')`), recorta a 0 los valores negativos de `GHI`, `DNI` y `Wind_speed`, y crea una columna `GHI=0` con aviso si no existe.
 - Calcula agregados diarios necesarios para `weighting_method` en `{'sandia','tmy3'}`: `T_air_mean/max/min`, `T_dew_mean/max/min`, `Wind_speed_mean/max`, `GHI_sum` (y `DNI_sum` solo para TMY3).
 - Si se indicó `hourly_file_path`, se carga y procesa igual, y se **filtra a los meses presentes en el fichero diario**.
+- Registra en `source_years` los años naturales realmente presentes en el fichero de origen, **antes** de que el remuestreo anterior reconstruya la rejilla.
 - Exige un mínimo de 5 años de datos.
+
+> **Advertencia — el remuestreo rellena *todos* los huecos:** `resample('h').mean().interpolate('linear')` genera una rejilla horaria estricta y sin huecos entre la primera y la última marca temporal del fichero, de modo que cualquier laguna —incluido un año natural entero ausente— se reconstruye en silencio por interpolación lineal y pasa a contar como año candidato en el Paso 2. Conviene ejecutar [`validate_step_1_data_loading()`](#310-validación-diagnóstico-y-visualización) justo después de este paso: su columna `Interpolated_Years` compara `source_years` con el DataFrame preparado y es el único sitio donde se informa de un año reconstruido así.
 
 **Tabla de pesos por defecto** (suman 1.0 en cada esquema):
 
@@ -371,18 +374,20 @@ gen.export_tmy('tmy_output.csv')   # también soporta .tmy / .xlsx
 
 ### 3.10 Validación, diagnóstico y visualización
 
-`TMYGenerator` mantiene, tras cada paso, un rico conjunto de **atributos de validación** (`validation_step2_fs_ranking_by_month`, `validation_step2_summary_fs_ranking`, `validation_step3_proximity_ranking`, `validation_step4_df_persistence_decision`, `validation_step4_persistence_sequential_details`, `validation_step4_persistence_score_details`, `validation_step5_selected_months_summary`, `validation_step6_tmy_composition`, `validation_full_summary`, `validation_selection_analysis`) que se incluyen automáticamente en la sesión persistida ([§10](#10-session_manager--persistencia-de-sesión-transversal)).
+`TMYGenerator` mantiene, tras cada paso, un rico conjunto de **atributos de validación** (`validation_step1_coverage`, `validation_step1_hourly_stats`, `validation_step1_daily_stats`, `validation_step2_fs_ranking_by_month`, `validation_step2_summary_fs_ranking`, `validation_step3_proximity_ranking`, `validation_step4_df_persistence_decision`, `validation_step4_persistence_sequential_details`, `validation_step4_persistence_score_details`, `validation_step5_selected_months_summary`, `validation_step6_tmy_composition`, `validation_step6_tmy_final_stats`, `validation_full_summary`, `validation_selection_analysis`) que se incluyen automáticamente en la sesión persistida ([§10](#10-session_manager--persistencia-de-sesión-transversal)).
 
-**Métodos de impresión/validación por consola:**
+**Métodos de validación:**
+
+> Estos métodos **devuelven** su resultado como DataFrame (y lo guardan en el atributo `validation_*` correspondiente) en lugar de volcar tablas anchas por consola; lo que imprimen es solo un resumen breve y legible. Así siguen siendo legibles en un notebook, donde el DataFrame devuelto se renderiza como una tabla real. `validate_persistence_selection()` es la excepción deliberada: sus tablas mensuales son estrechas y están pensadas para leerse como un informe secuencial.
 
 | Método | Descripción |
 |---|---|
-| `validate_step_1_data_loading()` | Estadísticos descriptivos de `df_hourly`/`df_daily` |
+| `validate_step_1_data_loading(verbose=True)` | Auditoría de cobertura/completitud de `df_hourly`/`df_daily`: registros frente a los esperados en la rejilla temporal, registros ausentes y `NaN`, años naturales disponibles (`Missing_Years`), **`Interpolated_Years`** (años que no están en el fichero de origen y que el remuestreo del Paso 1 reconstruyó por interpolación — un año entero ausente solo se detecta aquí) y valores negativos residuales de GHI/DNI/viento. Devuelve la tabla de cobertura (`validation_step1_coverage`); los `describe()`, traspuestos a una fila por variable, quedan en `validation_step1_hourly_stats`/`validation_step1_daily_stats` |
 | `validate_fs_calculation(variable, month, year)` | Desglose paso a paso del cálculo FS para un caso concreto; devuelve un DataFrame con la interpolación |
-| `validate_full_ranking_for_month(month)` | Ranking FS completo (todos los años) para un mes |
+| `validate_full_ranking_for_month(month)` | Ranking FS completo (todos los años) para un mes; lo devuelve y lo guarda en `validation_step2_fs_ranking_by_month[month]` |
 | `validate_persistence_selection()` | Imprime las tablas de decisión de persistencia (sequential o score) mes a mes |
-| `validate_step_4_final_tmy()` | Tabla de composición del TMY + estadísticos descriptivos del TMY final |
-| `summarize_fs_results()` | Tabla resumen del ranking FS de los 5 candidatos de cada mes |
+| `validate_step_4_final_tmy(verbose=True)` | Devuelve la tabla de composición del TMY (`validation_step6_tmy_composition`); los estadísticos descriptivos del TMY final quedan en `validation_step6_tmy_final_stats`. Para una auditoría consolidada, es preferible `generate_full_summary()` / `validation_full_summary` |
+| `summarize_fs_results(verbose=True)` | Devuelve la tabla resumen del ranking FS de los 5 candidatos de cada mes (`validation_step3_proximity_ranking`) |
 | `check_input_expectations(file_path, weighting_method, data_frequency, column_mapping)` *(estático)* | Analiza un fichero de entrada y sugiere el `column_mapping` necesario, validando también el formato de la columna de tiempo |
 
 **Métodos de visualización (matplotlib):**
