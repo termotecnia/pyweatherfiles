@@ -3,7 +3,7 @@
 degree_hours/batch_analyzer.py
 =================================
 
-:class:`EpwBatchAnalyzer` — runs :class:`~pyweatherfiles.degree_hours.DegreeHoursCalculator`
+:class:`EpwBatchAnalyzer` — runs :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator`
 over *several* EPW files and *several* hour-of-day scenarios at once,
 producing a single comparative DataFrame with ``(epw_name, variable)``
 MultiIndex columns — ideal for "TMY vs. real years vs. reference file"
@@ -39,7 +39,7 @@ _RADIATION_VARS = frozenset({
 
 class EpwBatchAnalyzer:
     """
-    Run :class:`~pyweatherfiles.degree_hours.DegreeHoursCalculator` over
+    Run :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator` over
     multiple EPW files and compile a comparative monthly summary table.
 
     For each EPW the following columns are computed:
@@ -65,12 +65,12 @@ class EpwBatchAnalyzer:
         The raw *hours* argument as passed to the constructor (normalised
         internally by :meth:`_resolve_hours` when :meth:`run` executes).
     zone_name : str or None
-        Zone/Space name forwarded to every :meth:`DegreeHoursCalculator.calculate`
+        Zone/Space name forwarded to every :meth:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator.calculate`
         call.
     mode : str
         ``'heating'``, ``'cooling'`` or ``'both'``.
     year : int or None
-        Year override forwarded to every :class:`DegreeHoursCalculator`.
+        Year override forwarded to every :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator`.
     frequencies : list of str
         Aggregation frequencies to compute (subset of ``'hourly'``,
         ``'daily'``, ``'monthly'``, ``'yearly'``).
@@ -80,8 +80,8 @@ class EpwBatchAnalyzer:
         MultiIndex-column DataFrames ``(epw_name, variable)``, one per
         requested frequency, with months (or hours/days/years) as index.
         Populated after calling :meth:`run`.
-    calculators : dict[str, DegreeHoursCalculator]
-        Maps EPW base name -> :class:`DegreeHoursCalculator` instance,
+    calculators : dict[str, object]
+        Maps EPW base name -> :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator` instance,
         giving access to hourly data and individual results after :meth:`run`.
 
     Example
@@ -116,7 +116,7 @@ class EpwBatchAnalyzer:
             Paths to the EPW files to analyse.
         setpoint_source : str or dict
             IDF file path or custom setpoint configuration dict passed
-            directly to :meth:`DegreeHoursCalculator.calculate`.
+            directly to :meth:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator.calculate`.
         epw_variables : list of str  *or*  dict, optional
             Climate variables to include as monthly columns.
 
@@ -279,8 +279,8 @@ class EpwBatchAnalyzer:
     def run(self, save_session: bool = True, session_dir: Optional[str] = None) -> Dict[str, pd.DataFrame]:
         """
         Execute the analysis for every EPW file: for each EPW path, load it
-        with :class:`DegreeHoursCalculator` (stored in :attr:`calculators`),
-        run :meth:`DegreeHoursCalculator.calculate` once per hour-of-day
+        with :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator` (stored in :attr:`calculators`),
+        run :meth:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator.calculate` once per hour-of-day
         scenario in :attr:`hours` (see :meth:`_resolve_hours`), extract the
         requested :attr:`epw_variables` (see :meth:`_resolve_epw_variables`)
         aggregated at each requested frequency, and finally concatenate
@@ -293,7 +293,7 @@ class EpwBatchAnalyzer:
             session for the analyzer as a whole via
             :func:`~pyweatherfiles.session_manager.save_object_session`.
             Note: this does **not** prevent each internal
-            :meth:`DegreeHoursCalculator.calculate` call from also saving
+            :meth:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator.calculate` call from also saving
             its own session next to its respective EPW file (that internal
             call always uses its own default of ``save_session=True`` and
             currently cannot be silenced from here).

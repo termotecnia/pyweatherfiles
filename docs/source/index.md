@@ -22,8 +22,8 @@ This site is generated with [Sphinx](https://www.sphinx-doc.org/) and hosts:
 
 ```{tip}
 New to the package? Start with {doc}`installation` and {doc}`quickstart`,
-then work through the {doc}`tutorial_pyweatherfiles` notebook (or the more
-extensive {doc}`tutorial_case_study`).
+then work through the {doc}`tutorial` guide and the more extensive
+{doc}`tutorial_case_study` notebook.
 ```
 
 ## Module map
@@ -46,7 +46,6 @@ extensive {doc}`tutorial_case_study`).
 installation
 quickstart
 tutorial
-tutorial_pyweatherfiles
 tutorial_case_study
 jupyter_notebooks/tutorial_pyweatherfiles_case_study
 ```

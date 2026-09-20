@@ -4,12 +4,12 @@ REM Este script automatiza la generación de la documentación de pyweatherfiles
 REM Debe ser ejecutado desde la raíz del proyecto.
 
 set "PYTHON_CMD="
-where py >nul 2>&1
-if not errorlevel 1 set "PYTHON_CMD=py"
+where python >nul 2>&1
+if not errorlevel 1 set "PYTHON_CMD=python"
 
 if not defined PYTHON_CMD (
-	where python >nul 2>&1
-	if not errorlevel 1 set "PYTHON_CMD=python"
+where py >nul 2>&1
+    if not errorlevel 1 set "PYTHON_CMD=py"
 )
 
 if not defined PYTHON_CMD (
@@ -32,21 +32,36 @@ IF NOT EXIST docs\make.bat (
 	EXIT /B 1
 )
 
-%PYTHON_CMD% -m sphinx --version >nul 2>&1
-IF ERRORLEVEL 1 (
-	ECHO ERROR: Sphinx no esta instalado en este interprete.
-	ECHO Sugerencia: %PYTHON_CMD% -m pip install --upgrade sphinx
-	PAUSE
-	EXIT /B 1
-)
-
-ECHO --- [Paso 1 de 3] Limpiando compilaciones anteriores...
+ECHO --- [Paso 1 de 4] Limpiando compilaciones anteriores...
 REM Borra el contenido de la carpeta de salida para asegurar una compilación limpia.
 REM El flag /Q ejecuta el borrado sin pedir confirmación.
 IF EXIST docs\build rmdir /s /q docs\build
 
 ECHO.
-ECHO --- [Paso 2 de 3] Generando archivos .rst de la API con sphinx-apidoc...
+ECHO --- [Paso 2 de 4] Verificando dependencias de documentacion...
+%PYTHON_CMD% -c "import sphinx, myst_nb" >nul 2>&1
+IF ERRORLEVEL 1 (
+	ECHO AVISO: Faltan dependencias de documentacion ^(sphinx/myst_nb^) o no estan instaladas en este interprete.
+	ECHO Instalando el extra 'docs' definido en pyproject.toml...
+	%PYTHON_CMD% -m pip install -e ".[docs]"
+	IF ERRORLEVEL 1 (
+		ECHO ERROR: No se pudieron instalar las dependencias de documentacion.
+		ECHO Sugerencia: %PYTHON_CMD% -m pip install -e ".[docs]"
+		PAUSE
+		EXIT /B 1
+	)
+)
+
+%PYTHON_CMD% -c "import sphinx, myst_nb" >nul 2>&1
+IF ERRORLEVEL 1 (
+	ECHO ERROR: Sphinx o myst_nb siguen sin estar disponibles tras la instalacion.
+	ECHO Sugerencia: %PYTHON_CMD% -m pip install -e ".[docs]"
+	PAUSE
+	EXIT /B 1
+)
+
+ECHO.
+ECHO --- [Paso 3 de 4] Generando archivos .rst de la API con sphinx-apidoc...
 REM Ejecuta sphinx-apidoc para generar/actualizar los archivos .rst desde el código fuente.
 REM -o docs\source\api: Directorio de salida para los archivos .rst.
 REM pyweatherfiles: Ruta al paquete que se va a documentar.
@@ -59,7 +74,7 @@ IF ERRORLEVEL 1 (
 )
 
 ECHO.
-ECHO --- [Paso 3 de 3] Construyendo la documentación HTML con Sphinx...
+ECHO --- [Paso 4 de 4] Construyendo la documentacion HTML con Sphinx...
 REM Cambia al directorio 'docs' y ejecuta el comando 'make html'.
 cd docs
 IF ERRORLEVEL 1 (

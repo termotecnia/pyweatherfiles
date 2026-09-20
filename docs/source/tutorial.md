@@ -1,18 +1,13 @@
 # Tutorial notebook
 
-The full, runnable walkthrough is rendered right here in the documentation
-(with all of its real outputs and plots already embedded), and can also be
-opened interactively:
+The original standalone tutorial notebook is no longer versioned in this
+repository. The runnable notebook-based walkthrough is now the case-study
+notebook documented in {doc}`tutorial_case_study`.
 
-```{eval-rst}
-:download:`Download tutorial_pyweatherfiles.ipynb <../../examples/tutorial_pyweatherfiles.ipynb>`
-```
-
-- **Rendered notebook**: {doc}`tutorial_pyweatherfiles` (next page).
-- **Location in the repository**: `examples/tutorial_pyweatherfiles.ipynb` —
-  this is the single source of truth; the copy shown in this documentation
-  site is generated automatically at build time (see
-  `docs/source/conf.py`), so it never needs to be edited twice.
+- **Rendered notebook**: {doc}`tutorial_case_study` (next page).
+- **Location in the repository**: `docs/source/jupyter_notebooks/` for the
+  case-study notebook and its data, which are committed together so they can
+  be executed standalone from GitHub.
 
 ## What it covers
 

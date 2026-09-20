@@ -34,7 +34,8 @@ Optional dependencies, required only by specific modules:
 ## Building this documentation locally
 
 Install the `docs` extra (Sphinx, MyST-Parser for Markdown support, and the
-Furo theme):
+Furo theme). The ``dist_build_docs.bat`` helper will also install this extra
+automatically if it detects that the documentation dependencies are missing:
 
 ```bash
 pip install -e ".[docs]"

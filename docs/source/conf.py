@@ -168,7 +168,6 @@ autodoc_mock_imports = ["pvlib", "tabulate", "besos", "eppy", "accim"]
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "pandas": ("https://pandas.pydata.org/docs/", None),
-    "numpy": ("https://numpy.org/doc/stable/", None),
 }
 
 todo_include_todos = True

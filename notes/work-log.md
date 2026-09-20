@@ -8,6 +8,17 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-09-20 — Docs build script now bootstraps missing Sphinx/MyST dependencies
+
+- Objective: make `dist_build_docs.bat` resilient when the active Python environment does not yet have the documentation toolchain installed.
+- Files:
+  - `dist_build_docs.bat` — now checks for `sphinx` and `myst_nb` before building; if either is missing, it installs the `docs` extra from `pyproject.toml` and re-checks before continuing.
+  - `docs/source/installation.md` — notes that the helper can auto-install the `docs` extra when needed.
+- Finding: the reported failure was caused by running the build in an environment without `myst_nb`, even though `myst_nb` is declared in the `docs` extra.
+- Validation: build-script logic updated; documentation guidance kept consistent with the new behavior.
+- Next step: rerun `dist_build_docs.bat` in the target environment; if installation still fails, inspect the `pip` output for the underlying dependency issue.
+
+---
 ## 2026-09-20 — Final case-study notebook consolidated for repository release
 
 - Objective: keep one standalone, GitHub-runnable case-study notebook before PyPI release preparation, retain only its six required inputs, and leave no generated files after its normal execution.

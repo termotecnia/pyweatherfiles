@@ -3,7 +3,7 @@
 degree_hours/group_trend_analyzer.py
 =======================================
 
-:class:`EpwGroupTrendAnalyzer` — runs :class:`~pyweatherfiles.degree_hours.DegreeHoursCalculator`
+:class:`EpwGroupTrendAnalyzer` — runs :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator`
 over an entire *set* of EPW files (e.g. a whole folder of multi-year
 records), automatically classified into named groups (e.g. one per
 city/climate) from each filename via a configurable regex, and adds
@@ -86,7 +86,7 @@ class EpwGroupTrendAnalyzer:
         Cache of :meth:`compute_trends` results, keyed by *value_col*; each
         DataFrame is indexed by *group* with columns ``n, slope, intercept,
         r2, pvalue, significant``.
-    calculators : dict[str, DegreeHoursCalculator]
+    calculators : dict[str, object]
         ``{"<group>_<year>": DegreeHoursCalculator}`` for every processed
         file, giving access to the full hourly data if needed.
 
@@ -149,7 +149,7 @@ class EpwGroupTrendAnalyzer:
             ``'<group>_<year>.epw'`` (e.g. ``'granada_2005.epw'``). Files
             that do not match are skipped with a warning.
         setpoint_source : str or dict, optional
-            Forwarded to every :meth:`DegreeHoursCalculator.calculate` call
+            Forwarded to every :meth:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator.calculate` call
             (IDF path or setpoint configuration dict). Defaults to
             ``{'type': 'constant', 'heating': 20.0, 'cooling': 25.0}``.
         hours_scenarios : dict, optional
@@ -180,7 +180,7 @@ class EpwGroupTrendAnalyzer:
             ``''``.
         year_override : int, optional
             If given, overrides the year assigned to every EPW's hourly
-            index (forwarded to :class:`DegreeHoursCalculator`) instead of
+            index (forwarded to :class:`~pyweatherfiles.degree_hours.calculator.DegreeHoursCalculator`) instead of
             the year parsed from the filename.
 
         Raises
