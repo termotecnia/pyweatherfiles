@@ -34,7 +34,7 @@ Este documento describe **al máximo nivel de detalle técnico** el flujo de tra
 
 ## 1. Visión general y flujo de datos
 
-El caso de uso real documentado aquí encadena **cuatro etapas**, todas ejecutadas sobre el mismo dataset horario multianual de origen (`Sevilla_Definitivo_para_convertir_a_epw.xlsx`):
+El caso de uso real documentado aquí encadena **cuatro etapas**, todas ejecutadas sobre el mismo dataset horario multianual de origen (`Seville_hourly_data.xlsx`):
 
 ```
                          ┌───────────────────────────────────────────┐
@@ -98,7 +98,7 @@ Dependencia adicional usada en la etapa de **validación** (no en la generación
 
 ## 3. Caso de estudio real: Sevilla
 
-Fichero de origen: **`Sevilla_Definitivo_para_convertir_a_epw.xlsx`** — serie horaria multianual ya depurada/rellenada, con cabeceras en inglés (algunas con espacio final, p. ej. `'Global Horizontal Irradiance '`):
+Fichero de origen: **`Seville_hourly_data.xlsx`** — serie horaria multianual ya depurada/rellenada, con cabeceras en inglés (algunas con espacio final, p. ej. `'Global Horizontal Irradiance '`):
 
 | Columna en el Excel | Variable interna | Nota |
 |---|---|---|
@@ -111,7 +111,7 @@ Fichero de origen: **`Sevilla_Definitivo_para_convertir_a_epw.xlsx`** — serie 
 
 Fichero plantilla EPW: **`ESP_Sevilla.083910_IWEC.epw`** (dataset IWEC — *International Weather for Energy Calculations*, ASHRAE), usado únicamente como plantilla para extraer/definir cabecera geográfica (latitud, longitud, elevación, huso horario) y estructura EPW válida.
 
-Fichero de referencia normativa: **`sevilla_SP.met`** — fichero climático de referencia en formato `.met` (tipo LIDER/CALENER, usado en el Código Técnico de la Edificación español, CTE DB-HE).
+Fichero de referencia normativa: **`seville.met`** — fichero climático de referencia en formato `.met` (tipo LIDER/CALENER, usado en el Código Técnico de la Edificación español, CTE DB-HE).
 
 > **Detalle clave de diseño:** los nombres de columna por defecto de `HourlyEPWConverter` (`col_temp='Dry-bulb temperature'`, `col_dew='Dew Point temperature'`, `col_wind='Wind Speed'`, `col_ghi='Global Horizontal Irradiance '`, `col_dni='Beam Normal Irradiance '`) **coinciden exactamente** con las cabeceras originales del Excel de Sevilla. Por eso, ni la conversión (1) ni la conversión (4) necesitan pasar `column_mapping`: en el paso (4), `TMYGenerator.export_tmy()` **restaura automáticamente** esos mismos nombres originales antes de escribir el CSV (ver §6.8), cerrando el ciclo sin necesidad de remapeos manuales.
 
@@ -200,7 +200,7 @@ en otro caso:            DHI = max(0, GHI − DNI·cos_zenith)
 from pyweatherfiles import met_epw_converter
 
 met_epw_converter.convert_met_to_epw(
-    met_path='sevilla_SP.met',
+    met_path='seville.met',
     base_epw_path='ESP_Sevilla.083910_IWEC.epw',
     epw_path='seville_met.epw',
     replace_unused_with_missing=True
@@ -536,7 +536,7 @@ converter_longterm.process(output_pattern='seville_{year}.epw')
 
 # (2) Fichero de referencia normativo (.met, tipo LIDER/CALENER-CTE) → EPW
 met_epw_converter.convert_met_to_epw(
-    met_path='sevilla_SP.met',
+    met_path='seville.met',
     base_epw_path='ESP_Sevilla.083910_IWEC.epw',
     epw_path='seville_met.epw',
     replace_unused_with_missing=True

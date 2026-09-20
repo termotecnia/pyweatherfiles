@@ -40,7 +40,7 @@ fed into EnergyPlus or compared against a generated TMY::
     from pyweatherfiles import met_epw_converter
 
     met_epw_converter.convert_met_to_epw(
-        met_path="sevilla_SP.met",
+        met_path="seville.met",
         base_epw_path="ESP_Sevilla.083910_IWEC.epw",
         epw_path="sevilla_met.epw",
         replace_unused_with_missing=True,
@@ -384,7 +384,7 @@ def convert_met_to_epw(met_path: str, epw_path: str, base_epw_path: str, replace
     Example:
         >>> from pyweatherfiles import met_epw_converter
         >>> met_epw_converter.convert_met_to_epw(
-        ...     met_path="sevilla_SP.met",
+        ...     met_path="seville.met",
         ...     base_epw_path="ESP_Sevilla.083910_IWEC.epw",
         ...     epw_path="sevilla_met.epw",
         ...     replace_unused_with_missing=True,

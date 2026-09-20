@@ -11,7 +11,7 @@ converter_longterm.process(output_pattern='seville_{year}.epw')
 ## met
 
 converter_met = met_epw_converter.convert_met_to_epw(
-    met_path='sevilla_SP.met',
+    met_path='seville.met',
     base_epw_path='ESP_Sevilla.083910_IWEC.epw',
     epw_path='seville_met.epw',
     replace_unused_with_missing=True
