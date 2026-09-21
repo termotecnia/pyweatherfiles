@@ -255,12 +255,27 @@ class TestConvertMetToEpwErrorHandling:
         assert ok is False
         assert "Error processing MET data" in capsys.readouterr().out
 
-    def test_save_error_returns_false(self, tmp_path, base_epw_path):
+    def test_save_error_returns_false(self, tmp_path, base_epw_path, monkeypatch, capsys):
         met_path = tmp_path / "seville.met"
         _write_met_file(met_path, num_cols=13)
-        # A directory instead of a file path: EPW.save() cannot write to it.
-        ok = convert_met_to_epw(str(met_path), str(tmp_path), base_epw_path, save_session=False)
+        out_path = tmp_path / "out.epw"
+
+        # The failure is forced here instead of relying on ladybug's path
+        # handling: passing a directory as the output path used to make
+        # EPW.save() raise, but ladybug-core 0.44.61 normalises such a path and
+        # writes the file anyway (the test passed on the locally pinned 0.44.42
+        # and failed on every CI job, which resolves the newest release). What
+        # this test must cover is *our* error handling, so the third-party call
+        # is patched to raise deterministically.
+        def _failing_save(self, *args, **kwargs):
+            raise OSError("simulated save failure")
+
+        monkeypatch.setattr(EPW, "save", _failing_save)
+
+        ok = convert_met_to_epw(str(met_path), str(out_path), base_epw_path, save_session=False)
         assert ok is False
+        assert "Error saving EPW" in capsys.readouterr().out
+        assert not out_path.exists()
 
 
 class TestConvertEpwToMet:
