@@ -24,6 +24,11 @@ prevented the time index from being built even after that fix, because the
 lookup for the ``'year'``/``'month'``/``'day'``/``'hour'`` columns was
 case-sensitive while the real column names are capitalised
 (``'Year'``/``'Month'``/``'Day'``/``'Hour'``). Both are now fixed.
+
+Requires the optional ``tabulate`` dependency (extra ``comparator``), which
+:mod:`pyweatherfiles.epw_comparator` raises ``ImportError`` for at import
+time; the whole module is skipped automatically if it is not installed, so a
+minimal environment reports a skip instead of aborting collection.
 """
 
 import pandas as pd
@@ -31,7 +36,9 @@ import pytest
 from ladybug.epw import EPW
 from ladybug.location import Location
 
-from pyweatherfiles import epw_comparator
+pytest.importorskip("tabulate")
+
+from pyweatherfiles import epw_comparator  # noqa: E402
 
 FIELDS = [
     "dry_bulb_temperature", "dew_point_temperature", "relative_humidity",
