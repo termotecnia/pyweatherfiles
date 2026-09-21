@@ -11,7 +11,22 @@ name: CI
 on:
   push:
     branches: ["main"]
+    # This repository doubles as an Obsidian vault, so a large share of the
+    # commits only touch Markdown (README/TODO/notes) or the documentation
+    # tree. Those cannot break the test suite, so they don't spend CI minutes.
+    paths-ignore:
+      - "**/*.md"
+      - "notes/**"
+      - "docs/**"
+      - ".obsidian/**"
+      - "LICENSE"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "notes/**"
+      - "docs/**"
+      - ".obsidian/**"
+      - "LICENSE"
 
 # Cancel older in-progress runs for the same branch/PR when new commits land.
 concurrency:
