@@ -57,14 +57,14 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
 
 ### 5. [ ] Publicar el sitio en Read the Docs (importar el repositorio en readthedocs.org)
 
-- **Estado:** pendiente — el bloqueo real es la **visibilidad del repositorio**, no la pertenencia a la organización. `termotecnia/pyweatherfiles` es **privado**, y readthedocs.org (el servicio gratuito, Community) solo construye repositorios **públicos**; los privados requieren Read the Docs for Business (app.readthedocs.com, de pago). Verificado el 2026-09-21: `https://readthedocs.org/projects/pyweatherfiles/` devuelve 404 (el proyecto nunca se ha importado, de ahí el badge `docs | unknown`) y `https://pyweatherfiles.readthedocs.io/` también devuelve 404. El slug `pyweatherfiles` sigue libre.
+- **Estado:** en curso — el bloqueo de visibilidad **ya no existe**: `termotecnia/pyweatherfiles` es **público** desde el 2026-09-21 (ver [[notes/decisions|D-007]]), así que readthedocs.org (plan Community, gratuito) puede construirlo. Verificado de forma anónima justo después del cambio: la API del repositorio responde 200 y el badge de CI se renderiza como `CI | passing`. Solo falta el paso de importación; `https://readthedocs.org/projects/pyweatherfiles/` sigue devolviendo 404 y el slug `pyweatherfiles` está libre.
 - **Contexto:** ya existe `.readthedocs.yaml` en el repo (ver tarea 3), configurado con Sphinx (`docs/source/conf.py`) e instalando el paquete con el extra `docs`; el build local termina sin warnings, así que solo falta el paso de importación en la plataforma.
-- **Pasos previstos (elegir una vía):**
-  - [ ] **Vía A (recomendada, gratuita):** hacer público el repositorio de GitHub, entrar en readthedocs.org con la cuenta de GitHub, conceder acceso de la app OAuth a la organización `termotecnia` (puede requerir que un *owner* de la organización apruebe la solicitud de aplicación de terceros) e importar `pyweatherfiles`.
-  - [ ] **Vía B:** contratar Read the Docs for Business e importar allí el repositorio privado (la documentación quedaría publicada tras autenticación).
+- **Pasos previstos:**
+  - [x] Hacer público el repositorio de GitHub (hecho el 2026-09-21).
+  - [ ] Entrar en [readthedocs.org](https://readthedocs.org/) con la cuenta de GitHub, conceder acceso de la app OAuth a la organización `termotecnia` (puede requerir que un *owner* apruebe la solicitud de aplicación de terceros) e importar `pyweatherfiles`. Este paso exige un inicio de sesión interactivo en el navegador, por lo que no puede automatizarse desde el repositorio.
   - [ ] Una vez importado, RTD detecta automáticamente el `.readthedocs.yaml` y construye en cada push; comprobar que la versión por defecto sigue a `main`.
   - [ ] Verificar que el build en RTD termina sin errores y que el sitio publicado coincide con el local (incluyendo el notebook del tutorial renderizado).
-  - [ ] Nota: mientras el repositorio sea privado, ambos badges del README solo se ven correctamente para miembros autenticados; un visitante anónimo obtiene una imagen rota o `unknown`.
+  - [ ] Confirmar que el badge `docs` de `README.md`/`README_ES.md` deja de mostrar `unknown`.
 
 ---
 

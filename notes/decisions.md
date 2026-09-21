@@ -13,6 +13,17 @@ Record decisions that change the project's design, reproducibility, data sources
 
 ---
 
+## D-007 — The GitHub repository is public
+
+- **Date:** 2026-09-21
+- **Status:** accepted
+- **Context:** `termotecnia/pyweatherfiles` was private, which blocked the two things the README advertises: readthedocs.org (free Community plan) only builds **public** repositories, so the documentation could never be published at `https://pyweatherfiles.readthedocs.io/`, and both README badges 404'd for anonymous visitors. The alternative was Read the Docs for Business (paid, docs behind authentication).
+- **Decision:** make the repository **public** (`gh repo edit --visibility public`). Pre-flight audit before flipping the switch: 109 tracked files, no credentials in the tree (the `dist_upload*.bat` scripts rely on a local `.pypirc` and `git_push_external.bat` on the system Git Credential Manager; neither is committed), no sensitive file ever added in the full history (`git log --all --diff-filter=A` against `.pypirc`/`.env`/`id_rsa`/`*.pem`/`*.key`), and `onedrive_backup/` (the raw data) is git-ignored and was never tracked. The stray `.coverage` artefact was untracked in the same batch.
+- **Consequences:** the whole git history is now world-readable, including `notes/` (the Obsidian vault), `INFORME_REVISION_GENERAL.md` and the case-study notebook with its ~66 MB of input data — this is intentional, since the notebook is meant to be clonable and runnable standalone. The CI badge renders `CI | passing` anonymously, and Read the Docs can now import the project (remaining step in [[TODO|TODO]] task 5, which needs an interactive browser login). Going back to private would break the published docs and both badges.
+- **Links:** [[notes/work-log|Work log]] (2026-09-21 entry), [[TODO|TODO]] task 5, `.readthedocs.yaml`
+
+---
+
 ## D-006 — One tutorial only, no article references in the repository, Read the Docs theme
 
 - **Date:** 2026-09-21

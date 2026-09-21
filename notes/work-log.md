@@ -8,6 +8,18 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-09-21 — Repository made public (unblocks Read the Docs)
+
+- Objective: remove the blocker identified earlier today — readthedocs.org's free plan only builds public repositories — by publishing the GitHub repository.
+- Pre-flight audit (before flipping the switch): 109 tracked files, all under `pyweatherfiles/`, `tests/`, `docs/`, `notes/`, `.github/` plus root-level Markdown/`.bat`/config; `onedrive_backup/` (raw data) is git-ignored and never was tracked. `git grep` for credential patterns returned only false positives (the word "token" in the IDF/MET parsers). `git log --all --diff-filter=A` found no `.pypirc`, `.env`, `id_rsa`, `*.pem` or `*.key` ever committed. `dist_upload*.bat` rely on a local `.pypirc`, `git_push_external.bat` on the system Git Credential Manager — no secrets inline.
+- Files:
+  - `.gitignore` — added the coverage/pytest-cache block (`.coverage`, `.coverage.*`, `coverage.xml`, `htmlcov/`, `.pytest_cache/`); `.coverage` (a committed binary artefact) removed from the index with `git rm --cached`.
+  - `TODO.md`/`TODO_ES.md` task 5 — status rewritten: visibility solved, only the RTD import remains (it needs an interactive browser login, so it cannot be automated).
+  - `notes/decisions.md` — [[decisions#D-007 — The GitHub repository is public|D-007]].
+- Validation: `gh repo edit --visibility public` → `gh repo view` reports `"visibility":"PUBLIC"`, `isPrivate:false`. Anonymous checks (no token): `api.github.com/repos/termotecnia/pyweatherfiles` → HTTP 200 (was 404), CI badge SVG → HTTP 200 and its text reads **passing** (was 404/invisible). The RTD badge still reads `docs | unknown`, as expected until the project is imported.
+- Next step: import the project on readthedocs.org (manual, browser); then confirm the build renders the case-study notebook and the `docs` badge turns green. See [[TODO|TODO]] task 5.
+
+---
 # 2026-09-21 — Why the two README badges were red: CI never ran a single test, and the RTD project was never imported
 
 - Objective: explain and fix the `CI | failing` and `docs | unknown` badges in `README.md`.
