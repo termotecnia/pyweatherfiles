@@ -18,7 +18,7 @@ Record concise work sessions here. Add each entry at the top using [[notes/templ
   - `docs/source/quickstart.md` — `{doc}`article_context`` and `{doc}`tutorial`` replaced by a link to the notebook.
   - `docs/source/installation.md` — "Building this documentation locally" section removed; replaced by the `[full]` extra, a short verification snippet and next-step links.
   - `docs/source/conf.py` — docstring rewritten (no build instructions, no article wording), `_copy_tutorial_notebook()` and the `shutil` import removed (`examples/` no longer exists), `html_theme = "sphinx_rtd_theme"` with RTD-specific `html_theme_options` + `html_context` (Edit on GitHub) replacing Furo's `source_repository` options, `sphinx_rtd_theme` added to `extensions`.
-  - `pyproject.toml` — `docs` extra: `furo` → `sphinx-rtd-theme>=2.0`. `.readthedocs.yaml` comment updated. `dist_build_docs.bat` — dependency check now includes `sphinx_rtd_theme`.
+  - `pyproject.toml` — `docs` extra: `furo` → `sphinx-rtd-theme>=3.1` (floor chosen because 3.0.x and earlier declare `sphinx<9`, which would silently downgrade Sphinx on a clean environment). `.readthedocs.yaml` comment updated. `dist_build_docs.bat` — dependency check now includes `sphinx_rtd_theme`.
   - `.gitignore` — dropped `examples/tutorial_output/` and the stale NOTE about `examples/tutorial_pyweatherfiles.ipynb` being the single source of truth.
   - `README.md`/`README_ES.md` — banner now links the case-study notebook (the `examples/` path was broken) and no longer points to `docs/source/installation.md` for the local build; all "article"/"artículo" wording (§6.5, §7.4, §8, §10) reworded to "report"/"methods section"/"Seville-Madrid case study".
   - `AGENTS.md` (docs bullet), `Home.md` (start-here links, Context and results, MyST-wrapper warning), `notes/references.md`, `notes/obsidian-tutorial.md`, `TODO.md`/`TODO_ES.md` (task 3/4) — stale tutorial paths and article links removed.
@@ -28,7 +28,8 @@ Record concise work sessions here. Add each entry at the top using [[notes/templ
   - `python -m sphinx.ext.apidoc --force -o docs/source/api pyweatherfiles` then a clean `sphinx -b html -q` → **0 warnings**, build succeeded; generated pages are exactly `index`, `installation`, `quickstart`, `full_reference_en`, `full_reference_es`, `genindex`, `py-modindex`, `search` + `jupyter_notebooks/tutorial_pyweatherfiles_case_study.html`. RTD theme confirmed in the output (`wy-nav-side`, `_static/css/theme.css`).
   - Repo-wide grep for `article_context|ARTICLE_CONTEXT|Manuscript_TMY|tutorial_case_study|examples/tutorial_pyweatherfiles|furo` → only historical work-log entries remain (deliberately not rewritten) and the notebook's own base64 image payload (false positive).
   - `python -m pytest tests/test_epw_comparator.py tests/test_session_manager.py tests/test_degree_hours_helpers.py tests/test_epw_utils.py -q` → 80 passed (docstring-only code edits; all touched modules import cleanly).
-- Next step: stage the four deletions plus the edited files and push; once on Read the Docs, confirm the RTD-themed site renders the notebook and that the old `tutorial*`/`article_context` URLs are gone.
+  - Follow-up after the first push (commit `ce8560e`): the `docs` extra pin was raised from `>=2.0` to `>=3.1`; `pip install -e ".[docs]" --dry-run` resolves to `sphinx-rtd-theme` 3.1.0 with `sphinx` 9.1.0 and `pip check` reports no broken requirements.
+- Next step: once on Read the Docs, confirm the RTD-themed site renders the notebook and that the old `tutorial*`/`article_context` URLs are gone.
 
 ---
 # 2026-09-20 — Docs build script now bootstraps missing Sphinx/MyST dependencies

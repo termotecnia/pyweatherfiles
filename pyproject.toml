@@ -35,10 +35,14 @@ dependencies = [
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
+# NOTE: sphinx-rtd-theme is pinned to >=3.1 on purpose: releases 3.0.x and
+# earlier declare `sphinx<9`, so pip would silently downgrade Sphinx (or fail to
+# resolve) on a fresh environment. 3.1.0 is the first release compatible with
+# Sphinx 9.x, which is what the local and Read the Docs builds use.
 docs = [
     "sphinx>=7.0",
     "myst-nb>=1.0",
-    "sphinx-rtd-theme>=2.0",
+    "sphinx-rtd-theme>=3.1",
 ]
 # Optional runtime extras: each corresponds to imports already guarded with
 # try/except ImportError in the relevant module (see AGENTS.md / README.md
