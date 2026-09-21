@@ -13,8 +13,8 @@ Record concise work sessions here. Add each entry at the top using [[notes/templ
 - Objective: complete the manual Read the Docs import and ensure GitHub can trigger future documentation builds.
 - Affected files: `TODO.md`, `TODO_ES.md`, this log; the webhook itself is external GitHub/RTD account state.
 - Finding: the manual import built successfully and the public site is live at `https://pyweatherfiles.readthedocs.io/en/latest/`. Adding the RTD integration automatically created the repository webhook, so a second manual creation correctly returned GitHub's `Hook already exists` response. Its endpoint matches the RTD integration, it is active, uses JSON with HTTPS verification and a configured signature secret, and listens for `create`, `delete`, `pull_request`, and `push`.
-- Validation: `dsanchez-garcia` has `ADMIN` permission on the public `termotecnia/pyweatherfiles` repository; the existing hook reported HTTP 200/`OK`. A manually triggered GitHub `ping` was accepted (`204 No Content`). GitHub's delivery-history endpoint was unavailable to the current CLI token, so its response body could not be inspected programmatically.
-- Next step: after the next ordinary push to `main`, verify in the RTD build list that it creates a new successful build. Do not store or commit the webhook URL or signature secret.
+- Validation: `dsanchez-garcia` has `ADMIN` permission on the public `termotecnia/pyweatherfiles` repository; the existing hook reported HTTP 200/`OK`. A manually triggered GitHub `ping` was accepted (`204 No Content`). GitHub's delivery-history endpoint was unavailable to the current CLI token, so its response body could not be inspected programmatically. The real push of commit `06445b9` to `main` then created RTD build `34672043`, which completed successfully for that exact commit; this verifies the full webhook path.
+- Next step: normal documentation updates now rebuild automatically on pushes to `main`. Do not store or commit the webhook URL or signature secret.
 
 ---
 # 2026-09-21 — Repository made public (unblocks Read the Docs)

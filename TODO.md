@@ -64,8 +64,7 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
   - [x] Import `pyweatherfiles` into Read the Docs and complete its first successful build.
   - [x] Confirm the published `latest` site is reachable.
   - [x] Verify that the automatically created GitHub webhook accepts a signed delivery.
-- **Follow-up:**
-  - [ ] After the next normal push to `main`, confirm in the Read the Docs build list that it creates a new successful build. A GitHub `ping` validates endpoint delivery but does not prove the `push`-triggered build path.
+  - [x] Confirm the real push `06445b9` to `main` created RTD build `34672043` and that it completed successfully. This verifies the full `push` → webhook → build path.
 
 ---
 

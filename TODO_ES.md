@@ -64,8 +64,7 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
   - [x] Importar `pyweatherfiles` en Read the Docs y completar su primer build correctamente.
   - [x] Confirmar que el sitio publicado para `latest` es accesible.
   - [x] Verificar que el webhook de GitHub creado automáticamente acepta una entrega firmada.
-- **Seguimiento:**
-  - [ ] Tras el próximo push normal a `main`, confirmar en la lista de builds de Read the Docs que se crea un nuevo build correcto. El `ping` de GitHub valida la entrega al endpoint, pero no demuestra la ruta de build desencadenada por `push`.
+  - [x] Confirmar que el push real `06445b9` a `main` creó el build `34672043` de RTD y que finalizó correctamente. Esto verifica el flujo completo `push` → webhook → build.
 
 ---
 
