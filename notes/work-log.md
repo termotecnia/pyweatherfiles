@@ -8,6 +8,20 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-09-21 — Why the two README badges were red: CI never ran a single test, and the RTD project was never imported
+
+- Objective: explain and fix the `CI | failing` and `docs | unknown` badges in `README.md`.
+- Finding (CI): **every** run since the workflow was added failed, always the same way and always before running any test. `tests/test_epw_comparator.py` imports `pyweatherfiles.epw_comparator`, which raises `ImportError` at import time when `tabulate` is missing (unlike `pvlib`/`besos`, guarded with `pytest.importorskip`), but CI installed only `".[test]"` — `tabulate` lives in the `comparator` extra. Result: `Interrupted: 1 error during collection`, pytest exit code 2 on the four Ubuntu jobs and exit 1 on Windows, `3 skipped, 1 error in 6.45s`. The suite itself was never the problem (435 tests pass locally).
+- Finding (docs): the Read the Docs project **does not exist**: `https://readthedocs.org/projects/pyweatherfiles/` → 404, `https://pyweatherfiles.readthedocs.io/` → 404, and the badge endpoint returns the literal text `docs / unknown` (RTD's answer for an unknown slug). The blocker is not the `termotecnia` organization but **repository visibility**: `gh repo view` reports `isPrivate: true`, and readthedocs.org (Community) only builds public repositories. The `pyweatherfiles` slug is still free. Privacy also explains why both badge images 404 for anonymous visitors while rendering for logged-in members.
+- Files:
+  - `.github/workflows/ci.yml` — install step now `pip install -e ".[test,comparator]"` (with a comment explaining the import-time `ImportError`); `actions/checkout@v4` → `@v5` and `actions/setup-python@v5` → `@v6` (Node 20 deprecation annotations); removed the stale `continue-on-error: false` comment that described behaviour the workflow did not implement.
+  - `tests/test_epw_comparator.py` — `pytest.importorskip("tabulate")` before importing the module, plus a docstring note, so a minimal environment skips instead of aborting collection (same pattern as `test_climate_processor.py`).
+  - `README_ES.md` — CI badge added for parity with `README.md`.
+  - `TODO.md`/`TODO_ES.md` task 5 — rewritten: the blocker is repository visibility, with route A (make the repo public, free) and route B (RTD for Business); dropped the stale mention of the `feature/proximity-normalization-methods` branch.
+- Validation: `python -m pytest tests/test_epw_comparator.py -q` → 12 passed; workflow YAML parses and the step list is `checkout@v5 / setup-python@v6 / install / pytest / upload-artifact@v4`; CI run `35571739471` reached the "Run test suite" step on all five jobs (installs green), which is already past the point where every previous run died.
+- Next step: publish the docs — decide between making the repository public (then import it on readthedocs.org) or RTD for Business; see [[TODO|TODO]] task 5.
+
+---
 # 2026-09-21 — Documentation cleanup: single tutorial, no article references, Read the Docs theme
 
 - Objective: leave `docs/source/` with exactly one tutorial (the case-study notebook), remove every article/manuscript reference from the repository except that notebook, drop the local docs-build instructions from the user-facing documentation, and switch the HTML theme to Read the Docs.

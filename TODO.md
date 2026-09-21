@@ -57,13 +57,14 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
 
 ### 5. [ ] Publish the site on Read the Docs (import the repository on readthedocs.org)
 
-- **Status:** pending — blocked by access; requires someone with permissions in the `termotecnia` GitHub organization to import the repo on readthedocs.org.
-- **Context:** `.readthedocs.yaml` already exists in the repo (see task 3), configured with Sphinx (`docs/source/conf.py`) and installing the package with the `docs` extra; the only missing step is importing the project on the Read the Docs platform so `https://pyweatherfiles.readthedocs.io/` goes live.
-- **Planned steps:**
-  - [ ] Someone with access to the `termotecnia` organization must log into [readthedocs.org](https://readthedocs.org/), connect their GitHub account, and import the `pyweatherfiles` repository.
-  - [ ] Once imported, RTD will automatically detect the `.readthedocs.yaml` and build the site on every push.
-  - [ ] Enable the build also on the `main` branch (not only on `feature/proximity-normalization-methods`).
-  - [ ] Verify that the RTD build finishes without errors and that the published site matches expectations (including the rendered tutorial notebook).
+- **Status:** pending — the real blocker is **repository visibility**, not organization membership. `termotecnia/pyweatherfiles` is **private**, and readthedocs.org (the free Community site) only builds **public** repositories; private ones require Read the Docs for Business (app.readthedocs.com, paid). Verified on 2026-09-21: `https://readthedocs.org/projects/pyweatherfiles/` returns 404 (the project has never been imported, hence the `docs | unknown` badge) and `https://pyweatherfiles.readthedocs.io/` also returns 404. The `pyweatherfiles` slug is still free.
+- **Context:** `.readthedocs.yaml` already exists in the repo (see task 3), configured with Sphinx (`docs/source/conf.py`) and installing the package with the `docs` extra; the local build is green (0 warnings), so the only missing step is importing the project on the platform.
+- **Planned steps (pick one route):**
+  - [ ] **Route A (recommended, free):** make the GitHub repository public, then log into readthedocs.org with the GitHub account, grant the OAuth app access to the `termotecnia` organization (an org owner may have to approve the third-party-app request), and import `pyweatherfiles`.
+  - [ ] **Route B:** subscribe to Read the Docs for Business and import the private repo there (the docs would be published behind authentication).
+  - [ ] Once imported, RTD auto-detects `.readthedocs.yaml` and builds on every push; check that the default version tracks `main`.
+  - [ ] Verify that the RTD build finishes without errors and that the published site matches the local one (including the rendered tutorial notebook).
+  - [ ] Note: while the repo is private, both README badges only render for authenticated members; anonymous visitors get a broken/unknown image.
 
 ---
 
