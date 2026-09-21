@@ -45,7 +45,7 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
   - [x] TMY workflow conventions (column mapping, `data_frequency`/`cdf_method`, proximity normalization methods, deprecated `'sawaqed'` alias) were already covered in README §3 and are now part of the Sphinx reference too.
   - [x] The project's **single tutorial** is `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb` (Seville and Madrid, real data): covers `TMYGenerator` → `HourlyEPWConverter` / `convert_met_to_epw` → `DegreeHoursCalculator` → `EpwGroupTrendAnalyzer`, and is committed together with its own input data under `docs/source/jupyter_notebooks/data/` — fully runnable from a fresh clone, no external/untracked data required. Executed end-to-end with `nbconvert` (0 errors) and committed with real outputs/plots embedded.
   - [x] The notebook is **rendered directly inside the Sphinx site** (not just linked as a download): it lives under `docs/source/` and `myst-nb` renders it with `nb_execution_mode="off"`, reusing the outputs/plots already stored in the notebook instead of re-running the full pipeline on every doc build.
-  - [x] Added `.readthedocs.yaml` (Sphinx config `docs/source/conf.py`, installs the package with the `docs` extra) so the site can be built on [Read the Docs](https://readthedocs.org/); added the RTD badge + link to `README.md`/`README_ES.md` (project still needs to be *imported* on readthedocs.org by an admin of the GitHub org to go live at `https://pyweatherfiles.readthedocs.io/`).
+  - [x] Added `.readthedocs.yaml` (Sphinx config `docs/source/conf.py`, installs the package with the `docs` extra) so the site can be built on [Read the Docs](https://readthedocs.org/); added the RTD badge + link to `README.md`/`README_ES.md`. The project is now published at `https://pyweatherfiles.readthedocs.io/en/latest/`.
   - [x] Linked the documentation and the tutorial from `README.md` and `README_ES.md` (top banner).
   - [ ] Climate module from task 1: still blocked (task 1 not started yet); nothing to document until it is integrated.
 - **Side fixes done along the way (see `pyweatherfiles/degree_hours.py`):** replaced a few `print()` statements that used the Unicode arrow `→`, which raised `UnicodeEncodeError` on Windows consoles using the `cp1252` code page (encountered while validating the tutorial notebook).
@@ -55,16 +55,17 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
 - **Status:** deferred — depends entirely on task 1 (still blocked, external module not received).
 - **Planned steps once task 1 unblocks:** add the new module to the Sphinx API reference (autodoc will pick it up automatically once it exists), document its data flow, and add a section/notebook cell to `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb` if relevant.
 
-### 5. [ ] Publish the site on Read the Docs (import the repository on readthedocs.org)
+### 5. [x] Publish the site on Read the Docs (import the repository on readthedocs.org)
 
-- **Status:** in progress — the visibility blocker is **gone**: `termotecnia/pyweatherfiles` is **public** since 2026-09-21 (see [[notes/decisions|D-007]]), so readthedocs.org (free Community plan) can build it. Verified anonymously right after the change: the repo API answers 200 and the CI badge renders `CI | passing`. Only the import step is left; `https://readthedocs.org/projects/pyweatherfiles/` still 404s and the `pyweatherfiles` slug is free.
-- **Context:** `.readthedocs.yaml` already exists in the repo (see task 3), configured with Sphinx (`docs/source/conf.py`) and installing the package with the `docs` extra; the local build is green (0 warnings), so the only missing step is importing the project on the platform.
-- **Planned steps:**
+- **Status:** completed 2026-09-21. `termotecnia/pyweatherfiles` is public (see [[notes/decisions|D-007]]), the project was imported manually on Read the Docs, and the successful build is published at `https://pyweatherfiles.readthedocs.io/en/latest/`.
+- **Webhook:** Read the Docs created its GitHub webhook automatically when the integration was added. It is active, delivers JSON through verified HTTPS, has a configured signature secret, listens for `create`, `delete`, `pull_request`, and `push`, and its endpoint returned HTTP 200. The webhook configuration is external account state; neither its URL nor its secret belongs in the repository.
+- **Completed steps:**
   - [x] Make the GitHub repository public (done 2026-09-21).
-  - [ ] Log into [readthedocs.org](https://readthedocs.org/) with the GitHub account, grant the OAuth app access to the `termotecnia` organization (an org owner may have to approve the third-party-app request) and import `pyweatherfiles`. This step needs an interactive browser login, so it cannot be automated from the repo.
-  - [ ] Once imported, RTD auto-detects `.readthedocs.yaml` and builds on every push; check that the default version tracks `main`.
-  - [ ] Verify that the RTD build finishes without errors and that the published site matches the local one (including the rendered tutorial notebook).
-  - [ ] Confirm the `docs` badge in `README.md`/`README_ES.md` stops showing `unknown`.
+  - [x] Import `pyweatherfiles` into Read the Docs and complete its first successful build.
+  - [x] Confirm the published `latest` site is reachable.
+  - [x] Verify that the automatically created GitHub webhook accepts a signed delivery.
+- **Follow-up:**
+  - [ ] After the next normal push to `main`, confirm in the Read the Docs build list that it creates a new successful build. A GitHub `ping` validates endpoint delivery but does not prove the `push`-triggered build path.
 
 ---
 
@@ -76,7 +77,7 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
 
 ---
 
-*Last updated: 2026-07-19*
+*Last updated: 2026-09-21*
 
 
 

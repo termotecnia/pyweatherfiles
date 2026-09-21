@@ -45,7 +45,7 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
   - [x] Las convenciones del flujo TMY (mapeo de columnas, `data_frequency`/`cdf_method`, métodos de normalización de proximidad, alias obsoleto `'sawaqed'`) ya estaban cubiertas en el §3 del README y ahora también forman parte de la referencia Sphinx.
   - [x] El **único tutorial** del proyecto es `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb` (Sevilla y Madrid, datos reales): cubre `TMYGenerator` → `HourlyEPWConverter` / `convert_met_to_epw` → `DegreeHoursCalculator` → `EpwGroupTrendAnalyzer`, y se versiona junto a sus propios datos de entrada en `docs/source/jupyter_notebooks/data/` — ejecutable íntegramente desde un clon nuevo, sin datos externos/no versionados. Ejecutado de principio a fin con `nbconvert` (0 errores) y guardado con salidas/gráficos reales incrustados.
   - [x] El notebook se **renderiza directamente dentro del sitio Sphinx** (no solo como enlace de descarga): vive bajo `docs/source/` y `myst-nb` lo renderiza con `nb_execution_mode="off"`, reutilizando las salidas/gráficos ya guardados en el notebook en vez de re-ejecutar el pipeline completo en cada build de la doc.
-  - [x] Se añadió `.readthedocs.yaml` (configuración de Sphinx en `docs/source/conf.py`, instala el paquete con el extra `docs`) para poder construir el sitio en [Read the Docs](https://readthedocs.org/); se añadió el badge de RTD + enlace en `README.md`/`README_ES.md` (el proyecto aún debe *importarse* en readthedocs.org por un administrador de la organización de GitHub para quedar publicado en `https://pyweatherfiles.readthedocs.io/`).
+  - [x] Se añadió `.readthedocs.yaml` (configuración de Sphinx en `docs/source/conf.py`, instala el paquete con el extra `docs`) para poder construir el sitio en [Read the Docs](https://readthedocs.org/); se añadió el badge de RTD + enlace en `README.md`/`README_ES.md`. El proyecto ya está publicado en `https://pyweatherfiles.readthedocs.io/en/latest/`.
   - [x] Se enlazó la documentación y el tutorial desde `README.md` y `README_ES.md` (banner superior).
   - [ ] Módulo climático de la tarea 1: sigue bloqueado (tarea 1 no iniciada); no hay nada que documentar hasta que se integre.
 - **Correcciones colaterales realizadas de paso (ver `pyweatherfiles/degree_hours.py`):** se sustituyeron varios `print()` que usaban la flecha Unicode `→`, la cual provocaba `UnicodeEncodeError` en consolas Windows con la página de códigos `cp1252` (detectado al validar el notebook del tutorial).
@@ -55,16 +55,17 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
 - **Estado:** aplazado — depende íntegramente de la tarea 1 (sigue bloqueada, módulo externo no recibido).
 - **Pasos previstos una vez se desbloquee la tarea 1:** añadir el nuevo módulo a la referencia de API de Sphinx (autodoc lo detectará automáticamente en cuanto exista), documentar su flujo de datos, y añadir una sección/celda al notebook `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb` si procede.
 
-### 5. [ ] Publicar el sitio en Read the Docs (importar el repositorio en readthedocs.org)
+### 5. [x] Publicar el sitio en Read the Docs (importar el repositorio en readthedocs.org)
 
-- **Estado:** en curso — el bloqueo de visibilidad **ya no existe**: `termotecnia/pyweatherfiles` es **público** desde el 2026-09-21 (ver [[notes/decisions|D-007]]), así que readthedocs.org (plan Community, gratuito) puede construirlo. Verificado de forma anónima justo después del cambio: la API del repositorio responde 200 y el badge de CI se renderiza como `CI | passing`. Solo falta el paso de importación; `https://readthedocs.org/projects/pyweatherfiles/` sigue devolviendo 404 y el slug `pyweatherfiles` está libre.
-- **Contexto:** ya existe `.readthedocs.yaml` en el repo (ver tarea 3), configurado con Sphinx (`docs/source/conf.py`) e instalando el paquete con el extra `docs`; el build local termina sin warnings, así que solo falta el paso de importación en la plataforma.
-- **Pasos previstos:**
-  - [x] Hacer público el repositorio de GitHub (hecho el 2026-09-21).
-  - [ ] Entrar en [readthedocs.org](https://readthedocs.org/) con la cuenta de GitHub, conceder acceso de la app OAuth a la organización `termotecnia` (puede requerir que un *owner* apruebe la solicitud de aplicación de terceros) e importar `pyweatherfiles`. Este paso exige un inicio de sesión interactivo en el navegador, por lo que no puede automatizarse desde el repositorio.
-  - [ ] Una vez importado, RTD detecta automáticamente el `.readthedocs.yaml` y construye en cada push; comprobar que la versión por defecto sigue a `main`.
-  - [ ] Verificar que el build en RTD termina sin errores y que el sitio publicado coincide con el local (incluyendo el notebook del tutorial renderizado).
-  - [ ] Confirmar que el badge `docs` de `README.md`/`README_ES.md` deja de mostrar `unknown`.
+- **Estado:** completado el 2026-09-21. `termotecnia/pyweatherfiles` es público (ver [[notes/decisions|D-007]]), el proyecto se importó manualmente en Read the Docs y el build correcto está publicado en `https://pyweatherfiles.readthedocs.io/en/latest/`.
+- **Webhook:** Read the Docs creó automáticamente su webhook de GitHub al añadir la integración. Está activo, entrega JSON por HTTPS verificado, tiene un secreto de firma configurado, escucha `create`, `delete`, `pull_request` y `push`, y su endpoint respondió HTTP 200. La configuración del webhook es estado externo de las cuentas; ni su URL ni su secreto deben versionarse en el repositorio.
+- **Pasos completados:**
+  - [x] Hacer público el repositorio de GitHub (hecho 2026-09-21).
+  - [x] Importar `pyweatherfiles` en Read the Docs y completar su primer build correctamente.
+  - [x] Confirmar que el sitio publicado para `latest` es accesible.
+  - [x] Verificar que el webhook de GitHub creado automáticamente acepta una entrega firmada.
+- **Seguimiento:**
+  - [ ] Tras el próximo push normal a `main`, confirmar en la lista de builds de Read the Docs que se crea un nuevo build correcto. El `ping` de GitHub valida la entrega al endpoint, pero no demuestra la ruta de build desencadenada por `push`.
 
 ---
 
@@ -76,6 +77,6 @@ Documento para registrar las tareas pendientes del proyecto `pyweatherfiles`. Ma
 
 ---
 
-*Última actualización: 2026-07-19*
+*Última actualización: 2026-09-21*
 
 
