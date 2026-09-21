@@ -21,19 +21,19 @@ Document for tracking pending tasks for the `pyweatherfiles` project. Mark with 
   - [ ] Add a usage example in `examples/`.
   - [ ] Document the data flow (input/output) in the documentation from task 3.
 
-### 2. [ ] Publish `pyweatherfiles` on PyPI once everything is ready
+### 2. [x] Publish `pyweatherfiles` 0.0.1 on PyPI
 
-- **Status:** pending — conditional on closing tasks 1 and 3 (or at least clarifying what is left out of the first release).
+- **Status:** released 2026-09-21. Task 1's external climate-data module remains explicitly out of scope for this first release.
 - **Context:** the scripts `dist_build_package.bat`, `dist_upload_test.bat`, and `dist_upload.bat` already exist.
 - **Planned steps:**
   - [x] Review `pyproject.toml` dependency list: `ladybug-core` is already a mandatory dependency, and `pvlib`/`tabulate`/`besos`/`eppy`/`accim` are now declared as optional extras (`climate`, `comparator`, `energyplus`, `accents`, plus a combined `full`), with their imports guarded by `try/except ImportError` in `climate_processor.py`/`epw_comparator.py` (they already were in `degree_hours.py`). See `INFORME_REVISION_GENERAL.md` §6 Fase 0.3.
-  - [x] Still pending on `pyproject.toml` — now also done: added a physical `LICENSE` file at the repo root (MIT, matches the `license = "MIT"` metadata), bumped `requires-python` from the stale `>=3.7` (EOL, incompatible with current pandas/numpy) to `>=3.10`, and added Python-version `classifiers` (3.10-3.13). Version number is still `0.0.0` — bump it as part of the actual release step below.
+  - [x] Added a physical `LICENSE` file at the repo root (MIT, matches the `license = "MIT"` metadata), bumped `requires-python` from the stale `>=3.7` (EOL, incompatible with current pandas/numpy) to `>=3.10`, added Python-version `classifiers` (3.10-3.13), and aligned the package/distribution version at `0.0.1`.
   - [x] `dist_build_package.bat`'s `python -m build` step is now also exercised automatically on every push/PR via `.github/workflows/ci.yml` (Fase 3), so packaging breakage should surface before this manual step.
-  - [ ] Run `dist_build_package.bat` (cleans `dist/`, `build/`, `*.egg-info` and runs `python -m build`).
-  - [ ] Publish to TestPyPI with `dist_upload_test.bat` and validate installation in a clean virtual environment (`pip install -i https://test.pypi.org/simple/ pyweatherfiles`).
-  - [ ] Test the examples in `examples/` against the package installed from TestPyPI (not from the local repo).
-  - [ ] Publish to PyPI with `dist_upload.bat` (requires `.pypirc`).
-  - [ ] Create the version tag in git and, if applicable, release notes.
+  - [x] Ran `dist_build_package.bat` (cleaned `dist/`, `build/`, `*.egg-info` and generated the `0.0.1` sdist/wheel); `twine check` passed for both artifacts and the full test suite passed (424 passed, 11 skipped optional IDF-fixture tests).
+  - [x] Published to TestPyPI with `dist_upload_test.bat`; a clean environment installed the published wheel with TestPyPI plus PyPI as the dependency index, imported `0.0.1` from `site-packages`, and passed `pip check`.
+  - [x] No versioned `examples/` directory exists; the published package, wheel and sdist were instead installed and imported from isolated environments as the applicable release validation.
+  - [x] Published to PyPI with `dist_upload.bat`; both `0.0.1` artifacts were accepted by the upload endpoint.
+  - [x] Created and pushed the annotated Git tag `v0.0.1`, together with the GitHub release notes.
 
 ### 3. [x] Write the software documentation, including a tutorial in `.ipynb`
 

@@ -8,6 +8,15 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-09-21 — Release 0.0.1 published to TestPyPI and PyPI
+
+- Objective: prepare and publish the first PyPI release after the TestPyPI upload helper reported that `twine` was unavailable.
+- Affected files: `pyproject.toml`, regenerated ignored build metadata/artifacts (`pyweatherfiles.egg-info/`, `build/`, `dist/`), this log; `twine` was installed in the active release environment.
+- Finding: `pyweatherfiles.__version__` already declared `0.0.1`, but the canonical distribution metadata still declared `0.0.0`; they must remain aligned before building. `dist_upload_test.bat` now finds `twine 7.0.0` through the same `py` launcher it uses.
+- Validation: `dist_build_package.bat` completed cleanly and generated only `pyweatherfiles-0.0.1.tar.gz` and `pyweatherfiles-0.0.1-py3-none-any.whl`; `twine check` passed for both. The full suite passed when split below the terminal's five-minute limit: 424 passed, 11 skipped (missing optional IDF fixtures), with expected plotting/deprecation warnings. Each artifact installed cleanly from outside the checkout; TestPyPI then served the published wheel to a new venv, where metadata/runtime version, site-packages import path and `pip check` all confirmed `0.0.1`. `dist_upload_test.bat` and `dist_upload.bat` each uploaded both files successfully (HTTP 200 / PyPI release URL).
+- Release closure: PyPI's public JSON index now lists `0.0.0, 0.0.1`. The release commit is tagged `v0.0.1`, pushed to `main` together with the tag, and published as a GitHub release using the validated release notes. No secrets were written to the repository.
+
+---
 # 2026-09-21 — Read the Docs published; automatic GitHub webhook verified
 
 - Objective: complete the manual Read the Docs import and ensure GitHub can trigger future documentation builds.
