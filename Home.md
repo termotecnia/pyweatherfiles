@@ -15,8 +15,8 @@ This is the entry point to the project's Obsidian vault. Project notes live in `
 
 - [[README|Complete technical reference]]
 - [[docs/source/quickstart|Quickstart guide]]
-- [[docs/source/installation|Installation and documentation build]]
-- [[docs/source/tutorial_case_study|Seville and Madrid case study]]
+- [[docs/source/installation|Installation guide]]
+- [[docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study|Tutorial notebook (Seville and Madrid)]]
 - [[notes/README|How to use this vault]]
 - [[notes/obsidian-tutorial|Obsidian tutorial for this project]]
 
@@ -30,8 +30,6 @@ This is the entry point to the project's Obsidian vault. Project notes live in `
 
 ## Context and results
 
-- [[ARTICLE_CONTEXT_SEVILLA|Seville article context]]
-- [[Manuscript_TMY_v02|TMY manuscript]]
 - [[analysis_scripts/conclusion_report|Climate-trend analysis conclusions]]
 - [[INFORME_REVISION_GENERAL|General review report]]
 - [[AGENTS|Architecture and development workflow guide]]
@@ -49,4 +47,4 @@ This is the entry point to the project's Obsidian vault. Project notes live in `
 > To create a new note, use the Obsidian command palette and **Templates: Insert template**. Templates are stored in `notes/templates/`.
 
 > [!warning]
-> `docs/source/full_reference_*.md` and `docs/source/article_context.md` are MyST wrappers for root-level documents. Use the original documents linked above to avoid working on duplicate content.
+> `docs/source/full_reference_*.md` are MyST wrappers for the root-level `README.md` / `README_ES.md`. Use the original documents linked above to avoid working on duplicate content.

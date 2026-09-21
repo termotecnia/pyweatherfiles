@@ -8,6 +8,29 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-09-21 — Documentation cleanup: single tutorial, no article references, Read the Docs theme
+
+- Objective: leave `docs/source/` with exactly one tutorial (the case-study notebook), remove every article/manuscript reference from the repository except that notebook, drop the local docs-build instructions from the user-facing documentation, and switch the HTML theme to Read the Docs.
+- Decision: [[decisions#D-006 — One tutorial only, no article references in the repository, Read the Docs theme|D-006]].
+- Files:
+  - Deleted: `docs/source/tutorial.md`, `docs/source/tutorial_case_study.md`, `docs/source/article_context.md`, `ARTICLE_CONTEXT_SEVILLA.md`.
+  - `docs/source/index.md` — toctree reduced to `installation`/`quickstart`/`jupyter_notebooks/tutorial_pyweatherfiles_case_study` + `full_reference_en`/`full_reference_es` + `api/modules`; intro and tip rewritten around the single notebook.
+  - `docs/source/quickstart.md` — `{doc}`article_context`` and `{doc}`tutorial`` replaced by a link to the notebook.
+  - `docs/source/installation.md` — "Building this documentation locally" section removed; replaced by the `[full]` extra, a short verification snippet and next-step links.
+  - `docs/source/conf.py` — docstring rewritten (no build instructions, no article wording), `_copy_tutorial_notebook()` and the `shutil` import removed (`examples/` no longer exists), `html_theme = "sphinx_rtd_theme"` with RTD-specific `html_theme_options` + `html_context` (Edit on GitHub) replacing Furo's `source_repository` options, `sphinx_rtd_theme` added to `extensions`.
+  - `pyproject.toml` — `docs` extra: `furo` → `sphinx-rtd-theme>=2.0`. `.readthedocs.yaml` comment updated. `dist_build_docs.bat` — dependency check now includes `sphinx_rtd_theme`.
+  - `.gitignore` — dropped `examples/tutorial_output/` and the stale NOTE about `examples/tutorial_pyweatherfiles.ipynb` being the single source of truth.
+  - `README.md`/`README_ES.md` — banner now links the case-study notebook (the `examples/` path was broken) and no longer points to `docs/source/installation.md` for the local build; all "article"/"artículo" wording (§6.5, §7.4, §8, §10) reworded to "report"/"methods section"/"Seville-Madrid case study".
+  - `AGENTS.md` (docs bullet), `Home.md` (start-here links, Context and results, MyST-wrapper warning), `notes/references.md`, `notes/obsidian-tutorial.md`, `TODO.md`/`TODO_ES.md` (task 3/4) — stale tutorial paths and article links removed.
+  - Package docstrings: `epw_comparator.py` (L353), `session_manager.py` (L16), `degree_hours/group_trend_analyzer.py` (×3), `epw_trend_analyzer/__init__.py`, `epw_trend_analyzer/_plotting.py` — "manuscript"/"article" wording neutralized.
+- Finding: `examples/` does not exist in the repository, so `examples/tutorial_pyweatherfiles.ipynb` was a broken reference in ~10 places (both READMEs, `AGENTS.md`, `conf.py`, `TODO*.md`, `.gitignore`); `Manuscript_TMY_v02.md` was likewise referenced but absent. `sphinx-rtd-theme` 3.1.0 is required for Sphinx 9.x (earlier 3.0.x pins `sphinx<9`).
+- Validation:
+  - `python -m sphinx.ext.apidoc --force -o docs/source/api pyweatherfiles` then a clean `sphinx -b html -q` → **0 warnings**, build succeeded; generated pages are exactly `index`, `installation`, `quickstart`, `full_reference_en`, `full_reference_es`, `genindex`, `py-modindex`, `search` + `jupyter_notebooks/tutorial_pyweatherfiles_case_study.html`. RTD theme confirmed in the output (`wy-nav-side`, `_static/css/theme.css`).
+  - Repo-wide grep for `article_context|ARTICLE_CONTEXT|Manuscript_TMY|tutorial_case_study|examples/tutorial_pyweatherfiles|furo` → only historical work-log entries remain (deliberately not rewritten) and the notebook's own base64 image payload (false positive).
+  - `python -m pytest tests/test_epw_comparator.py tests/test_session_manager.py tests/test_degree_hours_helpers.py tests/test_epw_utils.py -q` → 80 passed (docstring-only code edits; all touched modules import cleanly).
+- Next step: stage the four deletions plus the edited files and push; once on Read the Docs, confirm the RTD-themed site renders the notebook and that the old `tutorial*`/`article_context` URLs are gone.
+
+---
 # 2026-09-20 — Docs build script now bootstraps missing Sphinx/MyST dependencies
 
 - Objective: make `dist_build_docs.bat` resilient when the active Python environment does not yet have the documentation toolchain installed.
@@ -41,7 +64,7 @@ Record concise work sessions here. Add each entry at the top using [[notes/templ
   - `pyweatherfiles/tmy/_core.py` — new attributes initialised and documented (`source_years`, `validation_step1_*`, `validation_step6_tmy_final_stats`).
   - `tests/test_tmy_validation.py` — `TestValidateStep1DataLoading`/`TestValidateStep4FinalTmy`/`TestSummarizeFsResults` rewritten against the returned DataFrames instead of the old console text, plus a new test for the interpolated-year detection (40 tests in the file, +3).
   - `README.md`/`README_ES.md` §3.2 and §3.10 (bilingual), `AGENTS.md` (project-specific patterns + the stale `tutorial_pyweatherfiles_case_study.ipynb` path corrected to `_v03`), `notes/decisions.md` (D-005), `notes/questions.md` (open question about Step 1's unbounded interpolation).
-  - `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study_v03.ipynb` — 16 cells rewritten, 1 deleted (`validate_step_4_final_tmy()`, superseded by `validation_full_summary`), 2 display cells inserted (`full_ranking_jan.head(10)`, `fs_breakdown_example.head()`); `analyze_selection(..., verbose=False)` so the audit renders as a table; every reference to non-package code removed (`analysis_scripts/climate_evolution_trend.py`, `generating epws seville.py`, `Manuscript_TMY_v02.md`, `INFORME_REVISION_GENERAL.md`) together with the stale "`# TODO(dev)` placeholders" note; Part 3 rewritten for the corrected NCDH (potential `max(0, 25 - T)`, 00:00-08:00 inclusive, Jul-Sep, `invert_cooling=True`, and the fact that a *decreasing* trend means *less* night-cooling potential); the 48 U+FDFF characters that had replaced `°`/`·` in the `plot_overview_grid` labels restored.
+  - `docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study_v03.ipynb` — 16 cells rewritten, 1 deleted (`validate_step_4_final_tmy()`, superseded by `validation_full_summary`), 2 display cells inserted (`full_ranking_jan.head(10)`, `fs_breakdown_example.head()`); `analyze_selection(..., verbose=False)` so the audit renders as a table; every reference to non-package code removed (`analysis_scripts/climate_evolution_trend.py`, `generating epws seville.py`, `INFORME_REVISION_GENERAL.md`) together with the stale "`# TODO(dev)` placeholders" note; Part 3 rewritten for the corrected NCDH (potential `max(0, 25 - T)`, 00:00-08:00 inclusive, Jul-Sep, `invert_cooling=True`, and the fact that a *decreasing* trend means *less* night-cooling potential); the 48 U+FDFF characters that had replaced `°`/`·` in the `plot_overview_grid` labels restored.
 - Finding: the Seville series has **no 2020**, but Step 1's `resample('h').mean().interpolate('linear')` silently rebuilds it as a linear ramp; the reconstructed year then has 100% completeness, so Step 2's `completeness_threshold` cannot drop it and it is counted among the 21 candidate years (the FS ranking never selects it, but by luck rather than by design). This is exactly what makes the new `Interpolated_Years` column worth having — the notebook, the README §3.2 caveat and `notes/questions.md` now document it.
 - Validation:
   - `python -m pytest tests/` → **435 passed** in 404 s (432 before + 3 new in `tests/test_tmy_validation.py`, which now has 40).
@@ -84,7 +107,7 @@ Record concise work sessions here. Add each entry at the top using [[notes/templ
   - Isolated check: `UnivariateSpline` over 1440 noisy hourly points -> `s=0.0` max|diff| 1.1e-14; `s=None` 2.54; `s=100` 0.79; `s=5000` 7.56.
   - Full pipeline on synthetic 6-year data: `s_factor=0.0` -> max|diff T_air| 7.1e-15 and 0 hours changed; `s_factor=None` and `s_factor=2000` -> max|diff| 1.40 degC over 126 hours (11 junctions x 12 h window).
   - `python -m pytest tests/test_tmy_plotting.py tests/test_tmy_package.py -q` -> 57 passed.
-- Next step: decide (see [[questions|Open questions]]) whether the shipped default should remain a no-op or become an effective smoothing; if it changes, the case-study notebook and the manuscript's Step 7 wording must be revisited.
+- Next step: decide (see [[questions|Open questions]]) whether the shipped default should remain a no-op or become an effective smoothing; if it changes, the case-study notebook's Step 7 wording must be revisited.
 ---
 ## 2026-09-14 — Fixed NCDH sign error and added summer-month filter
 

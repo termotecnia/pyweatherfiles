@@ -25,7 +25,7 @@ baseline climate?* It provides a configurable, class-based workflow to:
   every year's ~8760 raw hourly readings as one box, with the fitted
   annual-mean trend line overlaid) via
   :meth:`EpwTrendAnalyzer.build_boxplot_figure` - the direct visual warming
-  check requested for the manuscript's Section 3.1, in addition to the
+  check, in addition to the
   line-plot city/global-adjusted figures above.
 - Export reproducible CSV/XLSX tables, PNG figures, and a text/Markdown
   conclusion report (:meth:`EpwTrendAnalyzer.export_outputs`).

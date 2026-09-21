@@ -194,8 +194,8 @@ class _PlottingMixin:
         """Build a per-city boxplot-per-year panel figure (one subplot per
         city; every year's ~8760 raw hourly dry-bulb temperature readings as
         one box, with the fitted annual-mean trend line overlaid) **without**
-        saving it to disk - the direct visual warming check requested for
-        the manuscript's Section 3.1 (each city/climate analysed fully
+        saving it to disk - the direct visual warming check
+        (each city/climate analysed fully
         independently, never pooled).
 
         Args:

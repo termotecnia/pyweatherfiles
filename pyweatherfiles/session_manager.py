@@ -13,7 +13,7 @@ the package (:class:`~pyweatherfiles.tmy.TMYGenerator`,
 :func:`~pyweatherfiles.met_epw_converter.convert_met_to_epw`, etc.) can save a
 **session** right after finishing its work: a snapshot of exactly what inputs
 were used and what the resulting object/DataFrame looked like. This makes runs
-auditable and reproducible (useful for scientific articles, QA, or simply
+auditable and reproducible (useful for scientific reporting, QA, or simply
 remembering "how did I generate this file six months ago?").
 
 Every session is written as **two files** sharing the same deterministic,

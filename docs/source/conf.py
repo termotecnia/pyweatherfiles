@@ -4,59 +4,25 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 """Sphinx configuration for the ``pyweatherfiles`` documentation.
 
-Building the docs
-------------------
-From the repository root::
-
-    pip install -e ".[docs]"
-    dist_build_docs.bat
-
-or manually::
-
-    python -m sphinx.ext.apidoc --force -o docs/source/api pyweatherfiles
-    cd docs
-    make.bat clean && make.bat html   # Windows
-    make clean && make html           # Linux/Mac
-
-The generated HTML is written to ``docs/build/html/index.html``.
-
-.. note::
-   Always ``clean`` before rebuilding manually: Sphinx's incremental build
-   only checks the mtime of each page's own source file, so it does *not*
-   detect changes to ``README.md``/``README_ES.md``/
-   ``ARTICLE_CONTEXT_SEVILLA.md`` when they are pulled in via MyST's
-   ``{include}`` directive (used by ``full_reference_en``,
-   ``full_reference_es`` and ``article_context``) -- a stale ``docs/build/``
-   can silently keep showing outdated content otherwise.
-   ``dist_build_docs.bat`` already cleans ``docs/build`` before every run.
-
-This project is also built automatically on `Read the Docs
+The site is built automatically on `Read the Docs
 <https://readthedocs.org/>`_ using ``.readthedocs.yaml`` at the repository
 root, which installs the package with the ``docs`` extra and runs Sphinx
-against this same ``conf.py``.
+against this ``conf.py``.
 
 Tutorial notebook
 ------------------
-``examples/tutorial_pyweatherfiles.ipynb`` is the single source of truth for
-the tutorial; it is copied (not duplicated by hand) into this ``source/``
-directory at build time (see :func:`_copy_tutorial_notebook` below) and
-rendered in place with ``myst-nb``, using the outputs already stored in the
-notebook (``nb_execution_mode = "off"``) so the docs build never needs to
-re-run the full TMY/degree-hours/trend pipeline.
-
-A second, more extensive case-study notebook,
 ``jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb`` (Seville and
-Madrid, real data), lives directly under this ``source/`` directory instead
--- together with its own input data (``jupyter_notebooks/data/``) -- since
-that notebook and its data are meant to be cloned and run standalone from
-GitHub, not just rendered here (see ``docs/source/tutorial_case_study.md``
-and the top-level ``.gitignore`` for the version-control rationale). No
-build-time copy step is needed for it.
+Madrid, real data) is the project's single tutorial. It lives directly under
+this ``source/`` directory together with its own input data
+(``jupyter_notebooks/data/``), since the notebook and its data are meant to
+be cloned and run standalone from GitHub, not just rendered here. It is
+rendered in place with ``myst-nb`` using the outputs already stored in the
+notebook (``nb_execution_mode = "off"``), so building the documentation never
+re-runs the full TMY/degree-hours/trend pipeline.
 """
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -66,25 +32,6 @@ from pathlib import Path
 DOCS_SOURCE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = DOCS_SOURCE_DIR.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-
-
-def _copy_tutorial_notebook() -> None:
-    """Copy ``examples/tutorial_pyweatherfiles.ipynb`` into ``docs/source/``.
-
-    Sphinx can only use source files that live inside its ``srcdir``
-    (``docs/source/``). Rather than keeping a second, hand-maintained copy
-    of the tutorial notebook there, this copies the real notebook from
-    ``examples/`` on every build (locally and on Read the Docs), so
-    ``examples/tutorial_pyweatherfiles.ipynb`` remains the only file anyone
-    needs to edit. The copied file is git-ignored (see ``.gitignore``).
-    """
-    src = REPO_ROOT / "examples" / "tutorial_pyweatherfiles.ipynb"
-    dst = DOCS_SOURCE_DIR / "tutorial_pyweatherfiles.ipynb"
-    if src.is_file():
-        shutil.copyfile(src, dst)
-
-
-_copy_tutorial_notebook()
 
 # -- Project information ------------------------------------------------------
 project = "pyweatherfiles"
@@ -109,6 +56,7 @@ extensions = [
     "myst_nb",                  # Markdown (.md) pages *and* Jupyter notebook (.ipynb) rendering.
                                  # myst_nb internally sets up myst_parser; do NOT also list
                                  # "myst_parser" here or Sphinx double-registers its roles/directives.
+    "sphinx_rtd_theme",         # Read the Docs theme (also pulls in sphinxcontrib-jquery).
 ]
 
 # NOTE: source_suffix is intentionally *not* set manually here. myst_nb
@@ -173,17 +121,29 @@ intersphinx_mapping = {
 todo_include_todos = True
 
 # -- Options for HTML output --------------------------------------------------
-html_theme = "furo"
+html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_title = f"{project} {version}"
 
 html_theme_options = {
-    "source_repository": "https://github.com/termotecnia/pyweatherfiles",
-    "source_branch": "main",
-    "source_directory": "docs/source/",
+    "collapse_navigation": False,
+    "sticky_navigation": True,
+    "navigation_depth": 3,
+    "titles_only": False,
+    "prev_next_buttons_location": "both",
+    "style_external_links": True,
 }
 
-# Markdown files included via MyST (README.md, README_ES.md, ...) live at the
+# Enables the theme's "Edit on GitHub" / "View page source" links.
+html_context = {
+    "display_github": True,
+    "github_user": "termotecnia",
+    "github_repo": "pyweatherfiles",
+    "github_version": "main",
+    "conf_py_path": "/docs/source/",
+}
+
+# Markdown files included via MyST (README.md, README_ES.md) live at the
 # repository root and use GitHub-flavoured relative links; keep anchors as-is.
 suppress_warnings = ["myst.header", "myst.xref_missing"]
 

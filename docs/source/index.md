@@ -14,16 +14,15 @@ This site is generated with [Sphinx](https://www.sphinx-doc.org/) and hosts:
   `README.md` / `README_ES.md` so there is a single source of truth.
 - The **API reference**, auto-generated from the docstrings in the source
   code (`sphinx-apidoc` + `autodoc`).
-- A step-by-step **Jupyter Notebook tutorial** that reproduces the real
-  Seville TMY workflow with data already included in the repository, plus a
-  second, more extensive **case-study notebook** (Seville and Madrid) with
-  its own version-controlled input data, covering TMY generation, EPW
-  conversion and degree-hours/climate-trend analysis end to end.
+- A step-by-step **Jupyter Notebook tutorial** (Seville and Madrid, real
+  data) that covers TMY generation, EPW conversion and
+  degree-hours/climate-trend analysis end to end, with its own
+  version-controlled input data so it can be executed standalone.
 
 ```{tip}
 New to the package? Start with {doc}`installation` and {doc}`quickstart`,
-then work through the {doc}`tutorial` guide and the more extensive
-{doc}`tutorial_case_study` notebook.
+then work through the
+{doc}`tutorial notebook <jupyter_notebooks/tutorial_pyweatherfiles_case_study>`.
 ```
 
 ## Module map
@@ -45,8 +44,6 @@ then work through the {doc}`tutorial` guide and the more extensive
 
 installation
 quickstart
-tutorial
-tutorial_case_study
 jupyter_notebooks/tutorial_pyweatherfiles_case_study
 ```
 
@@ -56,7 +53,6 @@ jupyter_notebooks/tutorial_pyweatherfiles_case_study
 
 full_reference_en
 full_reference_es
-article_context
 ```
 
 ```{toctree}

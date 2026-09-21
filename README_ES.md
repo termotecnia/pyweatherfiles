@@ -4,16 +4,14 @@
 
 **`pyweatherfiles`** es un paquete de Python para la gestión integral de ficheros climáticos orientado a la simulación energética de edificios: generación de **Años Meteorológicos Típicos (TMY)**, conversión bidireccional entre formatos (EPW, `.met`, series horarias en CSV/Excel), cálculo de **grados-hora** de calefacción/refrigeración, **análisis de tendencias climáticas** multianuales, comparación de ficheros EPW y depuración/relleno de series horarias brutas.
 
-Este documento describe **al máximo nivel de detalle técnico el paquete completo**: todos sus módulos, clases, funciones, parámetros y fórmulas — incluidos aquellos que **no** se usan en el script de referencia del artículo (`generating epws seville.py`).
-
-> ℹ️ Si buscas el documento centrado **exclusivamente** en el flujo real del artículo (caso de estudio de Sevilla: `HourlyEPWConverter` + `convert_met_to_epw` + `TMYGenerator`), consulta [`ARTICLE_CONTEXT_SEVILLA.md`](ARTICLE_CONTEXT_SEVILLA.md).
+Este documento describe **al máximo nivel de detalle técnico el paquete completo**: todos sus módulos, clases, funciones, parámetros y fórmulas — incluidos aquellos que **no** cubre el notebook del tutorial.
 
 > 🇬🇧 English version of this document: see [`README.md`](README.md).
 
 > Autor del paquete: Daniel Sánchez-García (Universidad de Cádiz) — `daniel.sanchezgarcia@uca.es`
 
-> 📘 **Documentación HTML completa** (alojada en Read the Docs — referencia de API autogenerada desde el código fuente, más esta misma guía, navegable y con buscador): **https://pyweatherfiles.readthedocs.io/**. Constrúyela localmente con `pip install -e ".[docs]"` y `dist_build_docs.bat` (ver `docs/source/installation.md`).
-> 📓 **Tutorial práctico en notebook** (se ejecuta de principio a fin con datos ya incluidos en este repositorio, sin descargas externas; también se muestra renderizado directamente en la documentación online): [`examples/tutorial_pyweatherfiles.ipynb`](examples/tutorial_pyweatherfiles.ipynb).
+> 📘 **Documentación HTML completa** (alojada en Read the Docs — referencia de API autogenerada desde el código fuente, más esta misma guía, navegable y con buscador): **https://pyweatherfiles.readthedocs.io/**.
+> 📓 **Tutorial práctico en notebook** (Sevilla y Madrid, datos reales; se ejecuta de principio a fin con los datos de entrada versionados junto a él, sin descargas externas; también se muestra renderizado directamente en la documentación online): [`docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb`](docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study.ipynb).
 
 ---
 
@@ -683,7 +681,7 @@ batch.export('batch_degree_hours.xlsx')
 
 - Ejecuta `DegreeHoursCalculator` sobre **múltiples EPW** y **múltiples escenarios de horas** (`hours` puede ser una lista plana, una lista de listas, o un dict de escenarios nombrados — cada uno genera columnas con sufijo propio, p. ej. `heating_dh_morning`).
 - `epw_variables` acepta una lista simple (agregación automática: `sum` para variables de radiación/iluminancia/precipitación, `mean` para el resto) o un dict `{variable: agg_func | [agg_func, ...]}` (`'sum'/'mean'/'max'/'min'/'std'`).
-- Resultado: DataFrame(s) con columnas **MultiIndex** `(epw, variable)`, uno por frecuencia solicitada — ideal para tablas comparativas de un artículo (TMY vs. años reales vs. fichero de referencia normativo).
+- Resultado: DataFrame(s) con columnas **MultiIndex** `(epw, variable)`, uno por frecuencia solicitada — ideal para tablas comparativas de un informe (TMY vs. años reales vs. fichero de referencia normativo).
 - `export()` escribe una hoja combinada `all_epws_<freq>` por frecuencia (y, si solo se pidió una frecuencia, además una hoja por EPW).
 
 ### 6.6 `EpwGroupTrendAnalyzer` — grados-hora por lotes + análisis de tendencia sobre un conjunto de EPW clasificado
@@ -771,7 +769,7 @@ Constructores alternativos: `EpwTrendAnalyzer.from_dict(config)`, `.from_json(pa
    - Rachas de días calurosos consecutivos de longitud ≥ `min_heatwave_length_days` cuentan como eventos de ola de calor (`heatwave_events_local/abs`, `heatwave_days_local/abs`).
    Como efecto secundario, la serie horaria bruta de temperatura de bulbo seco de cada fichero se guarda en `hourly_by_city` (`{city: {year: pandas.Series}}`), usada por `build_boxplot_figure()` (§7.3) para dibujar las figuras de boxplot por año.
 3. **`fit_city_trends()`**: regresión lineal OLS (`scipy.stats.linregress`) por ciudad de cada métrica de `city_trend_targets` frente al año → pendiente (°C/año), intercepto, R², p-valor, error estándar.
-4. **`fit_global_models()` / `fit_global_model(target)`**: ajusta un **modelo global de efectos fijos** `target ~ year + C(city)` por mínimos cuadrados ordinarios (matriz de diseño con `pd.get_dummies(city, drop_first=True)` + intercepto + año; resuelto vía `(XᵀX)⁻¹XᵀY`, con pseudo-inversa como respaldo si la matriz es singular). Reporta la **pendiente común a todas las ciudades tras controlar por el nivel climático propio de cada una** (°C/año), su error estándar, estadístico t, p-valor bilateral (t de Student con `n_obs − n_parámetros` grados de libertad), intervalo de confianza al 95%, R² y tamaños muestrales — un estimador de **panel de datos** con efectos fijos por ciudad, técnica estadísticamente rigurosa y citable en la sección de métodos si se usa análisis de tendencias en el artículo.
+4. **`fit_global_models()` / `fit_global_model(target)`**: ajusta un **modelo global de efectos fijos** `target ~ year + C(city)` por mínimos cuadrados ordinarios (matriz de diseño con `pd.get_dummies(city, drop_first=True)` + intercepto + año; resuelto vía `(XᵀX)⁻¹XᵀY`, con pseudo-inversa como respaldo si la matriz es singular). Reporta la **pendiente común a todas las ciudades tras controlar por el nivel climático propio de cada una** (°C/año), su error estándar, estadístico t, p-valor bilateral (t de Student con `n_obs − n_parámetros` grados de libertad), intervalo de confianza al 95%, R² y tamaños muestrales — un estimador de **panel de datos** con efectos fijos por ciudad, técnica estadísticamente rigurosa y citable en una sección de métodos.
 5. **`export_outputs()`**: escribe `annual_metrics.csv`, `city_trends.csv`, `global_trend.csv`, `coverage_summary.csv`, un `trend_outputs.xlsx` combinado, 3 figuras PNG (panel de tendencia por ciudad para la media anual y para el P95, y un gráfico "ajustado" globalmente tras eliminar los efectos fijos de ciudad), **además, si `save_boxplot_plot=True` (por defecto), 2 figuras adicionales de pequeños múltiplos con boxplot por año** — un subplot por ciudad, las lecturas horarias brutas de temperatura de bulbo seco de cada año como una caja, con la línea de tendencia de la media anual superpuesta (`city_boxplot_grid_filename`: rejilla multi-columna; `city_boxplot_row_filename`: una sola fila, una columna por ciudad) — un informe de texto `conclusion_report.txt` con un veredicto automático (positivo/significativo/relevante en la práctica según los umbrales configurados), un informe Markdown más detallado `conclusion_report.md`, y una instantánea `used_config.json` de la configuración exacta usada (reproducibilidad).
 
 ### 7.3 Otros métodos públicos
@@ -811,7 +809,7 @@ df = epw_comparator.create_comparison_hourly_dataframe('base.epw', 'generated.ep
 | `explore_epw_structure(epw_path)` | Diagnóstico: vuelca la estructura de `EPW.to_dict()` (claves, tipos, vista previa) — útil para localizar las colecciones de datos horarios |
 | `compare_epw_files(base_epw_path, generated_epw_path)` | Informe de consola (vía `tabulate`) comparando cabecera (ciudad, lat, lon, huso horario, elevación, comentarios) y estadísticos descriptivos de la diferencia (generado − base) para 9 variables climáticas clave |
 | `create_comparison_dataframe(base_epw_path, generated_epw_path)` | DataFrame lado a lado construido desde `EPW.to_dict()['data_collections']` de Ladybug, con columnas en español (`TempBulboSeco`, `HumedadRelativa`, etc.) sufijadas `_Base`/`_Generado` |
-| `create_comparison_hourly_dataframe(base_epw_path, generated_epw_path)` | **La función usada en el caso de estudio del artículo** — lee ambos EPW directamente como CSV (saltando las 8 líneas de cabecera), asigna los 35 nombres de campo oficiales del diccionario de datos EPW, y devuelve un único DataFrame con columnas `Base_*`/`Generated_*` alineadas hora a hora. Usa `encoding='latin-1'` para tolerar tildes en EPWs de origen español. Guarda sesión reproducible por defecto |
+| `create_comparison_hourly_dataframe(base_epw_path, generated_epw_path)` | **La función usada en el caso de estudio de Sevilla/Madrid** — lee ambos EPW directamente como CSV (saltando las 8 líneas de cabecera), asigna los 35 nombres de campo oficiales del diccionario de datos EPW, y devuelve un único DataFrame con columnas `Base_*`/`Generated_*` alineadas hora a hora. Usa `encoding='latin-1'` para tolerar tildes en EPWs de origen español. Guarda sesión reproducible por defecto |
 
 ---
 
@@ -876,7 +874,7 @@ Módulo usado **transversalmente** por casi todos los demás (`tmy`, `hourly_epw
 
 Recuperación: `pyweatherfiles.session_manager.load_session(pkl_path)`.
 
-Esto permite **auditar y reproducir exactamente** cada ejecución (parámetros de entrada + resultado completo) — valioso para la sección de metodología/reproducibilidad de un artículo científico.
+Esto permite **auditar y reproducir exactamente** cada ejecución (parámetros de entrada + resultado completo) — valioso para la sección de metodología/reproducibilidad de un informe científico.
 
 ---
 

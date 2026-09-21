@@ -42,8 +42,7 @@ class EpwGroupTrendAnalyzer:
     independent climates* over *many years each* (e.g.
     ``longterm_epw/granada_2005.epw`` … ``longterm_epw/seville_2025.epw``),
     where each climate must be analysed on its own — never pooled/averaged
-    with another — to expose a genuine multi-year trend (as used for
-    Section 3.1 of the manuscript).
+    with another — to expose a genuine multi-year trend.
 
     Workflow
     --------
@@ -426,8 +425,8 @@ class EpwGroupTrendAnalyzer:
         (which fits each group's trend fully independently), this estimates
         the rate of change common to *all* groups after controlling for
         each group's own baseline level (a panel-data/fixed-effects
-        estimator, the same technique used for the manuscript's global
-        warming-rate estimate). Reuses the exact same estimator as
+        estimator, the standard technique behind a global warming-rate
+        estimate). Reuses the exact same estimator as
         :meth:`~pyweatherfiles.epw_trend_analyzer.EpwTrendAnalyzer.fit_global_model`
         via the shared
         :func:`~pyweatherfiles.trend_stats.fit_fixed_effects_model` (see
@@ -715,8 +714,8 @@ class EpwGroupTrendAnalyzer:
     ):
         """
         Overview figure combining several variables and every group in a
-        single small-multiples grid (e.g. the manuscript's
-        ``fig3_overview_grid_by_city.png``): every cell is a group's own
+        single small-multiples grid (e.g. ``fig3_overview_grid_by_city.png``):
+        every cell is a group's own
         bars + OLS trend line for that variable, so the whole indicator
         battery and every climate can be read at a glance without ever
         averaging distinct climates together.

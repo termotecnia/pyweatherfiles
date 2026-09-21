@@ -43,10 +43,7 @@ ENV/
 onedrive_backup/
 /pyweatherfiles_backup/
 
-# Tutorial notebook generated outputs
-examples/tutorial_output/
-
-# Case-study tutorial notebook (docs/source/jupyter_notebooks/): notebook +
+# Tutorial notebook (docs/source/jupyter_notebooks/): the notebook and its
 # input data are deliberately version-controlled (so it can be cloned from
 # GitHub and executed standalone, and rendered on Read the Docs), unlike the
 # rest of the repository's *.xlsx datasets. Generated outputs (EPW/CSV/XLSX
@@ -60,10 +57,8 @@ docs/source/jupyter_notebooks/data/*.json
 docs/build/
 docs/source/.jupyter_cache/
 
-# NOTE: docs/source/api/ (sphinx-apidoc stubs) and docs/source/tutorial_pyweatherfiles.ipynb
-# are auto-regenerated on every docs build (see dist_build_docs.bat / docs/source/conf.py),
-# but they ARE intentionally committed as a GitHub backup in case the Read the Docs build
-# or local toolchain is ever unavailable. examples/tutorial_pyweatherfiles.ipynb remains the
-# single source of truth for the notebook; the copy under docs/source/ must stay in sync with
-# it (re-run dist_build_docs.bat, or copy it manually, before committing changes to either).
+# NOTE: docs/source/api/ (sphinx-apidoc stubs) is auto-regenerated on every docs
+# build (see dist_build_docs.bat / docs/source/conf.py), but it IS intentionally
+# committed as a GitHub backup in case the Read the Docs build or the local
+# toolchain is ever unavailable.
 

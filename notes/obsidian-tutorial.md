@@ -25,7 +25,7 @@ This vault uses the repository root as its knowledge space. Obsidian complements
 | `notes/attachments/` | Images, PDFs, and other attachments created from Obsidian. |
 
 > [!warning]
-> Do not edit `docs/source/full_reference_*.md` or `docs/source/article_context.md` as primary sources: they are MyST wrappers for root-level documents. Use the originals linked from [[Home]].
+> Do not edit `docs/source/full_reference_*.md` as primary sources: they are MyST wrappers for the root-level `README.md` / `README_ES.md`. Use the originals linked from [[Home]].
 
 ## 2. Recommended workflow
 
@@ -42,7 +42,7 @@ This vault uses the repository root as its knowledge space. Obsidian complements
 - Mark concrete steps with `- [ ]` and `- [x]`.
 - If you make a design or reproducibility decision, record it in [[notes/decisions|the decision log]].
 - If an unresolved question arises, add it to [[notes/questions|open questions]].
-- For an external source, dataset, standard, or paper, use [[notes/references|references]].
+- For an external source, dataset, standard, or reading, use [[notes/references|references]].
 
 ### When finishing
 

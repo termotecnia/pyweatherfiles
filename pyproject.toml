@@ -38,7 +38,7 @@ requires-python = ">=3.10"
 docs = [
     "sphinx>=7.0",
     "myst-nb>=1.0",
-    "furo",
+    "sphinx-rtd-theme>=2.0",
 ]
 # Optional runtime extras: each corresponds to imports already guarded with
 # try/except ImportError in the relevant module (see AGENTS.md / README.md

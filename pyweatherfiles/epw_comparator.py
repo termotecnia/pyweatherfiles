@@ -350,7 +350,7 @@ def create_comparison_hourly_dataframe(base_epw_path: str, generated_epw_path: s
     all 35 official EPW data-dictionary field names are assigned manually),
     rather than going through Ladybug's object model.
 
-    This is **the function used in the article's Seville case study** for
+    This is **the function used in the Seville/Madrid case study** for
     hour-by-hour comparisons: it is faster than the Ladybug-based
     :func:`create_comparison_dataframe`, does not depend on Ladybug's
     ``to_dict()`` internal structure, and reads with ``encoding='latin-1'``

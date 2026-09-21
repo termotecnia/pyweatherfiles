@@ -1,9 +1,9 @@
 # Quickstart
 
 This page shows the shortest path from raw hourly weather data to a TMY EPW
-file and a degree-hours table. It mirrors the real workflow used in
-`generating epws seville.py` (see {doc}`article_context`) and in the
-{doc}`tutorial` notebook.
+file and a degree-hours table. It mirrors the real workflow covered in full,
+with real data, by the
+{doc}`tutorial notebook <jupyter_notebooks/tutorial_pyweatherfiles_case_study>`.
 
 ## 1. Generate a Typical Meteorological Year (TMY)
 
@@ -53,6 +53,8 @@ calc.export_results("degree_hours.xlsx")
 ## Next steps
 
 - Read the full API details in {doc}`full_reference_en` / {doc}`full_reference_es`.
-- Run the {doc}`tutorial` notebook end-to-end with the sample data bundled in this repository.
+- Run the
+  {doc}`tutorial notebook <jupyter_notebooks/tutorial_pyweatherfiles_case_study>`
+  end-to-end with the input data bundled alongside it.
 - Browse the auto-generated {doc}`API reference <api/modules>`.
 

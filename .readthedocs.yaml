@@ -16,8 +16,8 @@ sphinx:
   fail_on_warning: false
 
 # Install the package itself (so autodoc can `import pyweatherfiles`) together
-# with the documentation toolchain (Sphinx, myst-nb, furo) declared under the
-# "docs" extra in pyproject.toml.
+# with the documentation toolchain (Sphinx, myst-nb, sphinx-rtd-theme) declared
+# under the "docs" extra in pyproject.toml.
 python:
   install:
     - method: pip

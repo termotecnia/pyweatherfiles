@@ -39,9 +39,9 @@ IF EXIST docs\build rmdir /s /q docs\build
 
 ECHO.
 ECHO --- [Paso 2 de 4] Verificando dependencias de documentacion...
-%PYTHON_CMD% -c "import sphinx, myst_nb" >nul 2>&1
+%PYTHON_CMD% -c "import sphinx, myst_nb, sphinx_rtd_theme" >nul 2>&1
 IF ERRORLEVEL 1 (
-	ECHO AVISO: Faltan dependencias de documentacion ^(sphinx/myst_nb^) o no estan instaladas en este interprete.
+	ECHO AVISO: Faltan dependencias de documentacion ^(sphinx/myst_nb/sphinx_rtd_theme^) o no estan instaladas en este interprete.
 	ECHO Instalando el extra 'docs' definido en pyproject.toml...
 	%PYTHON_CMD% -m pip install -e ".[docs]"
 	IF ERRORLEVEL 1 (
@@ -52,9 +52,9 @@ IF ERRORLEVEL 1 (
 	)
 )
 
-%PYTHON_CMD% -c "import sphinx, myst_nb" >nul 2>&1
+%PYTHON_CMD% -c "import sphinx, myst_nb, sphinx_rtd_theme" >nul 2>&1
 IF ERRORLEVEL 1 (
-	ECHO ERROR: Sphinx o myst_nb siguen sin estar disponibles tras la instalacion.
+	ECHO ERROR: Las dependencias de documentacion siguen sin estar disponibles tras la instalacion.
 	ECHO Sugerencia: %PYTHON_CMD% -m pip install -e ".[docs]"
 	PAUSE
 	EXIT /B 1

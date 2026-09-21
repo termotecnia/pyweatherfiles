@@ -31,40 +31,22 @@ Optional dependencies, required only by specific modules:
 | `besos` + `eppy` | `degree_hours.DegreeHoursCalculator.extract_setpoints_from_idf` (IDF setpoint extraction) | `pip install besos eppy` |
 | `accim` | `degree_hours` (optional accent-sanitization of IDF paths) | `pip install accim` |
 
-## Building this documentation locally
-
-Install the `docs` extra (Sphinx, MyST-Parser for Markdown support, and the
-Furo theme). The ``dist_build_docs.bat`` helper will also install this extra
-automatically if it detects that the documentation dependencies are missing:
+Install every optional runtime extra at once with:
 
 ```bash
-pip install -e ".[docs]"
+pip install "pyweatherfiles[full]"
 ```
 
-Then, from the repository root, run the helper script:
+## Verify the installation
 
-```bat
-dist_build_docs.bat
+```python
+import pyweatherfiles
+
+print(pyweatherfiles.__version__)
+print(pyweatherfiles.TMYGenerator)
 ```
 
-or run the equivalent commands manually:
-
-```bash
-python -m sphinx.ext.apidoc --force -o docs/source/api pyweatherfiles
-cd docs
-make.bat clean && make.bat html     REM Windows
-# make clean && make html           # Linux/Mac
-```
-
-```{note}
-Always `clean` before rebuilding manually: Sphinx's incremental build only
-checks the mtime of each page's own source file, so it does **not** detect
-changes to `README.md`/`README_ES.md`/`ARTICLE_CONTEXT_SEVILLA.md` when they
-are pulled in via `` {include} `` (used by `full_reference_en`,
-`full_reference_es` and `article_context`) — a stale `docs/build/` can
-silently keep showing outdated content otherwise. `dist_build_docs.bat`
-already does this for you.
-```
-
-The generated site is written to `docs/build/html/index.html`.
+Next: head to {doc}`quickstart` for the shortest end-to-end example, or to the
+{doc}`tutorial notebook <jupyter_notebooks/tutorial_pyweatherfiles_case_study>`
+for the complete workflow with real data.
 

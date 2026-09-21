@@ -18,6 +18,5 @@ Centralize external sources, datasets, standards, and readings that support the 
 
 ## Featured internal resources
 
-- [[ARTICLE_CONTEXT_SEVILLA|Seville article context]]
-- [[Manuscript_TMY_v02|TMY manuscript]]
+- [[docs/source/jupyter_notebooks/tutorial_pyweatherfiles_case_study|Tutorial notebook (Seville and Madrid)]]
 - [[analysis_scripts/conclusion_report|Trend conclusions]]
