@@ -8,6 +8,15 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-10-11 — Read the Docs tag `v0.0.1` discovered but awaiting activation
+
+- Objective: publish the already released `v0.0.1` documentation at `https://pyweatherfiles.readthedocs.io/en/v0.0.1/` without changing `latest` or `stable`.
+- Affected files: this log; the required activation/build is external Read the Docs project state. No repository configuration change is required.
+- Finding: RTD's public v3 API already lists `v0.0.1` as a visible tag at release commit `132b7c8cf8e142eb7ccdac4cbcefdbdc615ecfdb`, but it is `active: false` and `built: false`; consequently its public URL returns HTTP 404. `latest` and `stable` are active and built. The exact tagged `.readthedocs.yaml` uses the valid v2 configuration, Python 3.12 and the `docs` extra, so it is eligible to build.
+- Validation: the working tree was clean; `git show v0.0.1:.readthedocs.yaml` and `git show v0.0.1:pyproject.toml` confirm the tagged documentation configuration and package version `0.0.1`. A local Sphinx build of that exact tagged commit succeeded with `-W`.
+- Next step: an RTD project administrator must activate `v0.0.1` at `https://app.readthedocs.org/dashboard/pyweatherfiles/version/v0.0.1/edit/` and run its build (or do the equivalent authenticated API calls); then verify the public URL and replace this pending status with the build result. Do not alter the default version, aliases or tag.
+
+---
 # 2026-09-21 — Release 0.0.1 published to TestPyPI and PyPI
 
 - Objective: prepare and publish the first PyPI release after the TestPyPI upload helper reported that `twine` was unavailable.
