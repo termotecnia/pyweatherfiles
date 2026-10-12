@@ -8,6 +8,15 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-10-12 — `CITATION.bib` for reference managers
+
+- Objective: offer the citation in BibTeX for reference managers such as Mendeley.
+- Affected files: new `CITATION.bib`, this log.
+- Decision: `CITATION.bib` is the BibTeX conversion of `CITATION.cff` (made with `cffconvert`), with the concept DOI `10.5281/zenodo.23310981`. It uses `@misc`, which Mendeley imports, rather than `@software`; it adds year 2026 and publisher Zenodo, since `CITATION.cff` deliberately has no date. If `CITATION.cff` changes, update `CITATION.bib` too.
+- Validation: the entry parses with `pybtex` (author Sánchez-García, Daniel).
+- Next step: push.
+
+---
 # 2026-10-12 — Read the Docs badge served through shields.io
 
 - Objective: fix the 'Documentation Status' badge, shown as a broken image on GitHub.
