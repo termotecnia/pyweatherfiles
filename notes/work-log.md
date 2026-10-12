@@ -8,6 +8,15 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-10-12 — Read the Docs badge served through shields.io
+
+- Objective: fix the 'Documentation Status' badge, shown as a broken image on GitHub.
+- Affected files: `README.md`, `README_ES.md`, this log.
+- Finding: GitHub's image proxy (camo) gets HTTP 429 from Read the Docs for the badge, both at `readthedocs.org/projects/pyweatherfiles/badge/` and at `app.readthedocs.org/projects/pyweatherfiles/badge/` (the badges of the author's other packages fail in the same way). The shields.io Read the Docs badge (`https://img.shields.io/readthedocs/pyweatherfiles/latest`) goes through camo without errors.
+- Validation: both candidates were rendered with GitHub's Markdown API and their camo URLs fetched: 429 for Read the Docs, an SVG ('docs: passing') for shields.io.
+- Next step: push.
+
+---
 # 2026-10-12 — Release `v0.0.1` archived on Zenodo; DOI badge and `CITATION.cff`
 
 - Objective: give `pyweatherfiles` a citable, versioned DOI (needed by the TMY paper) and show it in the README.

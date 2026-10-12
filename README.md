@@ -1,7 +1,7 @@
 # pyweatherfiles
 
 [![CI](https://github.com/termotecnia/pyweatherfiles/actions/workflows/ci.yml/badge.svg)](https://github.com/termotecnia/pyweatherfiles/actions/workflows/ci.yml)
-[![Documentation Status](https://readthedocs.org/projects/pyweatherfiles/badge/?version=latest)](https://pyweatherfiles.readthedocs.io/en/latest/?badge=latest)
+[![Documentation Status](https://img.shields.io/readthedocs/pyweatherfiles/latest)](https://pyweatherfiles.readthedocs.io/en/latest/?badge=latest)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23310981.svg)](https://doi.org/10.5281/zenodo.23310981)
 
 **`pyweatherfiles`** is a Python package for comprehensive weather-file management aimed at building energy simulation: **Typical Meteorological Year (TMY)** generation, bidirectional format conversion (EPW, `.met`, hourly CSV/Excel series), **heating/cooling degree-hours** calculation, multi-year **climate trend analysis**, EPW file comparison, and gap-filling/cleaning of raw hourly series.
