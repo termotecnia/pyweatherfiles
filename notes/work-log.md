@@ -8,6 +8,15 @@ tags:
 # Work log
 Record concise work sessions here. Add each entry at the top using [[notes/templates/daily-note|the daily note template]]. Keep durable technical details in [[decisions|Decisions]], [[questions|Open questions]], or the canonical documentation.
 ---
+# 2026-10-12 — DOI badge as a static shields.io badge
+
+- Objective: fix the DOI badge, which stopped rendering on GitHub.
+- Affected files: `README.md`, `README_ES.md`, [[decisions#D-008 — Releases are archived on Zenodo through the GitHub integration|D-008]], this log.
+- Finding: GitHub's image proxy (camo) answered 'Error Fetching Resource' for `https://zenodo.org/badge/DOI/10.5281/zenodo.23310981.svg` (and for the Zenodo badges of the author's other packages); Zenodo itself answered, but after about 17 s. The badge is now static (`https://img.shields.io/badge/DOI-10.5281%2Fzenodo.23310981-blue`) and does not depend on Zenodo.
+- Validation: the static badge was rendered with GitHub's Markdown API and its camo URL returned the SVG ('DOI: 10.5281/zenodo.23310981').
+- Next step: push.
+
+---
 # 2026-10-12 — `CITATION.bib` for reference managers
 
 - Objective: offer the citation in BibTeX for reference managers such as Mendeley.
