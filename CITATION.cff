@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use pyweatherfiles in your research, please cite it using the metadata from this file."
+title: "pyweatherfiles"
+type: software
+authors:
+  - family-names: "Sánchez-García"
+    given-names: "Daniel"
+    email: "daniel.sanchezgarcia@uca.es"
+    affiliation: "Universidad de Cádiz"
+    orcid: "https://orcid.org/0000-0002-3080-0821"
+abstract: "pyweatherfiles is a Python package for weather-file management aimed at building energy simulation: Typical Meteorological Year (TMY) generation with the Sandia/TMY3 method, conversion between EPW, .met and hourly CSV/Excel series, heating and cooling degree-hours, multi-year climate-trend analysis, EPW file comparison, and cleaning and gap-filling of raw hourly series."
+keywords:
+  - "Typical Meteorological Year"
+  - "TMY"
+  - "weather files"
+  - "EPW"
+  - "building energy simulation"
+  - "degree-hours"
+  - "climate trends"
+  - "Python"
+license: MIT
+repository-code: "https://github.com/termotecnia/pyweatherfiles"
+url: "https://pyweatherfiles.readthedocs.io/"
+doi: "10.5281/zenodo.23310981"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23310981"
+    description: "Concept DOI for all versions of pyweatherfiles (Zenodo)"

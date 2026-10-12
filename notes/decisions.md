@@ -13,6 +13,16 @@ Record decisions that change the project's design, reproducibility, data sources
 
 ---
 
+## D-008 — Releases are archived on Zenodo through the GitHub integration
+
+- **Date:** 2026-10-12
+- **Status:** accepted
+- **Context:** the TMY paper needs a citable, versioned DOI for the software. Zenodo's GitHub integration archives each GitHub release automatically, but only releases published after the repository is enabled; `v0.0.1` predated it.
+- **Decision:** enable `termotecnia/pyweatherfiles` in Zenodo's GitHub integration and re-publish the `v0.0.1` release on its existing tag. The README badge uses the repository badge (`https://zenodo.org/badge/1134438330.svg`, which shows the latest version DOI) linked to the concept DOI `10.5281/zenodo.23310981`, as in the author's other packages. `CITATION.cff` is the metadata source for future versions. It deliberately omits `version` and `date-released`, so Zenodo takes the version from the release tag and the file does not go stale. Do not add a `.zenodo.json`: when both files exist, Zenodo ignores `CITATION.cff` entirely.
+- **Consequences:** every GitHub release gets its own version DOI under the same concept DOI, with the author metadata from `CITATION.cff`. Papers should cite the version DOI they used (`v0.0.1`: `10.5281/zenodo.23310982`).
+- **Links:** [[notes/work-log|Work log]] (2026-10-12 entry), `CITATION.cff`, https://zenodo.org/records/23310982
+
+---
 ## D-007 — The GitHub repository is public
 
 - **Date:** 2026-09-21
